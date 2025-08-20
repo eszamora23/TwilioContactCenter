@@ -1,0 +1,50 @@
+# ==========================
+# Node.js / Monorepo ignores
+# ==========================
+
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env files (server, client, crm-orchestrator, scripts, etc.)
+.env
+.env.*
+**/.env
+**/.env.*
+*.local
+
+# Vite / React cache
+client/.vite/
+**/.vite/
+*.tsbuildinfo
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+
+# Mongo dumps or local db
+dump/
+*.bson
+*.json~
+*.lock
+*.db
+
+# Misc
+*.cache
+*.pid
+*.seed
