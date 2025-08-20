@@ -15,11 +15,11 @@ import TasksPanel from './components/TasksPanel.jsx';
 import Presence from './components/Presence.jsx';
 import Customer360 from './components/Customer360.jsx';
 
-import { Grid, Column } from '@twilio-paste/core/grid';
 import { Box } from '@twilio-paste/core/box';
 import { Heading } from '@twilio-paste/core/heading';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
+import DashboardLayout from './components/DashboardLayout.jsx';
 
 function AgentApp() {
   const { worker, activity, reservations, setAvailable } = useWorker();
@@ -42,20 +42,25 @@ function AgentApp() {
 
       <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
 
-      <Grid gutter={['space30', 'space60']} marginTop="space70">
-        <Column span={[12, 12, 6]}>
-          <Softphone />
-          <Box height="space60" />
-          <Presence />
-        </Column>
-        <Column span={[12, 12, 6]}>
-          <Customer360 />
-          <Box height="space60" />
-          <TasksPanel setAvailable={setAvailable} />
-          <Box height="space60" />
-          <Reservations items={reservations} />
-        </Column>
-      </Grid>
+      <Box marginTop="space70">
+        <DashboardLayout
+          sections={[
+            { id: 'softphone', label: 'Softphone', content: <Softphone /> },
+            { id: 'customer360', label: 'Customer360', content: <Customer360 /> },
+            {
+              id: 'tasks',
+              label: 'Tasks',
+              content: <TasksPanel setAvailable={setAvailable} />,
+            },
+            { id: 'presence', label: 'Presence', content: <Presence /> },
+            {
+              id: 'reservations',
+              label: 'Reservations',
+              content: <Reservations items={reservations} />,
+            },
+          ]}
+        />
+      </Box>
     </Box>
   );
 }
