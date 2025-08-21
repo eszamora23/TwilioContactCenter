@@ -17,6 +17,11 @@ export const serverEnv = {
   jwtSecret: process.env.JWT_SECRET || 'dev',
   corsOrigin: process.env.CORS_ORIGIN || '*',
 
+  accessTokenName: process.env.ACCESS_TOKEN_NAME || 'access_token',
+  refreshTokenName: process.env.REFRESH_TOKEN_NAME || 'refresh_token',
+  cookieDomain: process.env.COOKIE_DOMAIN,
+  cookieSecure: String(process.env.COOKIE_SECURE || 'false') === 'true',
+
   publicBaseUrl: process.env.PUBLIC_BASE_URL,
   skipTwilioValidation: String(process.env.SKIP_TWILIO_VALIDATION || 'false') === 'true',
 

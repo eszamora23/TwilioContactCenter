@@ -9,8 +9,18 @@ export function signAgentToken(sub, workerSid, identity) {
   );
 }
 
+function getCookie(req, name) {
+  const raw = req.headers?.cookie;
+  if (!raw) return undefined;
+  return raw
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${name}=`))
+    ?.split('=')[1];
+}
+
 export function requireAuth(req, res, next) {
-  const raw = req.headers.authorization && req.headers.authorization.split(' ')[1];
+  const raw = getCookie(req, serverEnv.accessTokenName);
   if (!raw) return res.status(401).json({ error: 'missing token' });
   try {
     req.claims = jwt.verify(raw, serverEnv.jwtSecret, { algorithms: ['HS256'] });

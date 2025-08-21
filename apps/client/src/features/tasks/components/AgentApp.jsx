@@ -6,7 +6,7 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
 
-import { setAuth } from '../../index.js';
+import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
 import StatusBar from './StatusBar.jsx';
 import Softphone from '../../softphone/components/Softphone.jsx';
@@ -44,7 +44,7 @@ export default function AgentApp() {
   ];
 
   async function logout() {
-    setAuth(null);
+    await Api.logout();
     const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // tu Activity SID "Offline"/Break
     await setAvailable(offlineSid);
     window.location.reload();

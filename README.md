@@ -64,6 +64,10 @@ Key variables:
 | PUBLIC_BASE_URL | Public URL (e.g., https://something.ngrok.app) for webhook callbacks |
 | CORS_ORIGIN | URL of the web client (defaults to http://localhost:5173) |
 | JWT_SECRET | Secret used to sign agent JWTs |
+| ACCESS_TOKEN_NAME | Cookie name for the access token |
+| REFRESH_TOKEN_NAME | Cookie name for the refresh token |
+| COOKIE_DOMAIN | Domain used for auth cookies |
+| COOKIE_SECURE | Set `true` on HTTPS deployments |
 | MONGODB_URI | Mongo connection string (shared by server & CRM orchestrator) |
 | SKIP_TWILIO_VALIDATION (optional) | Skip signature checks for local testing |
 
