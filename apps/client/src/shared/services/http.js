@@ -18,7 +18,8 @@ http.interceptors.response.use(
         refreshPromise = null;
         return http(config);
       } catch {
-        window.location.reload();
+        refreshPromise = null;
+        return Promise.reject(err);
       }
     }
     return Promise.reject(err);
