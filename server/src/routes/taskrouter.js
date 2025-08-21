@@ -95,21 +95,26 @@ taskrouter.get('/taskrouter/my-tasks', requireAuth, async (req, res) => {
 
     const uniqueTaskSids = [...new Set(reservations.map(r => r.taskSid).filter(Boolean))];
 
-    const tasks = [];
-    for (const taskSid of uniqueTaskSids) {
-      try {
-        const t = await rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).fetch();
-        if (statuses.includes(String(t.assignmentStatus).toLowerCase())) {
-          tasks.push({
-            sid: t.sid,
-            assignmentStatus: t.assignmentStatus,
-            age: t.age,
-            reason: t.reason || null,
-            attributes: safeParseJson(t.attributes),
-          });
-        }
-      } catch { /* ignore */ }
-    }
+    // Fetch tasks concurrently and filter out failed fetches
+    const fetchedTasks = await Promise.all(
+      uniqueTaskSids.map(taskSid =>
+        rest.taskrouter.v1
+          .workspaces(env.workspaceSid)
+          .tasks(taskSid)
+          .fetch()
+          .catch(() => null)
+      )
+    );
+
+    const tasks = fetchedTasks
+      .filter(t => t && statuses.includes(String(t.assignmentStatus).toLowerCase()))
+      .map(t => ({
+        sid: t.sid,
+        assignmentStatus: t.assignmentStatus,
+        age: t.age,
+        reason: t.reason || null,
+        attributes: safeParseJson(t.attributes),
+      }));
 
     const resvByTask = {};
     for (const r of reservations) {
