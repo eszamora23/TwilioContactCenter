@@ -1,5 +1,6 @@
 // contact-center/client/src/components/AgentDesktopShell.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import useLocalStorage from '../hooks/useLocalStorage.js';
 import PropTypes from 'prop-types';
 
 import { Box } from '@twilio-paste/core/box';
@@ -83,7 +84,7 @@ export default function AgentDesktopShell({
 }) {
   const isDesktop = useIsDesktop();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeId, setActiveId] = useState(sections?.[0]?.id || '');
+  const [activeId, setActiveId] = useLocalStorage('shell_active', sections?.[0]?.id || '');
   const [filter, setFilter] = useState('');
   const scrollRootRef = useRef(null);
   const navRefs = useRef({});
@@ -105,14 +106,12 @@ export default function AgentDesktopShell({
     return () => ro.disconnect();
   }, [measureTopFrom]);
 
-  // persistir sección activa
+  // ensure stored active section exists
   useEffect(() => {
-    if (activeId) localStorage.setItem('shell_active', activeId);
-  }, [activeId]);
-  useEffect(() => {
-    const saved = localStorage.getItem('shell_active');
-    if (saved && sections.some((s) => s.id === saved)) setActiveId(saved);
-  }, [sections]);
+    if (!sections.some((s) => s.id === activeId)) {
+      setActiveId(sections?.[0]?.id || '');
+    }
+  }, [sections, activeId, setActiveId]);
 
   // scrollspy para resaltar activo (cuando NO es modal)
   useEffect(() => {

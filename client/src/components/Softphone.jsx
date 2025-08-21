@@ -1,5 +1,6 @@
 // contact-center/client/src/components/Softphone.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import useLocalStorage from '../hooks/useLocalStorage.js';
 import { VoiceDevice } from '../softphone/VoiceDevice.js';
 import { useTranslation } from 'react-i18next';
 
@@ -23,22 +24,6 @@ import {
 } from '@twilio-paste/core/modal';
 import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
 import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
-
-/* Persistencia simple */
-function useLocalStorage(key, initialValue) {
-  const [storedValue, setStoredValue] = useState(() => {
-    try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; }
-    catch { return initialValue; }
-  });
-  const setValue = (value) => {
-    try {
-      const next = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(next);
-      window.localStorage.setItem(key, JSON.stringify(next));
-    } catch {}
-  };
-  return [storedValue, setValue];
-}
 
 /* =========================
  *        Softphone
