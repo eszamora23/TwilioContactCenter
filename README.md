@@ -79,6 +79,11 @@ VITE_API_BASE=http://localhost:4000/api
 
 Place this in `apps/client/.env` or export it before running `npm run dev -w apps/client`.
 
+Ensure `COOKIE_DOMAIN` and `COOKIE_SECURE` are configured for each environment so
+authentication cookies persist correctly (e.g., use your deployed domain with
+`COOKIE_SECURE=true` in production and `localhost` with `false` during local
+development).
+
 ## Provisioning Twilio Resources
 A helper script creates (or reuses) the TwiML App, TaskRouter workspace, queue, workflow, and basic activities.
 
