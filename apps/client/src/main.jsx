@@ -6,7 +6,7 @@ import Softphone from './features/softphone/components/Softphone.jsx';
 
 const root = createRoot(document.getElementById('root'));
 
-const isSoftphonePopup = window.location.hash === '#softphone-host';
+const isSoftphonePopup = new URLSearchParams(window.location.search).get('popup') === 'softphone';
 
 root.render(
   <Theme.Provider theme="default">
