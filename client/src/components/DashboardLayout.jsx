@@ -27,13 +27,16 @@ export default function DashboardLayout({ sections }) {
     <SidebarPushContentWrapper
       collapsed={!disclosure.visible}
       display="flex"
-      minHeight="size100vh"
+      flexDirection={["column", "row"]}
+      maxHeight="100vh"
+      overflowY="auto"
     >
       <Sidebar
         variant="default"
-        width="240px"
+        width={["100%", "240px"]}
         flexShrink={0}
-        height="100vh"
+        maxHeight="100vh"
+        overflowY="auto"
         collapsed={!disclosure.visible}
       >
         <SidebarHeader>
