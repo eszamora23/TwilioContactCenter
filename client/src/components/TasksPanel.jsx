@@ -111,7 +111,12 @@ function TaskCard({ t, onFinishPress, onTransfer, onHold, onUnhold, onRecCtrl, h
         `}
       </style>
       <Stack orientation="vertical" spacing="space50">
-        <Stack orientation="horizontal" spacing="space40" alignment="center">
+        <Stack
+          orientation={["vertical", "horizontal"]}
+          spacing="space40"
+          alignment="center"
+          wrap
+        >
           <Heading as="h4" variant="heading40" margin="space0">
             {t.sid}
           </Heading>
@@ -547,10 +552,26 @@ export default function TasksPanel({ onFinished, setAvailable }) {
     <Box padding="space60" backgroundColor="colorBackground" borderRadius="borderRadius30" boxShadow="shadow">
       <Toaster {...toaster} />
       <Stack orientation="vertical" spacing="space50">
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" distribution="spaceBetween" alignment="center">
+        <Stack
+          orientation={["vertical", "horizontal"]}
+          spacing="space40"
+          distribution="spaceBetween"
+          alignment="center"
+          wrap
+        >
           <Heading as="h3" variant="heading30" margin="space0">{translate('myTasks')}</Heading>
-          <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center">
-            <Stack orientation={['vertical', 'horizontal']} spacing="space30" alignment="center">
+          <Stack
+            orientation={["vertical", "horizontal"]}
+            spacing="space40"
+            alignment="center"
+            wrap
+          >
+            <Stack
+              orientation={["vertical", "horizontal"]}
+              spacing="space30"
+              alignment="center"
+              wrap
+            >
               <Label htmlFor="afterfinish">{translate('afterFinish')}</Label>
               <Select
                 id="afterfinish"
@@ -664,7 +685,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
           </Stack>
         </ModalBody>
         <ModalFooter>
-          <Stack orientation="horizontal" spacing="space40">
+          <Stack orientation={["vertical", "horizontal"]} spacing="space40" wrap>
             <Button aria-label={translate('cancelAria')} variant="secondary" onClick={() => setOpenTransfer(false)}>{translate('cancel')}</Button>
             <Button aria-label={translate('warmTransferAria')} variant="secondary" onClick={doWarm} disabled={!target && !externalNumber}>{translate('warmTransfer')}</Button>
             <Button aria-label={translate('coldTransferAria')} variant="primary" onClick={doCold} disabled={!target && !externalNumber}>{translate('coldTransfer')}</Button>
@@ -700,7 +721,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
           </Stack>
         </ModalBody>
         <ModalFooter>
-          <Stack orientation="horizontal" spacing="space40">
+          <Stack orientation={["vertical", "horizontal"]} spacing="space40" wrap>
             <Button aria-label={translate('cancelAria')} variant="secondary" onClick={() => setOpenWrap(false)}>{translate('cancel')}</Button>
             <Button aria-label={translate('completeAria')} variant="primary" onClick={doFinish}>{translate('complete')}</Button>
           </Stack>
