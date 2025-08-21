@@ -17,11 +17,10 @@ import { Select, Option } from '@twilio-paste/core/select';
 import { Label } from '@twilio-paste/core/label';
 import { Input } from '@twilio-paste/core/input';
 import { AlertDialog } from '@twilio-paste/core/alert-dialog';
-import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs';
 import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
-import { Toaster, useToaster, Toast } from '@twilio-paste/core/toast';
+import { Toaster, useToaster } from '@twilio-paste/core/toast';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { getCallSid } from '../softphone/callSidStore.js';
 
@@ -45,6 +44,20 @@ function formatMMSS(sec) {
   const m = String(Math.floor(sec / 60)).padStart(2, '0');
   const s = String(sec % 60).padStart(2, '0');
   return `${m}:${s}`;
+}
+
+function Accordion({ children }) {
+  return <Stack orientation="vertical" spacing="space40">{children}</Stack>;
+}
+
+function AccordionItem({ title, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Box>
+      <Button variant="link" onClick={() => setOpen((o) => !o)}>{title}</Button>
+      {open && <Box marginTop="space30">{children}</Box>}
+    </Box>
+  );
 }
 
 function TaskCard({ t, onFinishPress, onTransfer, onHold, onUnhold, onRecCtrl, holdStates, recStatus }) {
@@ -124,88 +137,108 @@ function TaskCard({ t, onFinishPress, onTransfer, onHold, onUnhold, onRecCtrl, h
 
         <Separator orientation="horizontal" />
 
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" wrap>
-          <Button
-            aria-label={translate('finishTaskAria')}
-            variant="primary"
-            onClick={() => onFinishPress(t)}
-            disabled={!canFinish}
-            title={canFinish ? translate('finishTaskTitle') : translate('wrappingOnlyTitle')}
-          >
-            {translate('finishTask')}
-          </Button>
+        <Accordion>
+          <AccordionItem title={translate('callControl')}>
+              <Stack orientation={['vertical', 'horizontal']} spacing="space40" wrap>
+                <Tooltip text={translate('finishTaskTooltip')}>
+                  <Button
+                    aria-label={translate('finishTaskAria')}
+                    variant="primary"
+                    onClick={() => onFinishPress(t)}
+                    disabled={!canFinish}
+                  >
+                    {translate('finishTask')}
+                  </Button>
+                </Tooltip>
+                <Tooltip text={translate('holdTooltip')}>
+                  <Button
+                    aria-label={translate('holdAria')}
+                    variant="secondary"
+                    onClick={() => onHold(t)}
+                    disabled={!customerCallSid}
+                    className={isHeld ? 'pulsing' : ''}
+                  >
+                    {translate('hold')} {isHeld && <Badge as="span">{translate('holdDuration', { seconds: holdElapsed })}</Badge>}
+                  </Button>
+                </Tooltip>
+                <Tooltip text={translate('resumeTooltip')}>
+                  <Button
+                    aria-label={translate('resumeAria')}
+                    variant="secondary"
+                    onClick={() => onUnhold(t)}
+                    disabled={!customerCallSid}
+                  >
+                    {translate('resume')}
+                  </Button>
+                </Tooltip>
+              </Stack>
+          </AccordionItem>
 
-          <Button
-            aria-label={translate('transferAria')}
-            variant="secondary"
-            onClick={() => onTransfer(t)}
-            disabled={!customerCallSid}
-            title={customerCallSid ? translate('transferTitle') : translate('noCallSidTitle')}
-          >
-            {translate('transfer')}
-          </Button>
+          <AccordionItem title={translate('transfer')}>
+              <Stack orientation={['vertical', 'horizontal']} spacing="space40" wrap>
+                <Tooltip text={translate('transferTooltip')}>
+                  <Button
+                    aria-label={translate('transferAria')}
+                    variant="secondary"
+                    onClick={() => onTransfer(t)}
+                    disabled={!customerCallSid}
+                  >
+                    {translate('transfer')}
+                  </Button>
+                </Tooltip>
+              </Stack>
+          </AccordionItem>
 
-          <Button
-            aria-label={translate('holdAria')}
-            variant="secondary"
-            onClick={() => onHold(t)}
-            disabled={!customerCallSid}
-            className={isHeld ? 'pulsing' : ''}
-          >
-            {translate('hold')} {isHeld && <Badge as="span">{translate('holdDuration', { seconds: holdElapsed })}</Badge>}
-          </Button>
-          <Button
-            aria-label={translate('resumeAria')}
-            variant="secondary"
-            onClick={() => onUnhold(t)}
-            disabled={!customerCallSid}
-          >
-            {translate('resume')}
-          </Button>
-
-          <Tooltip text={translate('ensureConsent')}>
-            <Badge as="span" variant="error">
-              {translate('recording')}: {currentRecStatus}
-            </Badge>
-          </Tooltip>
-
-          <Button
-            aria-label={translate('startRecAria')}
-            variant="secondary"
-            onClick={() => onRecCtrl('start')}
-            title={translate('startRecTitle')}
-            disabled={currentRecStatus !== 'inactive'}
-          >
-            Rec ⏺
-          </Button>
-          <Button
-            aria-label={translate('pauseRecAria')}
-            variant="secondary"
-            onClick={() => onRecCtrl('pause')}
-            title={translate('pauseRecTitle')}
-            disabled={currentRecStatus !== 'active'}
-          >
-            Rec ⏸
-          </Button>
-          <Button
-            aria-label={translate('resumeRecAria')}
-            variant="secondary"
-            onClick={() => onRecCtrl('resume')}
-            title={translate('resumeRecTitle')}
-            disabled={currentRecStatus !== 'paused'}
-          >
-            Rec ⏵
-          </Button>
-          <Button
-            aria-label={translate('stopRecAria')}
-            variant="secondary"
-            onClick={() => onRecCtrl('stop')}
-            title={translate('stopRecTitle')}
-            disabled={currentRecStatus === 'inactive'}
-          >
-            Rec ⏹
-          </Button>
-        </Stack>
+          <AccordionItem title={translate('recording')}>
+              <Stack orientation={['vertical', 'horizontal']} spacing="space40" wrap>
+                <Tooltip text={translate('ensureConsent')}>
+                  <Badge as="span" variant="error">
+                    {translate('recording')}: {currentRecStatus}
+                  </Badge>
+                </Tooltip>
+                <Tooltip text={translate('startRecTooltip')}>
+                  <Button
+                    aria-label={translate('startRecAria')}
+                    variant="secondary"
+                    onClick={() => onRecCtrl('start')}
+                    disabled={currentRecStatus !== 'inactive'}
+                  >
+                    Rec ⏺
+                  </Button>
+                </Tooltip>
+                <Tooltip text={translate('pauseRecTooltip')}>
+                  <Button
+                    aria-label={translate('pauseRecAria')}
+                    variant="secondary"
+                    onClick={() => onRecCtrl('pause')}
+                    disabled={currentRecStatus !== 'active'}
+                  >
+                    Rec ⏸
+                  </Button>
+                </Tooltip>
+                <Tooltip text={translate('resumeRecTooltip')}>
+                  <Button
+                    aria-label={translate('resumeRecAria')}
+                    variant="secondary"
+                    onClick={() => onRecCtrl('resume')}
+                    disabled={currentRecStatus !== 'paused'}
+                  >
+                    Rec ⏵
+                  </Button>
+                </Tooltip>
+                <Tooltip text={translate('stopRecTooltip')}>
+                  <Button
+                    aria-label={translate('stopRecAria')}
+                    variant="secondary"
+                    onClick={() => onRecCtrl('stop')}
+                    disabled={currentRecStatus === 'inactive'}
+                  >
+                    Rec ⏹
+                  </Button>
+                </Tooltip>
+              </Stack>
+          </AccordionItem>
+        </Accordion>
       </Stack>
     </Card>
   );
@@ -237,7 +270,6 @@ export default function TasksPanel({ onFinished, setAvailable }) {
   const [holdTask, setHoldTask] = useState(null);
 
   const [recStatus, setRecStatus] = useState('inactive');
-  const [error, setError] = useState('');
   const [selectedTab, setSelectedTab] = useState('tasks');
   const [reports, setReports] = useState([]);
 
@@ -247,7 +279,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
     staleTime: 10000,
     onError: (e) => {
       console.error('myTasks error', e);
-      setError(translate('tasksLoadError'));
+      toaster.push({ message: translate('tasksLoadError'), variant: 'error' });
     },
   });
 
@@ -265,7 +297,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       }
     } catch (e) {
       console.error('activities error', e);
-      setError(translate('activitiesLoadError'));
+      toaster.push({ message: translate('activitiesLoadError'), variant: 'error' });
     }
   }
 
@@ -307,8 +339,6 @@ export default function TasksPanel({ onFinished, setAvailable }) {
   async function doFinish() {
     if (!wrapTask) return setOpenWrap(false);
     try {
-      setError('');
-
       let totalHold = 0;
       if (holdStates[wrapTask.sid]) {
         totalHold = Math.floor((Date.now() - holdStates[wrapTask.sid].start) / 1000);
@@ -346,9 +376,10 @@ export default function TasksPanel({ onFinished, setAvailable }) {
         await setAvailable(afterFinishSid);
       }
       if (typeof onFinished === 'function') onFinished(wrapTask.sid);
+      toaster.push({ message: translate('completeTaskSuccess'), variant: 'success', dismissAfter: 3000 });
     } catch (e) {
       console.error('finishTask error', e);
-      setError(translate('completeTaskError'));
+      toaster.push({ message: translate('completeTaskError'), variant: 'error' });
     }
   }
 
@@ -360,7 +391,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
     } catch (e) {
       console.error('available workers error', e);
       setAgents([]);
-      setError(translate('agentsLoadError'));
+      toaster.push({ message: translate('agentsLoadError'), variant: 'error' });
     }
   }
   function onTransfer(t) {
@@ -380,9 +411,11 @@ export default function TasksPanel({ onFinished, setAvailable }) {
   async function doCold() {
     const cSid = transferTask?.attributes?.callSid || transferTask?.attributes?.call_sid;
     const transferTarget = transferMode === 'Agent' ? target : externalNumber;
-    if (!cSid || !transferTarget) return setError(translate('transferMissingData'));
+    if (!cSid || !transferTarget) {
+      toaster.push({ message: translate('transferMissingData'), variant: 'error' });
+      return;
+    }
     try {
-      setError('');
       await Api.transferCold({ customerCallSid: cSid, targetIdentity: transferTarget, agentCallSid: agentCallSid || undefined });
       setOpenTransfer(false);
       toaster.push({
@@ -393,16 +426,18 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       await load();
     } catch (e) {
       console.error('transfer cold error', e);
-      setError(translate('transferError'));
+      toaster.push({ message: translate('transferError'), variant: 'error' });
     }
   }
 
   async function doWarm() {
     const cSid = transferTask?.attributes?.callSid || transferTask?.attributes?.call_sid;
     const transferTarget = transferMode === 'Agent' ? target : externalNumber;
-    if (!cSid || !agentCallSid || !transferTarget) return setError(translate('warmTransferMissingData'));
+    if (!cSid || !agentCallSid || !transferTarget) {
+      toaster.push({ message: translate('warmTransferMissingData'), variant: 'error' });
+      return;
+    }
     try {
-      setError('');
       await Api.transferWarm({ taskSid: transferTask?.sid, customerCallSid: cSid, agentCallSid, targetIdentity: transferTarget });
       setOpenTransfer(false);
       toaster.push({
@@ -412,19 +447,22 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       });
     } catch (e) {
       console.error('transfer warm error', e);
-      setError(translate('warmTransferError'));
+      toaster.push({ message: translate('warmTransferError'), variant: 'error' });
     }
   }
 
   async function doCompleteTransfer() {
-    if (!agentCallSid) return setError(translate('noAgentCallSid'));
+    if (!agentCallSid) {
+      toaster.push({ message: translate('noAgentCallSid'), variant: 'error' });
+      return;
+    }
     try {
-      setError('');
       await Api.transferComplete(agentCallSid);
       await load();
+      toaster.push({ message: translate('transferSuccess'), variant: 'success', dismissAfter: 3000 });
     } catch (e) {
       console.error('transfer complete error', e);
-      setError(translate('completeTransferError'));
+      toaster.push({ message: translate('completeTransferError'), variant: 'error' });
     }
   }
 
@@ -436,9 +474,11 @@ export default function TasksPanel({ onFinished, setAvailable }) {
 
   async function doConfirmedHold() {
     const cSid = holdTask.attributes?.callSid || holdTask.attributes?.call_sid;
-    if (!cSid) return setError(translate('noCustomerCallSid'));
+    if (!cSid) {
+      toaster.push({ message: translate('noCustomerCallSid'), variant: 'error' });
+      return;
+    }
     try {
-      setError('');
       await Api.holdStart({ taskSid: holdTask.sid, customerCallSid: cSid, agentCallSid, who: 'customer' });
       const timer = setInterval(() => {
         setHoldStates((prev) => ({ ...prev }));
@@ -447,15 +487,17 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       setHoldConfirmOpen(false);
     } catch (e) {
       console.error('hold error', e);
-      setError(translate('holdError'));
+      toaster.push({ message: translate('holdError'), variant: 'error' });
     }
   }
 
   async function onUnhold(t) {
     const cSid = t.attributes?.callSid || t.attributes?.call_sid;
-    if (!cSid) return setError(translate('noCustomerCallSid'));
+    if (!cSid) {
+      toaster.push({ message: translate('noCustomerCallSid'), variant: 'error' });
+      return;
+    }
     try {
-      setError('');
       await Api.holdStop({ taskSid: t.sid, customerCallSid: cSid, agentCallSid, who: 'customer' });
       if (holdStates[t.sid]) {
         clearInterval(holdStates[t.sid].timer);
@@ -467,22 +509,24 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       }
     } catch (e) {
       console.error('unhold error', e);
-      setError(translate('unholdError'));
+      toaster.push({ message: translate('unholdError'), variant: 'error' });
     }
   }
 
   // Recording
   async function onRecCtrl(action) {
     try {
-      setError('');
-      if (!agentCallSid) return setError(translate('noActiveCall'));
+      if (!agentCallSid) {
+        toaster.push({ message: translate('noActiveCall'), variant: 'error' });
+        return;
+      }
       if (action === 'start') await Api.recStart(agentCallSid);
       if (action === 'pause') await Api.recPause(agentCallSid);
       if (action === 'resume') await Api.recResume(agentCallSid);
       if (action === 'stop') await Api.recStop(agentCallSid);
     } catch (e) {
       console.error('rec ctrl error', e);
-      setError(translate('recControlError'));
+      toaster.push({ message: translate('recControlError'), variant: 'error' });
     }
   }
 
@@ -493,7 +537,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       setReports(data);
     } catch (e) {
       console.error('reports error', e);
-      setError(translate('reportsLoadError'));
+      toaster.push({ message: translate('reportsLoadError'), variant: 'error' });
     }
   }
 
@@ -502,7 +546,6 @@ export default function TasksPanel({ onFinished, setAvailable }) {
   return (
     <Box padding="space60" backgroundColor="colorBackground" borderRadius="borderRadius30" boxShadow="shadow">
       <Toaster {...toaster} />
-      {error && <Alert variant="error">{error}</Alert>}
       <Stack orientation="vertical" spacing="space50">
         <Stack orientation={['vertical', 'horizontal']} spacing="space40" distribution="spaceBetween" alignment="center">
           <Heading as="h3" variant="heading30" margin="space0">{translate('myTasks')}</Heading>
