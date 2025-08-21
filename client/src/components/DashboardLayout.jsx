@@ -50,7 +50,8 @@ export default function DashboardLayout({ sections }) {
             {sections.map((section) => (
               <SidebarNavigationItem
                 key={section.id}
-                href="#"
+                as="button"
+                aria-label={section.label}
                 selected={active === section.id}
                 onClick={() => handleSelect(section.id)}
               >
