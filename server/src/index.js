@@ -25,8 +25,15 @@ const corsOrigins = (env.corsOrigin || '')
   .map(s => s.trim())
   .filter(Boolean);
 
+const origin =
+  env.corsOrigin === '*'
+    ? true
+    : corsOrigins.length
+      ? corsOrigins
+      : false; // false = bloquea si no hay match
+
 const corsOptions = {
-  origin: corsOrigins.length ? corsOrigins : false, // false = bloquea si no hay match
+  origin,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Type', 'Authorization'],
@@ -54,7 +61,7 @@ app.use('/api', crmProxy);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: corsOrigins.length ? corsOrigins : false,
+    origin,
     methods: ['GET', 'POST'],
     credentials: true,
   },
