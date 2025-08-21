@@ -8,6 +8,7 @@ import {
   SidebarNavigation,
   SidebarNavigationItem,
   SidebarCollapseButton,
+  SidebarContainer,
   SidebarPushContentWrapper,
 } from '@twilio-paste/core/sidebar';
 import { useDisclosureState as useDisclosure } from '@twilio-paste/core/disclosure';
@@ -24,13 +25,7 @@ export default function DashboardLayout({ sections }) {
   };
 
   return (
-    <SidebarPushContentWrapper
-      collapsed={!disclosure.visible}
-      display="flex"
-      flexDirection={["column", "row"]}
-      maxHeight="100vh"
-      overflowY="auto"
-    >
+    <SidebarContainer maxHeight="100vh" overflowY="auto">
       <Sidebar
         variant="default"
         width={["100%", "240px"]}
@@ -64,13 +59,15 @@ export default function DashboardLayout({ sections }) {
         </SidebarBody>
       </Sidebar>
 
-      <Box as="main" flexGrow={1} overflow="auto" padding="space60">
-        {sections.map((section) => (
-          <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
-            {section.content}
-          </Box>
-        ))}
-      </Box>
-    </SidebarPushContentWrapper>
+      <SidebarPushContentWrapper collapsed={!disclosure.visible}>
+        <Box as="main" flexGrow={1} overflow="auto" padding="space60">
+          {sections.map((section) => (
+            <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
+              {section.content}
+            </Box>
+          ))}
+        </Box>
+      </SidebarPushContentWrapper>
+    </SidebarContainer>
   );
 }
