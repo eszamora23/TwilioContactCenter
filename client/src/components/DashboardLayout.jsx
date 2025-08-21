@@ -7,18 +7,15 @@ import {
   SidebarBody,
   SidebarNavigation,
   SidebarNavigationItem,
+  SidebarPushContentWrapper,
 } from '@twilio-paste/core/sidebar';
 
 export default function DashboardLayout({ sections }) {
   const [active, setActive] = useState(sections[0]?.id);
 
   return (
-    <Box
-      display="grid"
-      gridTemplateColumns={["1fr", "1fr", "240px 1fr"]}
-      minHeight="size100vh"
-    >
-      <Sidebar variant="default" gridColumn="1" flexShrink={0}>
+    <Box display="flex" minHeight="size100vh">
+      <Sidebar variant="default" flexShrink={0}>
         <SidebarHeader>
           <SidebarHeaderLabel>Menu</SidebarHeaderLabel>
         </SidebarHeader>
@@ -37,7 +34,7 @@ export default function DashboardLayout({ sections }) {
           </SidebarNavigation>
         </SidebarBody>
       </Sidebar>
-      <Box gridColumn={["1", "1", "2"]} overflow="auto">
+      <SidebarPushContentWrapper overflow="auto">
         <Box padding="space60">
           {sections.map((section) => (
             <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
@@ -45,7 +42,7 @@ export default function DashboardLayout({ sections }) {
             </Box>
           ))}
         </Box>
-      </Box>
+      </SidebarPushContentWrapper>
     </Box>
   );
 }
