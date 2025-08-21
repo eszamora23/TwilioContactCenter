@@ -13,8 +13,12 @@ export default function DashboardLayout({ sections }) {
   const [active, setActive] = useState(sections[0]?.id);
 
   return (
-    <Box display="flex" flexDirection={["column", "column", "row"]} minHeight="size100vh">
-      <Sidebar variant="default">
+    <Box
+      display="grid"
+      gridTemplateColumns={["1fr", "1fr", "240px 1fr"]}
+      minHeight="size100vh"
+    >
+      <Sidebar variant="default" gridColumn="1" flexShrink={0}>
         <SidebarHeader>
           <SidebarHeaderLabel>Menu</SidebarHeaderLabel>
         </SidebarHeader>
@@ -33,12 +37,14 @@ export default function DashboardLayout({ sections }) {
           </SidebarNavigation>
         </SidebarBody>
       </Sidebar>
-      <Box flex="1" padding="space60">
-        {sections.map((section) => (
-          <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
-            {section.content}
-          </Box>
-        ))}
+      <Box gridColumn={["1", "1", "2"]} overflow="auto">
+        <Box padding="space60">
+          {sections.map((section) => (
+            <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
+              {section.content}
+            </Box>
+          ))}
+        </Box>
       </Box>
     </Box>
   );
