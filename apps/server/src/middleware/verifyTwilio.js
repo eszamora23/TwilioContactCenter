@@ -1,5 +1,5 @@
 import Twilio from 'twilio';
-import { env } from '../env.js';
+import { serverEnv as env } from '@shared/env';
 
 export function verifyTwilioSignature(req, res, next) {
   if (env.skipTwilioValidation) return next();

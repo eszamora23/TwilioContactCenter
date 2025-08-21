@@ -1,8 +1,8 @@
 // contact-center/server/src/routes/tokens.js
 import { Router } from 'express';
 import { buildVoiceToken, buildWorkerToken, rest } from '../twilio.js';
-import { requireAuth, signAgentToken } from '../auth.js';
-import { env } from '../env.js';
+import { requireAuth, signAgentToken } from '@shared/auth';
+import { serverEnv as env } from '@shared/env';
 
 export const tokens = Router();
 

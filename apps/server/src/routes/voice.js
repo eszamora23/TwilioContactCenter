@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import Twilio from 'twilio';
-import { env } from '../env.js';
+import { serverEnv as env } from '@shared/env';
 import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 
 export const voice = Router();

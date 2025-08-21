@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-export const env = {
+export const serverEnv = {
   accountSid: process.env.TWILIO_ACCOUNT_SID,
   authToken: process.env.TWILIO_AUTH_TOKEN,
   apiKey: process.env.TWILIO_API_KEY_SID,
@@ -22,14 +22,27 @@ export const env = {
 
   mongoUri: process.env.MONGODB_URI,
 
-  // WOW / Voice
-  holdMusicUrl: process.env.HOLD_MUSIC_URL || 'https://twimlets.com/holdmusic?Bucket=com.twilio.music.classical',
+  holdMusicUrl:
+    process.env.HOLD_MUSIC_URL ||
+    'https://twimlets.com/holdmusic?Bucket=com.twilio.music.classical',
   slaSeconds: Number(process.env.SLA_SECONDS || 45),
   breakActivitySid: process.env.TR_BREAK_ACTIVITY_SID || '',
 
-  // CRM Orchestrator
   crmOrchBaseUrl: process.env.CRM_ORCH_BASE_URL || 'http://localhost:4100',
   crmOrchAudience: process.env.CRM_ORCH_JWT_AUD || 'crm-orchestrator',
   crmOrchIssuer: process.env.CRM_ORCH_JWT_ISS || 'server',
   crmOrchKey: process.env.CRM_ORCH_JWT_KEY || 'crm-orch-demo-key'
 };
+
+export const crmEnv = {
+  port: Number(process.env.CRM_PORT || 4100),
+  mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/crm_demo',
+  jwtAudience: process.env.JWT_AUDIENCE || 'crm-orchestrator',
+  jwtIssuersCsv: process.env.JWT_ISSUERS || 'server',
+  jwtKey: process.env.JWT_KEY || 'crm-orch-demo-key'
+};
+
+export const allowedIssuers = crmEnv.jwtIssuersCsv
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);

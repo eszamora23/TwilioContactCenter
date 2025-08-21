@@ -1,10 +1,10 @@
 // contact-center/server/src/routes/taskrouter.js
 import { Router } from 'express';
 import axios from 'axios'; // For analytics post
-import { env } from '../env.js';
+import { serverEnv as env } from '@shared/env';
 import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 import { rest } from '../twilio.js';
-import { requireAuth } from '../auth.js';
+import { requireAuth } from '@shared/auth';
 
 export const taskrouter = Router();
 

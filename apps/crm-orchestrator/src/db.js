@@ -1,6 +1,6 @@
 // contact-center/crm-orchestrator/src/db.js
 import { MongoClient, ServerApiVersion } from 'mongodb';
-import { env } from './env.js';
+import { crmEnv as env } from '@shared/env';
 
 let _client;
 let _db;

@@ -1,6 +1,6 @@
 // contact-center/server/src/lib/crmClient.js
 import jwt from 'jsonwebtoken';
-import { env } from '../env.js';
+import { serverEnv as env } from '@shared/env';
 
 async function doFetch(path, { method = 'GET', body, qs } = {}) {
   const url = new URL(env.crmOrchBaseUrl.replace(/\/+$/, '') + path);
