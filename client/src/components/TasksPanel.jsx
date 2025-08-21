@@ -1,5 +1,6 @@
 // contact-center/client/src/components/TasksPanel.jsx
 import { useEffect, useMemo, useState } from 'react';
+import useLocalStorage from '../hooks/useLocalStorage.js';
 import { useQuery } from '@tanstack/react-query';
 import Api from '../api.js';
 import axios from 'axios';
@@ -315,9 +316,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
 
   const [availableSid, setAvailableSid] = useState('');
   const [breakSid, setBreakSid] = useState('');
-  const [afterFinishSid, setAfterFinishSid] = useState(
-    () => localStorage.getItem('after_finish_sid') || ''
-  );
+  const [afterFinishSid, setAfterFinishSid] = useLocalStorage('after_finish_sid', '');
 
   const [openTransfer, setOpenTransfer] = useState(false);
   const [transferTask, setTransferTask] = useState(null);
@@ -364,7 +363,6 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       if (br) setBreakSid(br.sid);
       if (!afterFinishSid && avail) {
         setAfterFinishSid(avail.sid);
-        localStorage.setItem('after_finish_sid', avail.sid);
       }
     } catch (e) {
       console.error('activities error', e);
@@ -681,7 +679,6 @@ export default function TasksPanel({ onFinished, setAvailable }) {
                 value={afterFinishSid}
                 onChange={(e) => {
                   setAfterFinishSid(e.target.value);
-                  localStorage.setItem('after_finish_sid', e.target.value);
                 }}
               >
                 <Option value={availableSid || ''}>{translate('available')}</Option>
