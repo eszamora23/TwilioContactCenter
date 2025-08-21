@@ -2,20 +2,22 @@
 import { Heading } from '@twilio-paste/core/heading';
 import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
 import { Box } from '@twilio-paste/core/box';
+import { useTranslation } from 'react-i18next';
 
 export default function Reservations({ items }) {
+  const { t } = useTranslation();
   return (
     <Box padding="space60" backgroundColor="colorBackground" borderRadius="borderRadius30" boxShadow="shadow">
       <Heading as="h3" variant="heading30" marginBottom="space50">
-        Reservations
+        {t('reservations')}
       </Heading>
       {items?.length ? (
         <Table scrollHorizontally>
           <THead>
             <Tr>
-              <Th>Reservation SID</Th>
-              <Th>Task SID</Th>
-              <Th>Status</Th>
+              <Th>{t('reservationSid')}</Th>
+              <Th>{t('taskSid')}</Th>
+              <Th>{t('status')}</Th>
             </Tr>
           </THead>
           <TBody>
@@ -29,7 +31,7 @@ export default function Reservations({ items }) {
           </TBody>
         </Table>
       ) : (
-        <Box color="colorTextWeak">No reservations</Box>
+        <Box color="colorTextWeak">{t('noReservations')}</Box>
       )}
     </Box>
   );
