@@ -207,63 +207,67 @@ export default function Softphone() {
           {callStatus === 'In Call' ? <Box>⏱ {elapsed}</Box> : null}
         </Stack>
 
-        <Stack orientation={['vertical', 'horizontal']} spacing="space50">
-          <Input
-            placeholder={t('dialPlaceholder')}
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-          />
-          <Button
-            aria-label={t('callAria')}
-            title={t('callAria')}
-            variant="primary"
-            disabled={!ready || !to}
-            onClick={dial}
-          >
-            {t('call')}
-          </Button>
-
-          <Tooltip text={t('toggleMuteTooltip')}>
+        <Stack orientation={['vertical', 'horizontal']} spacing="space50" wrap>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space50" wrap>
+            <Input
+              placeholder={t('dialPlaceholder')}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
             <Button
-              aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
-              title={isMuted ? t('unmuteAria') : t('muteAria')}
-              aria-pressed={isMuted}
-              variant="secondary"
+              aria-label={t('callAria')}
+              title={t('callAria')}
+              variant="primary"
+              disabled={!ready || !to}
+              onClick={dial}
+            >
+              {t('call')}
+            </Button>
+          </Stack>
+
+          <Stack orientation={['vertical', 'horizontal']} spacing="space50" wrap>
+            <Tooltip text={t('toggleMuteTooltip')}>
+              <Button
+                aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
+                title={isMuted ? t('unmuteAria') : t('muteAria')}
+                aria-pressed={isMuted}
+                variant="secondary"
+                disabled={!dev}
+                onClick={() => toggleMute(!isMuted)}
+              >
+                {isMuted ? (
+                  <>
+                    <MicrophoneOffIcon decorative /> {t('unmute')}
+                  </>
+                ) : (
+                  <>
+                    <MicrophoneOnIcon decorative /> {t('mute')}
+                  </>
+                )}
+              </Button>
+            </Tooltip>
+
+            <Button
+              aria-label={t('hangupAria')}
+              title={t('hangupAria')}
+              variant="destructive"
               disabled={!dev}
-              onClick={() => toggleMute(!isMuted)}
+              onClick={hangup}
             >
-              {isMuted ? (
-                <>
-                  <MicrophoneOffIcon decorative /> {t('unmute')}
-                </>
-              ) : (
-                <>
-                  <MicrophoneOnIcon decorative /> {t('mute')}
-                </>
-              )}
+              {t('hangup')}
             </Button>
-          </Tooltip>
 
-          <Button
-            aria-label={t('hangupAria')}
-            title={t('hangupAria')}
-            variant="destructive"
-            disabled={!dev}
-            onClick={hangup}
-          >
-            {t('hangup')}
-          </Button>
-
-          {callStatus === 'In Call' && (
-            <Button
-              aria-label={t('dtmfAria')}
-              title={t('dtmfAria')}
-              variant="secondary"
-              onClick={() => setIsDtmfOpen(true)}
-            >
-              {t('dtmf')}
-            </Button>
-          )}
+            {callStatus === 'In Call' && (
+              <Button
+                aria-label={t('dtmfAria')}
+                title={t('dtmfAria')}
+                variant="secondary"
+                onClick={() => setIsDtmfOpen(true)}
+              >
+                {t('dtmf')}
+              </Button>
+            )}
+          </Stack>
         </Stack>
 
         <Grid gutter="space30" templateColumns="repeat(3, 1fr)">
