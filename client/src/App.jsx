@@ -21,6 +21,7 @@ import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
 import { Stack } from '@twilio-paste/core/stack';
 import DashboardLayout from './components/DashboardLayout.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 
 function AgentApp() {
   const { worker, activity, reservations, setAvailable } = useWorker();
@@ -54,23 +55,25 @@ function AgentApp() {
       <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
 
       <Box marginTop="space70" flex="1" overflowY="auto">
-        <DashboardLayout
-          sections={[
-            { id: 'softphone', label: 'Softphone', content: <Softphone /> },
-            { id: 'customer360', label: 'Customer360', content: <Customer360 /> },
-            {
-              id: 'tasks',
-              label: 'Tasks',
-              content: <TasksPanel setAvailable={setAvailable} />,
-            },
-            { id: 'presence', label: 'Presence', content: <Presence /> },
-            {
-              id: 'reservations',
-              label: 'Reservations',
-              content: <Reservations items={reservations} />,
-            },
-          ]}
-        />
+        <ErrorBoundary>
+          <DashboardLayout
+            sections={[
+              { id: 'softphone', label: 'Softphone', content: <Softphone /> },
+              { id: 'customer360', label: 'Customer360', content: <Customer360 /> },
+              {
+                id: 'tasks',
+                label: 'Tasks',
+                content: <TasksPanel setAvailable={setAvailable} />,
+              },
+              { id: 'presence', label: 'Presence', content: <Presence /> },
+              {
+                id: 'reservations',
+                label: 'Reservations',
+                content: <Reservations items={reservations} />,
+              },
+            ]}
+          />
+        </ErrorBoundary>
       </Box>
     </Box>
   );
