@@ -1,6 +1,7 @@
 // contact-center/client/src/components/Login.jsx
 import { useState } from 'react';
-import Api, { setAuth } from '../api.js';
+import { login } from '../services/auth.js';
+import { setAuth } from '../services/http.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Heading } from '@twilio-paste/core/heading';
@@ -35,7 +36,7 @@ export default function Login({ onReady }) {
     setFieldErrors({});
     setLoading(true);
     try {
-      const data = await Api.login(agentId, workerSid, identity);
+      const data = await login(agentId, workerSid, identity);
       setAuth(data.token);
       onReady({ agent: data.agent });
     } catch (err) {

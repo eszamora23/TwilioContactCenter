@@ -1,7 +1,7 @@
 // contact-center/client/src/components/TasksPanel.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import Api from '../api.js';
+import Api from '../services/index.js';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 
@@ -424,7 +424,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
       const updatedNotes = `${wrapNotes}\nHold duration: ${totalHold}s`;
 
       try {
-        await Api.crmLogInteraction({
+        await Api.logInteraction({
           customerId: wrapTask.attributes?.customerId || null,
           channel: 'voice',
           intent: wrapTask.attributes?.intent || null,

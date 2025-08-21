@@ -1,6 +1,6 @@
 // contact-center/client/src/softphone/VoiceDevice.js
 import { Device } from '@twilio/voice-sdk';
-import Api from '../api.js';
+import { voiceToken } from '../services/voice.js';
 import { setCallSid } from './callSidStore.js';
 
 export class VoiceDevice {
@@ -20,7 +20,7 @@ export class VoiceDevice {
   }
 
   async register() {
-    const token = await Api.voiceToken();
+    const token = await voiceToken();
     this.device = new Device(token, {
       audio: { echoCancellation: true }
     });
@@ -60,7 +60,7 @@ export class VoiceDevice {
   }
 
   async refreshToken() {
-    const newToken = await Api.voiceToken();
+    const newToken = await voiceToken();
     if (this.device?.updateToken) {
       await this.device.updateToken(newToken);
       return;

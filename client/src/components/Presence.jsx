@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { io } from 'socket.io-client';
-import Api from '../api.js';
+import { presence } from '../services/taskRouter.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Heading } from '@twilio-paste/core/heading';
@@ -43,7 +43,7 @@ export default function Presence({ onTransferClick, onWhisperClick }) {
     queryFn: async () => {
       try {
         setError('');
-        return await Api.presence();
+        return await presence();
       } catch (e) {
         console.error(e);
         setError(t('presenceLoadError'));

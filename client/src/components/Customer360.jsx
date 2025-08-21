@@ -2,7 +2,8 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import Api from '../api.js';
+import { myTasks } from '../services/taskRouter.js';
+import * as crm from '../services/crm.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Card } from '@twilio-paste/core/card';
@@ -39,7 +40,7 @@ export default function Customer360({ selectedTask }) {
     queryKey: ['myTask', selectedTask?.sid],
     queryFn: async () => {
       if (selectedTask) return selectedTask;
-      const list = await Api.myTasks('assigned,reserved,wrapping');
+      const list = await myTasks('assigned,reserved,wrapping');
       return (
         list.find((x) =>
           ['assigned', 'reserved'].includes(String(x.assignmentStatus).toLowerCase())
@@ -53,7 +54,7 @@ export default function Customer360({ selectedTask }) {
 
   const { data: customer } = useQuery({
     queryKey: ['crmCustomer', task?.attributes?.customerId],
-    queryFn: () => Api.crmCustomer(task.attributes.customerId),
+    queryFn: () => crm.customer(task.attributes.customerId),
     enabled: !!task?.attributes?.customerId,
     staleTime: 30000,
     keepPreviousData: true,
@@ -62,9 +63,9 @@ export default function Customer360({ selectedTask }) {
   const { data: vehicle } = useQuery({
     queryKey: ['crmVehicle', task?.attributes?.vehicleId || task?.attributes?.vin || task?.attributes?.plate],
     queryFn: () => {
-      if (task.attributes.vehicleId) return Api.crmVehicleById(task.attributes.vehicleId);
-      if (task.attributes.vin) return Api.crmVehicleByVin(task.attributes.vin);
-      if (task.attributes.plate) return Api.crmVehicleByPlate(task.attributes.plate);
+      if (task.attributes.vehicleId) return crm.vehicleById(task.attributes.vehicleId);
+      if (task.attributes.vin) return crm.vehicleByVin(task.attributes.vin);
+      if (task.attributes.plate) return crm.vehicleByPlate(task.attributes.plate);
       return null;
     },
     enabled: !!(task?.attributes?.vehicleId || task?.attributes?.vin || task?.attributes?.plate),
@@ -74,7 +75,7 @@ export default function Customer360({ selectedTask }) {
 
   const { data: appts = [] } = useQuery({
     queryKey: ['crmAppointments', task?.attributes?.vehicleId],
-    queryFn: () => Api.crmAppointments(task.attributes.vehicleId),
+    queryFn: () => crm.appointments(task.attributes.vehicleId),
     enabled: !!task?.attributes?.vehicleId,
     staleTime: 30000,
     keepPreviousData: true,
@@ -82,7 +83,7 @@ export default function Customer360({ selectedTask }) {
 
   const { data: finance } = useQuery({
     queryKey: ['crmFinance', task?.attributes?.customerId, !!task?.attributes?.otpVerified],
-    queryFn: () => Api.crmFinance(task.attributes.customerId, !!task.attributes.otpVerified),
+    queryFn: () => crm.finance(task.attributes.customerId, !!task.attributes.otpVerified),
     enabled: !!task?.attributes?.customerId,
     staleTime: 30000,
     keepPreviousData: true,
@@ -90,7 +91,7 @@ export default function Customer360({ selectedTask }) {
 
   const { data: interactions = [] } = useQuery({
     queryKey: ['crmInteractions', task?.attributes?.customerId],
-    queryFn: () => Api.crmInteractions(task.attributes.customerId),
+    queryFn: () => crm.interactions(task.attributes.customerId),
     enabled: !!task?.attributes?.customerId,
     staleTime: 30000,
     keepPreviousData: true,
@@ -106,7 +107,7 @@ export default function Customer360({ selectedTask }) {
     if (!customer?._id) return;
     try {
       setPaylinkStatus('loading');
-      await Api.crmPaylink(customer._id);
+      await crm.paylink(customer._id);
       setPaylinkStatus('success');
       toaster.push({ message: t('payLinkSent'), variant: 'success' });
     } catch (e) {
@@ -124,7 +125,7 @@ export default function Customer360({ selectedTask }) {
     try {
       setError('');
       setScheduleStatus('loading');
-      await Api.crmCreateAppointment({
+      await crm.createAppointment({
         vehicleId: task.attributes.vehicleId,
         datetime: scheduleDate,
         serviceType: scheduleType,

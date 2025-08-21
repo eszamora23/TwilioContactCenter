@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import i18n from './i18n.js';
-import { setAuth } from './api.js';
+import { setAuth } from './services/http.js';
 import Login from './components/Login.jsx';
 
 import StatusBar from './components/StatusBar.jsx';
