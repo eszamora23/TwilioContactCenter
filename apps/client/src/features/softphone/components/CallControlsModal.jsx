@@ -112,7 +112,7 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
 
   const openSoftphonePopout = () => {
     window.open(
-      `${window.location.origin}/#softphone-host`,
+      `${window.location.origin}?popup=softphone`,
       'softphone_popup',
       'width=420,height=640,menubar=no,toolbar=no,resizable=yes,scrollbars=yes,status=no'
     );
