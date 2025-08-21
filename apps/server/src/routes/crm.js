@@ -1,6 +1,6 @@
 // contact-center/server/src/routes/crm.js
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
+import { requireAuth } from '@shared/auth';
 import { crm } from '../lib/crmClient.js';
 
 export const crmProxy = Router();

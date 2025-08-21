@@ -1,7 +1,7 @@
 // contact-center/server/src/routes/transfer.js
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
-import { env } from '../env.js';
+import { requireAuth } from '@shared/auth';
+import { serverEnv as env } from '@shared/env';
 import { rest } from '../twilio.js';
 
 export const transfer = Router();

@@ -1,6 +1,6 @@
 // contact-center/server/src/twilio.js
 import Twilio from 'twilio';
-import { env } from './env.js';
+import { serverEnv as env } from '@shared/env';
 
 /* ----------------------------- Helpers ENVs ----------------------------- */
 function assertEnv(names, context = 'twilio.js') {

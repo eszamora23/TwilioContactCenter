@@ -1,4 +1,4 @@
-import { env } from './env.js';
+import { serverEnv as env } from '@shared/env';
 export function validateEnv() {
   const required = [
     'accountSid','authToken','apiKey','apiSecret',

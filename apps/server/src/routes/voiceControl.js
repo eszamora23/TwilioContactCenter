@@ -1,8 +1,8 @@
 // contact-center/server/src/routes/voiceControl.js
 import { Router } from 'express';
-import { requireAuth } from '../auth.js';
+import { requireAuth } from '@shared/auth';
 import { rest } from '../twilio.js';
-import { env } from '../env.js';
+import { serverEnv as env } from '@shared/env';
 import { pushEvent } from './taskrouter.js';
 
 export const voiceControl = Router();

@@ -4,7 +4,7 @@ import cors from 'cors';
 import http from 'http';
 import { Server } from 'socket.io';
 import rateLimit from 'express-rate-limit';
-import { env } from './env.js';
+import { serverEnv as env } from '@shared/env';
 import { tokens } from './routes/tokens.js';
 import { health } from './routes/health.js';
 import { taskrouter } from './routes/taskrouter.js';

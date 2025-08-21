@@ -1,7 +1,7 @@
 // contact-center/crm-orchestrator/src/index.js
 import express from 'express';
 import cors from 'cors';
-import { env } from './env.js';
+import { crmEnv as env } from '@shared/env';
 import { v1 } from './routes.v1.js';
 import { connectDb } from './db.js';
 
