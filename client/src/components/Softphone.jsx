@@ -213,37 +213,75 @@ export default function Softphone() {
             value={to}
             onChange={(e) => setTo(e.target.value)}
           />
-          <Button aria-label={t('callAria')} variant="primary" disabled={!ready || !to} onClick={dial}>
+          <Button
+            aria-label={t('callAria')}
+            title={t('callAria')}
+            variant="primary"
+            disabled={!ready || !to}
+            onClick={dial}
+          >
             {t('call')}
           </Button>
 
           <Tooltip text={t('toggleMuteTooltip')}>
             <Button
-              aria-label={t('toggleMuteAria')}
+              aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
+              title={isMuted ? t('unmuteAria') : t('muteAria')}
               aria-pressed={isMuted}
               variant="secondary"
               disabled={!dev}
               onClick={() => toggleMute(!isMuted)}
             >
-              {isMuted ? <MicrophoneOffIcon decorative /> : <MicrophoneOnIcon decorative />}
+              {isMuted ? (
+                <>
+                  <MicrophoneOffIcon decorative={false} /> {t('unmute')}
+                </>
+              ) : (
+                <>
+                  <MicrophoneOnIcon decorative={false} /> {t('mute')}
+                </>
+              )}
             </Button>
           </Tooltip>
 
-          <Button aria-label={t('hangupAria')} variant="destructive" disabled={!dev} onClick={hangup}>
+          <Button
+            aria-label={t('hangupAria')}
+            title={t('hangupAria')}
+            variant="destructive"
+            disabled={!dev}
+            onClick={hangup}
+          >
             {t('hangup')}
           </Button>
 
           {callStatus === 'In Call' && (
-            <Button aria-label={t('dtmfAria')} variant="secondary" onClick={() => setIsDtmfOpen(true)}>
+            <Button
+              aria-label={t('dtmfAria')}
+              title={t('dtmfAria')}
+              variant="secondary"
+              onClick={() => setIsDtmfOpen(true)}
+            >
               {t('dtmf')}
             </Button>
           )}
         </Stack>
 
+        <Grid gutter="space30" templateColumns="repeat(3, 1fr)">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((digit) => (
+            <Button
+              key={digit}
+              variant="secondary"
+              aria-label={`${t('dial')} ${digit}`}
+              title={`${t('dial')} ${digit}`}
+              onClick={() => setTo((prev) => prev + digit)}
+            >
+              {digit}
+            </Button>
+          ))}
+        </Grid>
+
         {dev ? (
-          <HelpText variant="default">
-            {isMuted ? t('micMuted') : t('micLive')}
-          </HelpText>
+          <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
         ) : null}
       </Stack>
 
@@ -254,10 +292,20 @@ export default function Softphone() {
         <ModalBody>{t('acceptIncomingPrompt')}</ModalBody>
         <ModalFooter>
           <Stack orientation="horizontal" spacing="space40">
-            <Button aria-label={t('rejectAria')} variant="secondary" onClick={rejectIncoming}>
+            <Button
+              aria-label={t('rejectAria')}
+              title={t('rejectAria')}
+              variant="secondary"
+              onClick={rejectIncoming}
+            >
               {t('reject')}
             </Button>
-            <Button aria-label={t('acceptAria')} variant="primary" onClick={acceptIncoming}>
+            <Button
+              aria-label={t('acceptAria')}
+              title={t('acceptAria')}
+              variant="primary"
+              onClick={acceptIncoming}
+            >
               {t('accept')}
             </Button>
           </Stack>
@@ -271,14 +319,25 @@ export default function Softphone() {
         <ModalBody>
           <Grid gutter="space30">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((digit) => (
-              <Button key={digit} variant="secondary" onClick={() => sendDtmf(digit)}>
+              <Button
+                key={digit}
+                variant="secondary"
+                aria-label={`${t('dial')} ${digit}`}
+                title={`${t('dial')} ${digit}`}
+                onClick={() => sendDtmf(digit)}
+              >
                 {digit}
               </Button>
             ))}
           </Grid>
         </ModalBody>
         <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsDtmfOpen(false)}>
+          <Button
+            variant="secondary"
+            aria-label={t('close')}
+            title={t('close')}
+            onClick={() => setIsDtmfOpen(false)}
+          >
             {t('close')}
           </Button>
         </ModalFooter>
