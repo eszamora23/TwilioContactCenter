@@ -1,6 +1,7 @@
 // contact-center/client/src/components/StatusBar.jsx
 import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { useTranslation } from 'react-i18next';
 
 import { Box } from '@twilio-paste/core/box';
 import { Badge } from '@twilio-paste/core/badge';
@@ -11,6 +12,7 @@ import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 export default function StatusBar({ label, onChange }) {
   const [acts, setActs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const base = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
@@ -31,7 +33,7 @@ export default function StatusBar({ label, onChange }) {
     >
       <Stack orientation={['vertical', 'horizontal']} spacing="space50" alignment="center">
         <Box>
-          Agent status:{' '}
+          {t('agentStatus')}{' '}
           {loading ? (
             <SkeletonLoader />
           ) : (
@@ -48,7 +50,7 @@ export default function StatusBar({ label, onChange }) {
           disabled={loading || !acts.length}
         >
           <Option value="" disabled>
-            Change activity…
+            {t('changeActivity')}
           </Option>
           {acts.map((a) => (
             <Option key={a.sid} value={a.sid}>

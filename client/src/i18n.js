@@ -176,6 +176,17 @@ const resources = {
       "sortByActivity": "Sort by activity",
       "sortByAvailability": "Sort by availability",
 
+      // StatusBar
+      "agentStatus": "Agent status:",
+      "changeActivity": "Change activity…",
+
+      // Reservations
+      "reservations": "Reservations",
+      "reservationSid": "Reservation SID",
+      "taskSid": "Task SID",
+      "status": "Status",
+      "noReservations": "No reservations",
+
       // App
       "agentDesktop": "Agent Desktop",
       "logout": "Logout",
@@ -356,6 +367,17 @@ const resources = {
       "sortByAvailability": "Ordenar por disponibilidad",
       "transferTo": "Transferir a",
       "whisperTo": "Susurrar a",
+
+      // StatusBar
+      "agentStatus": "Estado del agente:",
+      "changeActivity": "Cambiar actividad…",
+
+      // Reservations
+      "reservations": "Reservas",
+      "reservationSid": "SID de Reserva",
+      "taskSid": "SID de Tarea",
+      "status": "Estado",
+      "noReservations": "Sin reservas",
 
       // App
       "agentDesktop": "Escritorio del Agente",
