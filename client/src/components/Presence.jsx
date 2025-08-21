@@ -1,5 +1,5 @@
 // contact-center/client/src/components/Presence.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { io } from 'socket.io-client';
@@ -13,12 +13,16 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { UserIcon } from '@twilio-paste/icons/esm/UserIcon';
+import { Input } from '@twilio-paste/core/input';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 
 export default function Presence({ onTransferClick, onWhisperClick }) {
   const { t } = useTranslation();
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useState(null);
+  const [sortAsc, setSortAsc] = useState(true);
   const queryClient = useQueryClient();
 
   const { data: rows = [], isLoading: loading } = useQuery({
@@ -65,35 +69,122 @@ export default function Presence({ onTransferClick, onWhisperClick }) {
     };
   }, [queryClient]);
 
+  const filteredRows = useMemo(() => {
+    const lower = filter.toLowerCase();
+    let data = rows.filter(
+      (r) =>
+        r.friendlyName.toLowerCase().includes(lower) ||
+        r.activityName.toLowerCase().includes(lower)
+    );
+    if (sortKey === 'activity') {
+      data = data.slice().sort((a, b) =>
+        a.activityName.localeCompare(b.activityName) * (sortAsc ? 1 : -1)
+      );
+    } else if (sortKey === 'available') {
+      data = data
+        .slice()
+        .sort(
+          (a, b) =>
+            (a.available === b.available ? 0 : a.available ? 1 : -1) *
+            (sortAsc ? 1 : -1)
+        );
+    }
+    return data;
+  }, [rows, filter, sortKey, sortAsc]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  };
+
   if (loading) return <SkeletonLoader />;
 
   return (
     <Box padding="space60" backgroundColor="colorBackground" borderRadius="borderRadius30" boxShadow="shadow">
       {error && <Alert variant="error">{error}</Alert>}
-      <Stack orientation={['vertical', 'horizontal']} spacing="space40" distribution="spaceBetween" alignment="center">
-        <Heading as="h3" variant="heading30" margin="space0">{t('presence')}</Heading>
-        <Button aria-label={t('refreshAria')} onClick={() => queryClient.refetchQueries(['presence'])} disabled={loading} variant="secondary">
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space40"
+        distribution="spaceBetween"
+        alignment="center"
+      >
+        <Heading as="h3" variant="heading30" margin="space0">
+          {t('presence')}
+        </Heading>
+        <Button
+          aria-label={t('refreshAria')}
+          onClick={() => queryClient.refetchQueries(['presence'])}
+          disabled={loading}
+          variant="secondary"
+        >
           {loading ? t('loading') : t('refresh')}
         </Button>
       </Stack>
 
-      {!rows.length ? (
-        <Box color="colorTextWeak" marginTop="space50">{t('noAgents')}</Box>
+      <Box marginTop="space40">
+        <Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('filterAgentsPlaceholder')}
+          aria-label={t('filterAgentsAria')}
+        />
+      </Box>
+
+      {!filteredRows.length ? (
+        <Box color="colorTextWeak" marginTop="space50">
+          {t('noAgents')}
+        </Box>
       ) : (
         <Table scrollHorizontally marginTop="space50">
           <THead>
             <Tr>
               <Th scope="col">{t('agent')}</Th>
-              <Th scope="col">{t('activity')}</Th>
-              <Th scope="col">{t('available')}</Th>
+              <Th
+                scope="col"
+                onClick={() => handleSort('activity')}
+                aria-label={t('sortByActivity')}
+                aria-sort={
+                  sortKey === 'activity'
+                    ? sortAsc
+                      ? 'ascending'
+                      : 'descending'
+                    : 'none'
+                }
+                style={{ cursor: 'pointer' }}
+              >
+                {t('activity')}
+                {sortKey === 'activity' ? (sortAsc ? ' ↑' : ' ↓') : null}
+              </Th>
+              <Th
+                scope="col"
+                onClick={() => handleSort('available')}
+                aria-label={t('sortByAvailability')}
+                aria-sort={
+                  sortKey === 'available'
+                    ? sortAsc
+                      ? 'ascending'
+                      : 'descending'
+                    : 'none'
+                }
+                style={{ cursor: 'pointer' }}
+              >
+                {t('available')}
+                {sortKey === 'available' ? (sortAsc ? ' ↑' : ' ↓') : null}
+              </Th>
               <Th scope="col">{t('contactUri')}</Th>
               <Th scope="col">{t('actions')}</Th>
             </Tr>
           </THead>
           <TBody>
-            {rows.map((r) => (
+            {filteredRows.map((r) => (
               <Tr role="row" key={r.workerSid}>
-                <Td><UserIcon decorative /> {r.friendlyName}</Td>
+                <Td>
+                  <UserIcon decorative /> {r.friendlyName}
+                </Td>
                 <Td>{r.activityName}</Td>
                 <Td>
                   <Badge as="span" variant={r.available ? 'success' : 'neutral'}>
@@ -103,10 +194,18 @@ export default function Presence({ onTransferClick, onWhisperClick }) {
                 <Td>{r.contactUri || '—'}</Td>
                 <Td>
                   <Stack orientation="horizontal" spacing="space30">
-                    <Button variant="secondary" size="small" onClick={() => onTransferClick?.(r)}>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={() => onTransferClick?.(r)}
+                    >
                       {t('transferTo')}
                     </Button>
-                    <Button variant="secondary" size="small" onClick={() => onWhisperClick?.(r)}>
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={() => onWhisperClick?.(r)}
+                    >
                       {t('whisperTo')}
                     </Button>
                   </Stack>

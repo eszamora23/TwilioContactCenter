@@ -165,6 +165,10 @@ const resources = {
       "no": "No",
       "contactUri": "Contact URI",
       "presenceLoadError": "Failed to load presence.",
+      "filterAgentsPlaceholder": "Filter by name or activity",
+      "filterAgentsAria": "Filter agents",
+      "sortByActivity": "Sort by activity",
+      "sortByAvailability": "Sort by availability",
 
       // App
       "agentDesktop": "Agent Desktop",
@@ -334,6 +338,10 @@ const resources = {
       "no": "No",
       "contactUri": "URI de Contacto",
       "presenceLoadError": "No se pudo cargar la presencia.",
+      "filterAgentsPlaceholder": "Filtrar por nombre o actividad",
+      "filterAgentsAria": "Filtrar agentes",
+      "sortByActivity": "Ordenar por actividad",
+      "sortByAvailability": "Ordenar por disponibilidad",
       "transferTo": "Transferir a",
       "whisperTo": "Susurrar a",
 
