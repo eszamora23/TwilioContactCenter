@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import PropTypes from 'prop-types';
 import { Box } from '@twilio-paste/core/box';
 import { Button } from '@twilio-paste/core/button';
 import {
@@ -84,3 +85,17 @@ export default function DashboardLayout({ sections }) {
     </Box>
   );
 }
+
+DashboardLayout.propTypes = {
+  sections: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      label: PropTypes.string.isRequired,
+      content: PropTypes.node.isRequired,
+    })
+  ).isRequired,
+};
+
+DashboardLayout.defaultProps = {
+  sections: [],
+};
