@@ -1,6 +1,6 @@
 // contact-center/client/src/hooks/useWorker.js
 import { useEffect, useRef, useState } from 'react';
-import Api from '../api.js';
+import { workerToken } from '../services/taskRouter.js';
 
 export function useWorker() {
   const [worker, setWorker] = useState(null);
@@ -12,7 +12,7 @@ export function useWorker() {
     let w;
 
     (async () => {
-      const token = await Api.workerToken();
+      const token = await workerToken();
       // eslint-disable-next-line no-undef
       w = new Twilio.TaskRouter.Worker(token);
 
@@ -28,7 +28,7 @@ export function useWorker() {
 
       refreshRef.current = setInterval(async () => {
         try {
-          const newToken = await Api.workerToken();
+          const newToken = await workerToken();
           if (typeof w.updateToken === 'function') {
             w.updateToken(newToken);
           } else {

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import useLocalStorage from '../hooks/useLocalStorage.js';
 import { useQuery } from '@tanstack/react-query';
-import Api from '../api.js';
+import Api from '../services/index.js';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 
