@@ -15,7 +15,7 @@ import Customer360 from './components/Customer360.jsx';
 import TasksPanel from './components/TasksPanel.jsx';
 import Reservations from './components/Reservations.jsx';
 
-import { useWorker } from './taskrouter/useWorker.js';
+import { useWorker } from './hooks/useWorker.js';
 import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
 import { Button } from '@twilio-paste/core/button';

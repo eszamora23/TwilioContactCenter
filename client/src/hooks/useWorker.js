@@ -1,4 +1,4 @@
-// contact-center/client/src/taskrouter/useWorker.js
+// contact-center/client/src/hooks/useWorker.js
 import { useEffect, useRef, useState } from 'react';
 import Api from '../api.js';
 
