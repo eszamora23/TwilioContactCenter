@@ -3,6 +3,7 @@ import { requireAuth } from 'shared/auth';
 import {
   holdStart,
   holdStop,
+  hangupCall,
   recordingStatus,
   recordingStart,
   recordingPause,
@@ -15,6 +16,7 @@ import {
 export const voiceControl = Router();
 voiceControl.post('/voice/hold/start', requireAuth, holdStart);
 voiceControl.post('/voice/hold/stop', requireAuth, holdStop);
+voiceControl.post('/voice/hangup', requireAuth, hangupCall);
 voiceControl.get('/voice/recordings/status', requireAuth, recordingStatus);
 voiceControl.post('/voice/recordings/start', requireAuth, recordingStart);
 voiceControl.post('/voice/recordings/pause', requireAuth, recordingPause);

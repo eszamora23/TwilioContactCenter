@@ -1,3 +1,4 @@
+import { rest } from '../twilio.js';
 import {  waitForConferenceByName,
   waitForConferenceBySid,
   waitForParticipantByCallSid,
@@ -95,6 +96,18 @@ export async function holdStop(req, res) {
   } catch (e) {
     console.error('[HOLD/STOP] error', e);
     res.status(500).json({ error: 'cannot unhold', details: e?.message });
+  }
+}
+
+export async function hangupCall(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    await rest.calls(callSid).update({ status: 'completed' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[HANGUP] error', e);
+    res.status(500).json({ error: 'cannot hangup call', details: e?.message });
   }
 }
 

@@ -18,6 +18,9 @@ export const holdStart = (payload) =>
 export const holdStop = (payload) =>
   http.post('/voice/hold/stop', payload).then((r) => r.data);
 
+export const hangup = (callSid) =>
+  http.post('/voice/hangup', { callSid }).then((r) => r.data);
+
 export const recStart = (callSid) =>
   http.post('/voice/recordings/start', { callSid }).then((r) => r.data);
 
