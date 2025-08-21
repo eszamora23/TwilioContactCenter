@@ -10,6 +10,7 @@ import {
   SidebarNavigation,
   SidebarNavigationItem,
   SidebarCollapseButton,
+  SidebarContainer,
   SidebarPushContentWrapper,
 } from '@twilio-paste/core/sidebar';
 import { useDisclosureState as useDisclosure } from '@twilio-paste/core/disclosure';
@@ -27,7 +28,7 @@ export default function DashboardLayout({ sections }) {
   };
 
   return (
-    <Box display="flex" maxHeight="100vh" overflowY="auto">
+    <SidebarContainer height="100vh">
       <Sidebar
         variant="default"
         width={["100%", "240px"]}
@@ -82,7 +83,7 @@ export default function DashboardLayout({ sections }) {
           ))}
         </Box>
       </SidebarPushContentWrapper>
-    </Box>
+    </SidebarContainer>
   );
 }
 
