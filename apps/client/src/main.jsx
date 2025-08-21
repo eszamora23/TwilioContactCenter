@@ -2,7 +2,7 @@
 import { createRoot } from 'react-dom/client';
 import { Theme } from '@twilio-paste/core/theme';
 import App from './App.jsx';
-import Softphone from './components/Softphone.jsx';
+import Softphone from './features/softphone/components/Softphone.jsx';
 
 const root = createRoot(document.getElementById('root'));
 
