@@ -234,11 +234,11 @@ export default function Softphone() {
             >
               {isMuted ? (
                 <>
-                  <MicrophoneOffIcon decorative={false} /> {t('unmute')}
+                  <MicrophoneOffIcon decorative /> {t('unmute')}
                 </>
               ) : (
                 <>
-                  <MicrophoneOnIcon decorative={false} /> {t('mute')}
+                  <MicrophoneOnIcon decorative /> {t('mute')}
                 </>
               )}
             </Button>
