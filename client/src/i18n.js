@@ -43,6 +43,7 @@ const resources = {
       "schedule": "Schedule",
       "scheduleMissingFields": "Missing fields for scheduling.",
       "scheduleError": "Failed to schedule appointment.",
+      "scheduleSuccess": "Appointment scheduled.",
       "crmFetchError": "Failed to fetch CRM data.",
 
       // Softphone
@@ -216,6 +217,7 @@ const resources = {
       "schedule": "Programar",
       "scheduleMissingFields": "Faltan campos para programar.",
       "scheduleError": "No se pudo programar la cita.",
+      "scheduleSuccess": "Cita programada.",
       "crmFetchError": "No se pudieron obtener datos de CRM.",
 
       // Softphone

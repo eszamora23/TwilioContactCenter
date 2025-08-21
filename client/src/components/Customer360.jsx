@@ -16,7 +16,9 @@ import { Label } from '@twilio-paste/core/label';
 import { Select, Option } from '@twilio-paste/core/select';
 import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
-import { useQuery } from '@tanstack/react-query';
+import { Spinner } from '@twilio-paste/core/spinner';
+import { Toaster, useToaster } from '@twilio-paste/core/toast';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export default function Customer360({ selectedTask }) {
   const { t } = useTranslation();
@@ -24,6 +26,11 @@ export default function Customer360({ selectedTask }) {
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleType, setScheduleType] = useState('');
+  const [paylinkStatus, setPaylinkStatus] = useState('idle');
+  const [scheduleStatus, setScheduleStatus] = useState('idle');
+
+  const toaster = useToaster();
+  const queryClient = useQueryClient();
 
   const { data: task } = useQuery({
     queryKey: ['myTask', selectedTask?.sid],
@@ -90,30 +97,36 @@ export default function Customer360({ selectedTask }) {
   async function sendPaylink() {
     if (!customer?._id) return;
     try {
+      setPaylinkStatus('loading');
       await Api.crmPaylink(customer._id);
-      alert(t('payLinkSent'));
+      setPaylinkStatus('success');
+      toaster.push({ message: t('payLinkSent'), variant: 'success' });
     } catch (e) {
+      setPaylinkStatus('error');
       setError(t('payLinkError'));
     }
   }
 
   async function scheduleAppointment() {
     if (!task?.attributes?.vehicleId || !scheduleDate || !scheduleType) {
+      setScheduleStatus('error');
       setError(t('scheduleMissingFields'));
       return;
     }
     try {
       setError('');
+      setScheduleStatus('loading');
       await Api.crmCreateAppointment({
         vehicleId: task.attributes.vehicleId,
         datetime: scheduleDate,
         serviceType: scheduleType,
       });
       setIsScheduleOpen(false);
-      // Refresh appts
-      const newAppts = await Api.crmAppointments(task.attributes.vehicleId);
-      setAppts(newAppts);
+      setScheduleStatus('success');
+      toaster.push({ message: t('scheduleSuccess'), variant: 'success' });
+      await queryClient.invalidateQueries(['crmAppointments', task.attributes.vehicleId]);
     } catch (e) {
+      setScheduleStatus('error');
       setError(t('scheduleError'));
     }
   }
@@ -129,7 +142,10 @@ export default function Customer360({ selectedTask }) {
 
   return (
     <Card padding="space70">
-      {error && <Alert variant="error">{error}</Alert>}
+      <Toaster {...toaster} />
+      <Box aria-live="assertive">
+        {error && <Alert variant="error">{error}</Alert>}
+      </Box>
       <Stack orientation="vertical" spacing="space50">
         <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center">
           <Heading as="h3" variant="heading30" margin="space0">{title}</Heading>
@@ -168,7 +184,25 @@ export default function Customer360({ selectedTask }) {
                   </ul>
                 </Box>
               ) : t('noAppointments')}
-              <Button variant="secondary" onClick={() => setIsScheduleOpen(true)}>{t('scheduleNewAppointment')}</Button>
+              <Button
+                variant="secondary"
+                onClick={() => { setScheduleStatus('idle'); setIsScheduleOpen(true); }}
+                disabled={scheduleStatus === 'loading'}
+              >
+                {scheduleStatus === 'loading' ? (
+                  <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+                ) : t('scheduleNewAppointment')}
+              </Button>
+              {scheduleStatus === 'success' && (
+                <Badge as="span" variant="success" marginLeft="space30">
+                  {t('scheduleSuccess')}
+                </Badge>
+              )}
+              {scheduleStatus === 'error' && (
+                <Badge as="span" variant="error" marginLeft="space30">
+                  {error}
+                </Badge>
+              )}
             </TabPanel>
             <TabPanel>
               {finance ? (
@@ -178,7 +212,26 @@ export default function Customer360({ selectedTask }) {
                   {t('payoffDate')}: {finance.payoffDate || '—'}<br/>
                   {t('loyaltyCashback')}: {finance.loyaltyCashback ?? '—'}<br/>
                   {t('lastPayment')}: {finance.lastPayment || '—'}<br/>
-                  <Button variant="secondary" onClick={sendPaylink} style={{marginTop: 8}}>{t('sendPayLink')}</Button>
+                  <Button
+                    variant="secondary"
+                    onClick={sendPaylink}
+                    style={{marginTop: 8}}
+                    disabled={paylinkStatus === 'loading'}
+                  >
+                    {paylinkStatus === 'loading' ? (
+                      <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+                    ) : t('sendPayLink')}
+                  </Button>
+                  {paylinkStatus === 'success' && (
+                    <Badge as="span" variant="success" marginLeft="space30">
+                      {t('payLinkSent')}
+                    </Badge>
+                  )}
+                  {paylinkStatus === 'error' && (
+                    <Badge as="span" variant="error" marginLeft="space30">
+                      {t('payLinkError')}
+                    </Badge>
+                  )}
                 </Box>
               ) : t('noFinance')}
             </TabPanel>
