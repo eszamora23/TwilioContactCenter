@@ -1,6 +1,6 @@
-// contact-center/crm-orchestrator/src/db.js
+﻿// contact-center/crm-orchestrator/src/db.js
 import { MongoClient, ServerApiVersion } from 'mongodb';
-import { crmEnv as env } from '@shared/env';
+import { crmEnv as env } from 'shared/env';
 
 let _client;
 let _db;
@@ -21,7 +21,7 @@ export async function connectDb() {
 
   await client.connect();
 
-  // Si la URI incluye /<dbname> úsalo; si no, por defecto crm_demo
+  // Si la URI incluye /<dbname> Ãºsalo; si no, por defecto crm_demo
   const dbPath = new URL(uri).pathname.replace(/^\//, '');
   const dbName = dbPath || 'crm_demo';
 
@@ -49,3 +49,4 @@ export function collections() {
     interactions: _db.collection('interactions'),
   };
 }
+

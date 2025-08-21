@@ -1,5 +1,5 @@
-import Twilio from 'twilio';
-import { serverEnv as env } from '@shared/env';
+﻿import Twilio from 'twilio';
+import { serverEnv as env } from 'shared/env';
 
 export function buildOutboundTwiml(to) {
   const twiml = new Twilio.twiml.VoiceResponse();
@@ -15,3 +15,4 @@ export function buildOutboundTwiml(to) {
   }
   return twiml.toString();
 }
+

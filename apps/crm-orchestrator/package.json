@@ -13,6 +13,6 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.18.0",
-    "@shared": "file:../../packages/shared"
+    "shared": "file:../../packages/shared"
   }
 }

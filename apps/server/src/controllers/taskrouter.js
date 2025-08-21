@@ -1,4 +1,4 @@
-import { requireAuth } from '@shared/auth';
+﻿import { requireAuth } from 'shared/auth';
 import {
   listActivities,
   listWorkerReservations,
@@ -196,3 +196,4 @@ export function recent(req, res) {
 function safeParseJson(str) {
   try { return JSON.parse(str || '{}'); } catch { return {}; }
 }
+

@@ -1,6 +1,6 @@
-// contact-center/crm-orchestrator/src/routes.v1.js
+﻿// contact-center/crm-orchestrator/src/routes.v1.js
 import { Router } from 'express';
-import { requireServiceAuth } from '@shared/auth';
+import { requireServiceAuth } from 'shared/auth';
 import { collections } from './db.js';
 import { ObjectId } from 'mongodb';
 

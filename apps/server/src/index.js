@@ -1,10 +1,10 @@
-// contact-center/server/src/index.js
+﻿// contact-center/server/src/index.js
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import { Server } from 'socket.io';
 import rateLimit from 'express-rate-limit';
-import { serverEnv as env } from '@shared/env';
+import { serverEnv as env } from 'shared/env';
 import { tokens } from './routes/tokens.js';
 import { health } from './routes/health.js';
 import { taskrouter } from './routes/taskrouter.js';
@@ -71,3 +71,4 @@ const io = new Server(server, {
 app.set('io', io);
 
 server.listen(env.port, () => console.log(`server on :${env.port}`));
+

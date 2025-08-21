@@ -1,6 +1,6 @@
-// contact-center/server/src/lib/crmClient.js
+﻿// contact-center/server/src/lib/crmClient.js
 import jwt from 'jsonwebtoken';
-import { serverEnv as env } from '@shared/env';
+import { serverEnv as env } from 'shared/env';
 
 async function doFetch(path, { method = 'GET', body, qs } = {}) {
   const url = new URL(env.crmOrchBaseUrl.replace(/\/+$/, '') + path);
@@ -44,3 +44,4 @@ export const crm = {
   payLink: customerId => doFetch(`/v1/paylink`, { method: 'POST', body: { customerId } }),
   logInteraction: payload => doFetch(`/v1/interactions`, { method: 'POST', body: payload })
 };
+

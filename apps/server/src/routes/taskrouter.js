@@ -1,6 +1,6 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
-import { requireAuth } from '@shared/auth';
+import { requireAuth } from 'shared/auth';
 import {
   assignment,
   events,
@@ -21,3 +21,4 @@ taskrouter.post('/taskrouter/tasks/:taskSid/complete', requireAuth, completeTask
 taskrouter.get('/taskrouter/available-workers', requireAuth, availableWorkers);
 taskrouter.get('/taskrouter/presence', requireAuth, presence);
 taskrouter.get('/events/recent', requireAuth, recent);
+

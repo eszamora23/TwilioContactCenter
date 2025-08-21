@@ -1,6 +1,6 @@
-// contact-center/server/src/twilio.js
+﻿// contact-center/server/src/twilio.js
 import Twilio from 'twilio';
-import { serverEnv as env } from '@shared/env';
+import { serverEnv as env } from 'shared/env';
 
 /* ----------------------------- Helpers ENVs ----------------------------- */
 function assertEnv(names, context = 'twilio.js') {
@@ -30,11 +30,11 @@ const { VoiceGrant } = AccessToken;
 export function buildVoiceToken(identity) {
   if (!identity) throw new Error('[VoiceToken] missing identity');
 
-  // ENVs críticos para Voice token
+  // ENVs crÃ­ticos para Voice token
   assertEnv(['accountSid', 'apiKey', 'apiSecret'], 'Voice AccessToken');
 
   // IMPORTANTE: Voice identity NO debe incluir "client:".
-  // Si llega "client:agent:42" en claims → usar "agent:42".
+  // Si llega "client:agent:42" en claims â†’ usar "agent:42".
   const rawIdentity = String(identity);
   const identityForVoice = rawIdentity.startsWith('client:')
     ? rawIdentity.slice('client:'.length)
@@ -81,7 +81,7 @@ function buildPolicy({ url, method, allow }) {
 export function buildWorkerToken(workerSid) {
   if (!workerSid) throw new Error('[WorkerToken] missing workerSid');
 
-  // ENVs críticos para Worker capability
+  // ENVs crÃ­ticos para Worker capability
   assertEnv(['workspaceSid', 'accountSid', 'authToken'], 'TaskRouter Worker Capability');
 
   const workspaceSid = env.workspaceSid;
@@ -103,7 +103,7 @@ export function buildWorkerToken(workerSid) {
   const workerUrl          = `${TR_BASE}/Workspaces/${workspaceSid}/Workers/${workerSid}`;
   const workerSubresources = `${workerUrl}/**`;
 
-  // Tasks (SDK lee Task y Reservations de esa Task) → evitar 403 Event Bridge
+  // Tasks (SDK lee Task y Reservations de esa Task) â†’ evitar 403 Event Bridge
   const tasksUrlAll        = `${TR_BASE}/Workspaces/${workspaceSid}/Tasks/**`;
 
   // Activities (para UI / estados)
@@ -125,7 +125,7 @@ export function buildWorkerToken(workerSid) {
     buildPolicy({ url: tasksUrlAll, method: 'GET',  allow: true }),
     buildPolicy({ url: tasksUrlAll, method: 'POST', allow: true }),
 
-    // Activities (opcional pero útil para UI)
+    // Activities (opcional pero Ãºtil para UI)
     buildPolicy({ url: activitiesUrl,    method: 'GET', allow: true }),
     buildPolicy({ url: activitiesAllUrl, method: 'GET', allow: true }),
 
@@ -144,3 +144,4 @@ export function buildWorkerToken(workerSid) {
 
   throw new Error('[TaskRouterCapability] neither generate() nor toJwt() available');
 }
+

@@ -1,6 +1,6 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import { rest } from '../twilio.js';
-import { serverEnv as env } from '@shared/env';
+import { serverEnv as env } from 'shared/env';
 
 export const listActivities = () =>
   rest.taskrouter.v1.workspaces(env.workspaceSid).activities.list({ limit: 50 });
@@ -35,3 +35,4 @@ export function pushEvent(type, payload) {
 }
 export const recentEvents = () => _events.slice(-200);
 export { axios, env };
+

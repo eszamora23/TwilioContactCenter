@@ -1,5 +1,5 @@
-import { signAgentToken, requireAuth } from '@shared/auth';
-import { serverEnv as env } from '@shared/env';
+﻿import { signAgentToken, requireAuth } from 'shared/auth';
+import { serverEnv as env } from 'shared/env';
 import { fetchWorker, createVoiceToken, createWorkerToken } from '../services/tokens.js';
 
 function toContactUri(raw) {
@@ -86,3 +86,4 @@ export function workerToken(req, res) {
     return res.status(500).json({ error: 'worker token build failed' });
   }
 }
+

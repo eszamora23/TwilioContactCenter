@@ -10,12 +10,12 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "express-rate-limit": "^8.0.1",
     "jsonwebtoken": "^9.0.2",
+    "shared": "file:../../packages/shared",
     "socket.io": "^4.8.1",
-    "twilio": "^5.8.0",
-    "@shared": "file:../../packages/shared"
+    "twilio": "^5.8.0"
   }
 }

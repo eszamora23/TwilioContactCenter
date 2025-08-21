@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { requireAuth } from '@shared/auth';
+﻿import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
 import {
   getVehicleById,
   getCustomerById,
@@ -23,3 +23,4 @@ crmProxy.post('/crm/appointments', postAppointment);
 crmProxy.get('/crm/finance/:customerId', getFinance);
 crmProxy.post('/crm/paylink', postPayLink);
 crmProxy.post('/crm/interactions', postInteraction);
+

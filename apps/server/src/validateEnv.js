@@ -1,4 +1,4 @@
-import { serverEnv as env } from '@shared/env';
+﻿import { serverEnv as env } from 'shared/env';
 export function validateEnv() {
   const required = [
     'accountSid','authToken','apiKey','apiSecret',
@@ -10,3 +10,4 @@ export function validateEnv() {
     console.warn('[ENV WARNING] Missing:', missing.join(', '));
   }
 }
+
