@@ -3,6 +3,7 @@
 A proof-of-concept contact center using Twilio Voice, TaskRouter, and Studio APIs to demonstrate a browser-based soft phone, CRM integration, and live call controls.
 
 ## Table of Contents
+- [Repository Layout & Service Roles](docs/README.md)
 - [Architecture Overview](#architecture-overview)
 - [Prerequisites](#prerequisites)
 - [Environment Variables](#environment-variables)
