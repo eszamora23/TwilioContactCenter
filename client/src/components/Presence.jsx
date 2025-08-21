@@ -16,6 +16,7 @@ import { UserIcon } from '@twilio-paste/icons/esm/UserIcon';
 import { Input } from '@twilio-paste/core/input';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
+const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
 
 export default function Presence({ onTransferClick, onWhisperClick }) {
   const { t } = useTranslation();
@@ -44,7 +45,7 @@ export default function Presence({ onTransferClick, onWhisperClick }) {
 
   useEffect(() => {
     // fuerza websocket y habilita reconexión suave
-    const socket = io(baseURL, {
+    const socket = io(socketBase, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
