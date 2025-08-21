@@ -5,9 +5,9 @@ import { I18nextProvider } from 'react-i18next';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import i18n from './i18n.js';
-import { setAuth } from './services/index.js';
-import Login from './components/Login.jsx';
-import AgentApp from './components/AgentApp.jsx';
+import { setAuth } from './features/index.js';
+import Login from './features/auth/components/Login.jsx';
+import AgentApp from './features/tasks/components/AgentApp.jsx';
 const queryClient = new QueryClient();
 
 export default function App() {

@@ -1,6 +1,6 @@
 // contact-center/client/src/components/StatusBar.jsx
 import { useEffect, useState } from 'react';
-import http from '../services/http.js';
+import http from '../../../shared/services/http.js';
 import { useTranslation } from 'react-i18next';
 
 import { Box } from '@twilio-paste/core/box';

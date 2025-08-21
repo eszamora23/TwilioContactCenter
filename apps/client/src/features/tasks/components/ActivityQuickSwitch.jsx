@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import http from '../services/http.js';
+import http from '../../../shared/services/http.js';
 import { Stack } from '@twilio-paste/core/stack';
 import { Badge } from '@twilio-paste/core/badge';
 import { Select, Option } from '@twilio-paste/core/select';

@@ -1,4 +1,4 @@
-import http from './http.js';
+import http from '../../../shared/services/http.js';
 
 export const crmVehicleById = (id) =>
   http.get(`/crm/vehicles/by-id/${id}`).then((r) => r.data);

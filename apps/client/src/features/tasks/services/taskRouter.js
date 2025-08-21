@@ -1,4 +1,4 @@
-import http, { retry } from './http.js';
+import http, { retry } from '../../../shared/services/http.js';
 import { useQuery } from '@tanstack/react-query';
 
 export const workerToken = () =>
