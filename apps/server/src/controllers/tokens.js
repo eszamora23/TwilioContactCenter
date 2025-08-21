@@ -1,6 +1,35 @@
-﻿import { signAgentToken, requireAuth } from 'shared/auth';
+﻿import crypto from 'crypto';
+import { signAgentToken } from 'shared/auth';
 import { serverEnv as env } from 'shared/env';
 import { fetchWorker, createVoiceToken, createWorkerToken } from '../services/tokens.js';
+
+const refreshTokens = new Map();
+
+const accessCookieOpts = {
+  httpOnly: true,
+  secure: env.cookieSecure,
+  sameSite: 'strict',
+  domain: env.cookieDomain,
+  maxAge: 8 * 60 * 60 * 1000,
+};
+
+const refreshCookieOpts = {
+  httpOnly: true,
+  secure: env.cookieSecure,
+  sameSite: 'strict',
+  domain: env.cookieDomain,
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+};
+
+function getCookie(req, name) {
+  const raw = req.headers?.cookie;
+  if (!raw) return undefined;
+  return raw
+    .split(';')
+    .map(c => c.trim())
+    .find(c => c.startsWith(`${name}=`))
+    ?.split('=')[1];
+}
 
 function toContactUri(raw) {
   const val = String(raw || '').trim();
@@ -27,14 +56,37 @@ export async function login(req, res) {
         hint: 'Verifica que el Worker tenga attributes.contact_uri igual al expected.'
       });
     }
+    const access = signAgentToken(agentId, workerSid, normalized);
+    const refresh = crypto.randomUUID();
+    refreshTokens.set(refresh, { agentId, workerSid, identity: normalized });
+    res.cookie(env.accessTokenName, access, accessCookieOpts);
+    res.cookie(env.refreshTokenName, refresh, refreshCookieOpts);
     return res.json({
-      token: signAgentToken(agentId, workerSid, normalized),
       agent: { id: agentId, workerSid, identity: normalized }
     });
   } catch (e) {
     console.error('[AUTH/LOGIN] Error fetching worker or TR config:', e?.message || e);
     return res.status(400).json({ error: 'invalid workerSid or TR config' });
   }
+}
+
+export function refresh(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (!token || !refreshTokens.has(token)) {
+    return res.status(401).json({ error: 'invalid refresh token' });
+  }
+  const { agentId, workerSid, identity } = refreshTokens.get(token);
+  const access = signAgentToken(agentId, workerSid, identity);
+  res.cookie(env.accessTokenName, access, accessCookieOpts);
+  return res.json({ ok: true });
+}
+
+export function logout(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (token) refreshTokens.delete(token);
+  res.clearCookie(env.accessTokenName, { domain: env.cookieDomain });
+  res.clearCookie(env.refreshTokenName, { domain: env.cookieDomain });
+  res.status(204).end();
 }
 
 export function voiceToken(req, res) {

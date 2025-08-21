@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 
-import { signAgentToken, requireAuth } from '../src/auth.js';
-import { env } from '../src/env.js';
+import { signAgentToken, requireAuth } from 'shared/auth';
+import { serverEnv as env } from 'shared/env';
 
 function createRes() {
   const res = {};
@@ -14,7 +14,7 @@ function createRes() {
 
 test('accepts tokens signed with HS256', () => {
   const token = signAgentToken('user', 'WS123', 'alice');
-  const req = { headers: { authorization: `Bearer ${token}` } };
+  const req = { headers: { cookie: `${env.accessTokenName}=${token}` } };
   const res = createRes();
   let called = false;
 
@@ -26,7 +26,7 @@ test('accepts tokens signed with HS256', () => {
 
 test('rejects tokens signed with non-HS256 algorithms', () => {
   const token = jwt.sign({ sub: 'user' }, env.jwtSecret, { algorithm: 'HS512' });
-  const req = { headers: { authorization: `Bearer ${token}` } };
+  const req = { headers: { cookie: `${env.accessTokenName}=${token}` } };
   const res = createRes();
   let called = false;
 

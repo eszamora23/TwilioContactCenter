@@ -2,27 +2,24 @@ import axios from 'axios';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
 
-const http = axios.create({ baseURL });
+const http = axios.create({ baseURL, withCredentials: true });
 
-export function setAuth(token) {
-  if (token) {
-    http.defaults.headers.common.Authorization = `Bearer ${token}`;
-    localStorage.setItem('auth_token', token);
-  } else {
-    delete http.defaults.headers.common.Authorization;
-    localStorage.removeItem('auth_token');
-  }
-}
-
-const existing = localStorage.getItem('auth_token');
-if (existing) setAuth(existing);
+let refreshPromise = null;
 
 http.interceptors.response.use(
   (r) => r,
-  (err) => {
-    if (err?.response?.status === 401) {
-      setAuth(null);
-      window.location.reload();
+  async (err) => {
+    const { response, config } = err || {};
+    if (response?.status === 401 && !config._retry && config.url !== '/auth/refresh') {
+      config._retry = true;
+      try {
+        refreshPromise = refreshPromise || http.post('/auth/refresh');
+        await refreshPromise;
+        refreshPromise = null;
+        return http(config);
+      } catch {
+        window.location.reload();
+      }
     }
     return Promise.reject(err);
   }
