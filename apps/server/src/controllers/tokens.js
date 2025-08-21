@@ -70,6 +70,17 @@ export async function login(req, res) {
   }
 }
 
+export function me(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (!token || !refreshTokens.has(token)) {
+    return res.status(401).json({ error: 'invalid refresh token' });
+  }
+  const { agentId, workerSid, identity } = refreshTokens.get(token);
+  const access = signAgentToken(agentId, workerSid, identity);
+  res.cookie(env.accessTokenName, access, accessCookieOpts);
+  return res.json({ agent: { id: agentId, workerSid, identity } });
+}
+
 export function refresh(req, res) {
   const token = getCookie(req, env.refreshTokenName);
   if (!token || !refreshTokens.has(token)) {

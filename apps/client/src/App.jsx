@@ -1,5 +1,5 @@
 // contact-center/client/src/App.jsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IdleTimerProvider } from 'react-idle-timer';
 import { I18nextProvider } from 'react-i18next';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -12,6 +12,13 @@ const queryClient = new QueryClient();
 
 export default function App() {
   const [ctx, setCtx] = useState(null);
+  useEffect(() => {
+    Api.me()
+      .then(data => {
+        if (data?.agent) setCtx({ agent: data.agent });
+      })
+      .catch(() => {});
+  }, []);
   if (!ctx) return <Login onReady={setCtx} />;
 
   const onIdle = async () => {
