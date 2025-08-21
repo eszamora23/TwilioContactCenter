@@ -1,5 +1,9 @@
 {
   "name": "shared",
   "version": "0.1.0",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./env": "./env.js",
+    "./auth": "./auth.js"
+  }
 }
