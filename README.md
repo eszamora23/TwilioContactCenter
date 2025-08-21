@@ -72,15 +72,13 @@ For the web client, you can override the API base URL:
 VITE_API_BASE=http://localhost:4000/api
 ```
 
-Place this in `client/.env` or export it before running `npm run dev`.
+Place this in `apps/client/.env` or export it before running `npm run dev -w apps/client`.
 
 ## Provisioning Twilio Resources
 A helper script creates (or reuses) the TwiML App, TaskRouter workspace, queue, workflow, and basic activities.
 
 ```bash
-# From repository root
-cd server
-node ../scripts/provision.mjs
+npm run provision -w apps/server
 ```
 
 Before running, set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `PUBLIC_BASE_URL` in the environment. After executing, the script prints the SIDs required to populate your `.env` file.
@@ -91,10 +89,9 @@ A lightweight Express service that fronts a MongoDB database and exposes demo en
 Install dependencies and seed demo data:
 
 ```bash
-cd crm-orchestrator
-npm install
+npm install -w apps/crm-orchestrator
 # Optional: seed database with random demo data
-node scripts/seed.mjs
+npm exec -w apps/crm-orchestrator node scripts/seed.mjs
 ```
 
 `MONGODB_URI` should point to your Mongo instance (`mongodb://127.0.0.1:27017/crm_demo` by default).
@@ -102,7 +99,7 @@ node scripts/seed.mjs
 Start the service:
 
 ```bash
-npm run dev    # or npm start
+npm run dev -w apps/crm-orchestrator    # or npm start -w apps/crm-orchestrator
 ```
 
 The service listens on `http://localhost:4100` by default. Adjust `CRM_PORT` in `.env` if needed.
@@ -113,8 +110,7 @@ Handles authentication, TaskRouter tokens, Voice webhooks, transfer logic, recor
 Install dependencies:
 
 ```bash
-cd server
-npm install
+npm install -w apps/server
 ```
 
 Ensure `.env` in the project root is populated with all required Twilio credentials and `MONGODB_URI`.
@@ -122,9 +118,9 @@ Ensure `.env` in the project root is populated with all required Twilio credenti
 Run the server:
 
 ```bash
-npm run dev    # restarts on file changes
+npm run dev -w apps/server    # restarts on file changes
 # or
-npm start
+npm start -w apps/server
 ```
 
 Default port: `4000`. The server exposes REST endpoints under `/api/*` and uses Socket.IO for presence updates.
@@ -135,15 +131,14 @@ A React application built with Vite and Twilio Paste components. It communicates
 Install and run:
 
 ```bash
-cd client
-npm install
-npm run dev    # Vite dev server at http://localhost:5173
+npm install -w apps/client
+npm run dev -w apps/client    # Vite dev server at http://localhost:5173
 ```
 
 If the server runs on a non-default port or host, set `VITE_API_BASE` before starting:
 
 ```bash
-VITE_API_BASE=http://localhost:4000/api npm run dev
+VITE_API_BASE=http://localhost:4000/api npm run dev -w apps/client
 ```
 
 Login from the web UI:
