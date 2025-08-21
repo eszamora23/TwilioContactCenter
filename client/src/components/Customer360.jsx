@@ -1,7 +1,9 @@
 // contact-center/client/src/components/Customer360.jsx
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Api from '../api.js';
+
 import { Box } from '@twilio-paste/core/box';
 import { Card } from '@twilio-paste/core/card';
 import { Heading } from '@twilio-paste/core/heading';
@@ -18,7 +20,7 @@ import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Spinner } from '@twilio-paste/core/spinner';
 import { Toaster, useToaster } from '@twilio-paste/core/toast';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
 
 export default function Customer360({ selectedTask }) {
   const { t } = useTranslation();
@@ -32,12 +34,17 @@ export default function Customer360({ selectedTask }) {
   const toaster = useToaster();
   const queryClient = useQueryClient();
 
+  /* ===================== Data ===================== */
   const { data: task } = useQuery({
     queryKey: ['myTask', selectedTask?.sid],
     queryFn: async () => {
       if (selectedTask) return selectedTask;
       const list = await Api.myTasks('assigned,reserved,wrapping');
-      return list.find(x => ['assigned', 'reserved'].includes(String(x.assignmentStatus).toLowerCase())) || list[0] || null;
+      return (
+        list.find((x) =>
+          ['assigned', 'reserved'].includes(String(x.assignmentStatus).toLowerCase())
+        ) || list[0] || null
+      );
     },
     staleTime: 5000,
     refetchInterval: 5000,
@@ -94,6 +101,7 @@ export default function Customer360({ selectedTask }) {
     return `${customer?.name || t('customer')} ${customer?.tier ? `· ${customer.tier}` : ''}`;
   }, [customer, vehicle, t]);
 
+  /* ===================== Actions ===================== */
   async function sendPaylink() {
     if (!customer?._id) return;
     try {
@@ -131,132 +139,226 @@ export default function Customer360({ selectedTask }) {
     }
   }
 
+  /* ===================== Empty / Loading ===================== */
   if (!task) {
     return (
       <Card padding="space70">
-        <Heading as="h3" variant="heading30">{t('customer360')}</Heading>
+        <Heading as="h3" variant="heading30">
+          {t('customer360')}
+        </Heading>
         <Box color="colorTextWeak">{t('noActiveTask')}</Box>
       </Card>
     );
   }
 
+  /* ===================== Layout (uniforme y claro) ===================== */
   return (
-    <Card padding="space70">
+    <Card padding="space70" display="flex" flexDirection="column" height="100%" minHeight="0">
       <Toaster {...toaster} />
-      <Box aria-live="assertive">
-        {error && <Alert variant="error">{error}</Alert>}
-      </Box>
-      <Stack orientation="vertical" spacing="space50">
-          <Stack
-            orientation={['vertical', 'horizontal']}
-            spacing="space40"
-            alignment="center"
-            wrap
-          >
-            <Heading as="h3" variant="heading30" margin="space0">{title}</Heading>
-            {customer?.tier ? <Badge as="span" variant="new">{customer.tier}</Badge> : null}
-          </Stack>
-
-        <Box>
-          <b>{t('intent')}:</b> {task.attributes?.intent || '—'}<br/>
-          <b>{t('ivrPath')}:</b> {task.attributes?.ivr_path || '—'}
+      {error ? (
+        <Box marginBottom="space60">
+          <Alert variant="error">{error}</Alert>
         </Box>
+      ) : null}
 
-          <Tabs baseId="customer-tabs">
-            <Box overflowX="auto">
-              <TabList aria-label={t('customerTabsAria')}>
-                <Tab>{t('vehicle')}</Tab>
-                <Tab>{t('appointments')}</Tab>
-                <Tab>{t('finance')}</Tab>
-                <Tab>{t('history')}</Tab>
-              </TabList>
-            </Box>
-            <TabPanels>
-            <TabPanel>
-              {vehicle ? (
-                <Box>
-                  <b>{t('vehicle')}:</b> {vehicle.year || '—'} {vehicle.make || ''} {vehicle.model || ''} <br/>
-                  <b>{t('vin')}:</b> {vehicle.vin || '—'} &nbsp;&nbsp; <b>{t('plate')}:</b> {vehicle.plate || '—'}
-                </Box>
-              ) : t('noVehicle')}
-            </TabPanel>
-            <TabPanel>
-              {!!appts?.length ? (
-                <Box>
-                  <b>{t('appointments')}:</b>
-                  <ul>
-                    {appts.map(a => (
-                      <li key={a._id}>{new Date(a.datetime).toLocaleString()} — {a.serviceType || t('service')} ({a.status})</li>
-                    ))}
-                  </ul>
-                </Box>
-              ) : t('noAppointments')}
-              <Button
-                variant="secondary"
-                onClick={() => { setScheduleStatus('idle'); setIsScheduleOpen(true); }}
-                disabled={scheduleStatus === 'loading'}
-              >
-                {scheduleStatus === 'loading' ? (
-                  <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
-                ) : t('scheduleNewAppointment')}
-              </Button>
-              {scheduleStatus === 'success' && (
-                <Badge as="span" variant="success" marginLeft="space30">
-                  {t('scheduleSuccess')}
-                </Badge>
-              )}
-              {scheduleStatus === 'error' && (
-                <Badge as="span" variant="error" marginLeft="space30">
-                  {error}
-                </Badge>
-              )}
-            </TabPanel>
-            <TabPanel>
-              {finance ? (
-                <Box>
-                  <b>{t('finance')}:</b><br/>
-                  {t('balance')}: {typeof finance.balance === 'number' ? finance.balance : t('masked')}<br/>
-                  {t('payoffDate')}: {finance.payoffDate || '—'}<br/>
-                  {t('loyaltyCashback')}: {finance.loyaltyCashback ?? '—'}<br/>
-                  {t('lastPayment')}: {finance.lastPayment || '—'}<br/>
-                  <Button
-                    variant="secondary"
-                    onClick={sendPaylink}
-                    style={{marginTop: 8}}
-                    disabled={paylinkStatus === 'loading'}
-                  >
-                    {paylinkStatus === 'loading' ? (
-                      <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
-                    ) : t('sendPayLink')}
-                  </Button>
-                  {paylinkStatus === 'success' && (
-                    <Badge as="span" variant="success" marginLeft="space30">
-                      {t('payLinkSent')}
-                    </Badge>
-                  )}
-                  {paylinkStatus === 'error' && (
-                    <Badge as="span" variant="error" marginLeft="space30">
-                      {t('payLinkError')}
-                    </Badge>
-                  )}
-                </Box>
-              ) : t('noFinance')}
-            </TabPanel>
-            <TabPanel>
-              {!!interactions?.length ? (
-                <Timeline>
-                  {interactions.map((inter, idx) => (
-                    <TimelineItem key={idx}>
-                      {new Date(inter.createdAt).toLocaleString()}: {inter.intent} - {inter.disposition}
-                    </TimelineItem>
-                  ))}
-                </Timeline>
-              ) : t('noInteractions')}
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
+      {/* Header compacto y claro */}
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space50"
+        distribution="spaceBetween"
+        alignment="center"
+        style={{ flexWrap: 'wrap' }}
+      >
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h3" variant="heading30" margin="space0">
+            {title}
+          </Heading>
+          {customer?.tier ? <Badge as="span" variant="new">{customer.tier}</Badge> : null}
+        </Stack>
+
+        {/* Acciones principales */}
+        <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+          <Button
+            variant="secondary"
+            onClick={() => { setScheduleStatus('idle'); setIsScheduleOpen(true); }}
+            disabled={scheduleStatus === 'loading'}
+          >
+            {scheduleStatus === 'loading' ? (
+              <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+            ) : t('scheduleNewAppointment')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={sendPaylink}
+            disabled={paylinkStatus === 'loading'}
+          >
+            {paylinkStatus === 'loading' ? (
+              <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+            ) : t('sendPayLink')}
+          </Button>
+        </Stack>
       </Stack>
 
+      {/* Meta bar */}
+      <Box
+        marginTop="space50"
+        padding="space50"
+        backgroundColor="colorBackgroundBody"
+        borderRadius="borderRadius20"
+      >
+        <Stack
+          orientation={['vertical', 'horizontal']}
+          spacing="space60"
+          style={{ flexWrap: 'wrap' }}
+        >
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('intent')}</Box>
+            <Box fontWeight="fontWeightSemibold">{task.attributes?.intent || '—'}</Box>
+          </Box>
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('ivrPath')}</Box>
+            <Box fontWeight="fontWeightSemibold">{task.attributes?.ivr_path || '—'}</Box>
+          </Box>
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('vehicle')}</Box>
+            <Box fontWeight="fontWeightSemibold">
+              {vehicle ? `${vehicle?.year || ''} ${vehicle?.make || ''} ${vehicle?.model || ''}`.trim() : '—'}
+            </Box>
+          </Box>
+        </Stack>
+      </Box>
+
+      {/* Tabs: contenido con altura consistente */}
+      <Box marginTop="space70" flexGrow={1} minHeight="0" display="flex" flexDirection="column">
+        <Tabs baseId="customer-tabs">
+          <Box overflowX="auto">
+            <TabList aria-label={t('customerTabsAria')}>
+              <Tab>{t('vehicle')}</Tab>
+              <Tab>{t('appointments')}</Tab>
+              <Tab>{t('finance')}</Tab>
+              <Tab>{t('history')}</Tab>
+            </TabList>
+          </Box>
+
+          <Box flexGrow={1} minHeight="0" overflow="auto">
+            <TabPanels>
+              {/* ===== Vehicle ===== */}
+              <TabPanel>
+                {vehicle ? (
+                  <Stack orientation={['vertical', 'horizontal']} spacing="space80">
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('vehicle')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {vehicle.year || '—'} {vehicle.make || ''} {vehicle.model || ''}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('vin')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{vehicle.vin || '—'}</Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('plate')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{vehicle.plate || '—'}</Box>
+                    </Box>
+                  </Stack>
+                ) : (
+                  <Box color="colorTextWeak">{t('noVehicle')}</Box>
+                )}
+              </TabPanel>
+
+              {/* ===== Appointments ===== */}
+              <TabPanel>
+                {appts?.length ? (
+                  <Table scrollHorizontally>
+                    <THead>
+                      <Tr>
+                        <Th>{t('date')}</Th>
+                        <Th>{t('serviceType')}</Th>
+                        <Th>{t('status')}</Th>
+                      </Tr>
+                    </THead>
+                    <TBody>
+                      {appts.map((a) => (
+                        <Tr key={a._id}>
+                          <Td>{new Date(a.datetime).toLocaleString()}</Td>
+                          <Td>{a.serviceType || t('service')}</Td>
+                          <Td>{a.status}</Td>
+                        </Tr>
+                      ))}
+                    </TBody>
+                  </Table>
+                ) : (
+                  <Box color="colorTextWeak">{t('noAppointments')}</Box>
+                )}
+                {/* Feedback visual de acciones */}
+                <Box marginTop="space40">
+                  {scheduleStatus === 'success' ? (
+                    <Badge as="span" variant="success">{t('scheduleSuccess')}</Badge>
+                  ) : null}
+                  {scheduleStatus === 'error' ? (
+                    <Badge as="span" variant="error" marginLeft="space40">{error}</Badge>
+                  ) : null}
+                </Box>
+              </TabPanel>
+
+              {/* ===== Finance ===== */}
+              <TabPanel>
+                {finance ? (
+                  <Stack orientation={['vertical', 'horizontal']} spacing="space80">
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('balance')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {typeof finance.balance === 'number' ? finance.balance : t('masked')}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('payoffDate')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{finance.payoffDate || '—'}</Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('loyaltyCashback')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {finance.loyaltyCashback ?? '—'}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('lastPayment')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{finance.lastPayment || '—'}</Box>
+                    </Box>
+                  </Stack>
+                ) : (
+                  <Box color="colorTextWeak">{t('noFinance')}</Box>
+                )}
+                <Box marginTop="space40">
+                  {paylinkStatus === 'success' ? (
+                    <Badge as="span" variant="success">{t('payLinkSent')}</Badge>
+                  ) : null}
+                  {paylinkStatus === 'error' ? (
+                    <Badge as="span" variant="error" marginLeft="space40">{t('payLinkError')}</Badge>
+                  ) : null}
+                </Box>
+              </TabPanel>
+
+              {/* ===== History ===== */}
+              <TabPanel>
+                {interactions?.length ? (
+                  <Timeline>
+                    {interactions.map((inter, idx) => (
+                      <TimelineItem key={idx}>
+                        {new Date(inter.createdAt).toLocaleString()}: {inter.intent} — {inter.disposition}
+                      </TimelineItem>
+                    ))}
+                  </Timeline>
+                ) : (
+                  <Box color="colorTextWeak">{t('noInteractions')}</Box>
+                )}
+              </TabPanel>
+            </TabPanels>
+          </Box>
+        </Tabs>
+      </Box>
+
+      {/* Modal: schedule */}
       <Modal isOpen={isScheduleOpen} onDismiss={() => setIsScheduleOpen(false)} size="default">
         <ModalHeader>
           <ModalHeading>{t('scheduleAppointment')}</ModalHeading>
@@ -265,11 +367,20 @@ export default function Customer360({ selectedTask }) {
           <Stack orientation="vertical" spacing="space60">
             <Box>
               <Label htmlFor="date">{t('date')}</Label>
-              <Input id="date" type="datetime-local" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
+              <Input
+                id="date"
+                type="datetime-local"
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+              />
             </Box>
             <Box>
               <Label htmlFor="type">{t('serviceType')}</Label>
-              <Select id="type" value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
+              <Select
+                id="type"
+                value={scheduleType}
+                onChange={(e) => setScheduleType(e.target.value)}
+              >
                 <Option value="">{t('selectType')}</Option>
                 <Option value="maintenance">Maintenance</Option>
                 <Option value="recall">Recall</Option>
@@ -278,8 +389,12 @@ export default function Customer360({ selectedTask }) {
           </Stack>
         </ModalBody>
         <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsScheduleOpen(false)}>{t('cancel')}</Button>
-          <Button variant="primary" onClick={scheduleAppointment}>{t('schedule')}</Button>
+          <Button variant="secondary" onClick={() => setIsScheduleOpen(false)}>
+            {t('cancel')}
+          </Button>
+          <Button variant="primary" onClick={scheduleAppointment}>
+            {t('schedule')}
+          </Button>
         </ModalFooter>
       </Modal>
     </Card>

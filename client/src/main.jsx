@@ -1,12 +1,22 @@
+// contact-center/client/src/main.jsx
 import { createRoot } from 'react-dom/client';
 import { Theme } from '@twilio-paste/core/theme';
-import { Box } from '@twilio-paste/core/box';
 import App from './App.jsx';
+import Softphone from './components/Softphone.jsx';
 
-createRoot(document.getElementById('root')).render(
+const root = createRoot(document.getElementById('root'));
+
+const isSoftphonePopup = window.location.hash === '#softphone-host';
+
+root.render(
   <Theme.Provider theme="default">
-    <Box minHeight="100vh" backgroundColor="colorBackgroundBody" padding={['space70','space120']}>
+    {isSoftphonePopup ? (
+      // Popup renders the Softphone in remoteOnly mode
+      <div style="min-height:100vh;background:var(--paste-color-background-body);padding:16px">
+        <Softphone remoteOnly />
+      </div>
+    ) : (
       <App />
-    </Box>
+    )}
   </Theme.Provider>
 );
