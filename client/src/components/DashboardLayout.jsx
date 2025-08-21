@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Box } from '@twilio-paste/core/box';
+import { Button } from '@twilio-paste/core/button';
 import {
   Sidebar,
   SidebarHeader,
@@ -12,6 +13,7 @@ import {
   SidebarPushContentWrapper,
 } from '@twilio-paste/core/sidebar';
 import { useDisclosureState as useDisclosure } from '@twilio-paste/core/disclosure';
+import { ArrowForwardIcon } from '@twilio-paste/icons/esm/ArrowForwardIcon';
 
 export default function DashboardLayout({ sections }) {
   const [active, setActive] = useState(sections[0]?.id);
@@ -61,6 +63,17 @@ export default function DashboardLayout({ sections }) {
 
       <SidebarPushContentWrapper collapsed={!disclosure.visible}>
         <Box as="main" flexGrow={1} overflow="auto" padding="space60">
+          {!disclosure.visible && (
+            <Button
+              aria-label="Show navigation"
+              variant="secondary"
+              size="icon"
+              marginBottom="space60"
+              onClick={disclosure.toggle}
+            >
+              <ArrowForwardIcon decorative={false} />
+            </Button>
+          )}
           {sections.map((section) => (
             <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
               {section.content}
