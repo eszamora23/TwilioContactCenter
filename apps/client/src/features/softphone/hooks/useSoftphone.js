@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import { VoiceDevice } from '../services/VoiceDevice.js';
+import { getCallSid } from '../services/callSidStore.js';
+import Api from '../../index.js';
 
 /**
  * Hook encapsulating VoiceDevice lifecycle, BroadcastChannel sync and call controls
@@ -154,7 +156,9 @@ export default function useSoftphone() {
   async function hangup() {
     try {
       setError('');
+      const sid = getCallSid();
       await dev.disconnect();
+      await Api.hangup(sid);
     } catch {
       setError(t('hangupError'));
     }
