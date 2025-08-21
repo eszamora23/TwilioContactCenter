@@ -12,7 +12,7 @@ root.render(
   <Theme.Provider theme="default">
     {isSoftphonePopup ? (
       // Popup renders the Softphone in remoteOnly mode
-      <div style="min-height:100vh;background:var(--paste-color-background-body);padding:16px">
+      <div style={{ minHeight: '100vh', background: 'var(--paste-color-background-body)', padding: '16px' }}>
         <Softphone remoteOnly />
       </div>
     ) : (
