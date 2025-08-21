@@ -1,0 +1,871 @@
+{
+  "description": "Dealership IVR — ANI lookup, Service/Recall scheduling, Finance OTP with Recording Pause/Resume, TaskRouter transfer (one-digit menus, 0=repeat/back, 9=agent).",
+  "states": [
+    {
+      "name": "Trigger",
+      "type": "trigger",
+      "transitions": [
+        {
+          "event": "incomingMessage"
+        },
+        {
+          "event": "incomingConversationMessage"
+        },
+        {
+          "event": "incomingRequest"
+        },
+        {
+          "event": "incomingParent"
+        },
+        {
+          "next": "lookup",
+          "event": "incomingCall"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "name": "lookup",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "found_customer",
+          "event": "success"
+        },
+        {
+          "next": "lookup_failed",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 180,
+          "y": 150
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{\n \"From\": \"{{trigger.call.From}}\",\n \"plate\": \"{{flow.data.plate}}\",\n \"vin\": \"{{flow.data.vin}}\"\n}",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/lookup"
+      }
+    },
+    {
+      "name": "lookup_failed",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 520,
+          "y": 150
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"identify\",\n \"ivr_path\": \"lookup>error>agent\",\n \"callSid\": \"{{trigger.call.Sid}}\",\n \"reason\": \"lookup_http_failed\"\n}"
+      }
+    },
+    {
+      "name": "found_customer",
+      "type": "split-based-on",
+      "transitions": [
+        {
+          "next": "nv_next",
+          "event": "noMatch"
+        },
+        {
+          "next": "welcome",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "vehicleId present",
+              "arguments": [
+                "{{widgets.lookup.parsed.vehicleId}}"
+              ],
+              "type": "is_not_blank",
+              "value": "Is Not Blank"
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "input": "{{widgets.lookup.parsed.vehicleId}}",
+        "offset": {
+          "x": 180,
+          "y": 360
+        }
+      }
+    },
+    {
+      "name": "nv_next",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "enq_agent_nf",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 9",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "9"
+            }
+          ]
+        },
+        {
+          "next": "nv_next",
+          "event": "keypress"
+        },
+        {
+          "next": "nv_next",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": 520,
+          "y": 470
+        },
+        "loop": 1,
+        "say": "We found your account but not a specific vehicle. We can connect you to an agent to help. Press 9 for an agent, or press 0 to hear this message again.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "enq_agent_nf",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 820,
+          "y": 470
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"identify\",\n \"ivr_path\": \"notfound>vehicle>agent\",\n \"callSid\": \"{{trigger.call.Sid}}\"\n}"
+      }
+    },
+    {
+      "name": "welcome",
+      "type": "say-play",
+      "transitions": [
+        {
+          "next": "main",
+          "event": "audioComplete"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "offset": {
+          "x": 180,
+          "y": 560
+        },
+        "loop": 1,
+        "say": "{% if widgets.lookup.parsed.name %}Hello {{ widgets.lookup.parsed.name }}. {% endif %}Welcome to the dealership service line."
+      }
+    },
+    {
+      "name": "main",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "route_main",
+          "event": "keypress"
+        },
+        {
+          "next": "main",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": 180,
+          "y": 800
+        },
+        "loop": 1,
+        "say": "{% if widgets.lookup.parsed.plate %}We detected your vehicle, plate {{ widgets.lookup.parsed.plate }}. {% endif %}Main menu: Press 1 for appointment status and history. Press 2 to schedule service or a recall. Press 3 for finance. Press 9 to speak with an agent. Press 0 to repeat.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "route_main",
+      "type": "split-based-on",
+      "transitions": [
+        {
+          "next": "service_status",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "Digit 1",
+              "arguments": [
+                "{{widgets.main.Digits}}"
+              ],
+              "type": "equal_to",
+              "value": "1"
+            }
+          ]
+        },
+        {
+          "next": "recalls_check",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "Digit 2",
+              "arguments": [
+                "{{widgets.main.Digits}}"
+              ],
+              "type": "equal_to",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "next": "rec_pause",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "Digit 3",
+              "arguments": [
+                "{{widgets.main.Digits}}"
+              ],
+              "type": "equal_to",
+              "value": "3"
+            }
+          ]
+        },
+        {
+          "next": "enq_agent",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "Digit 9",
+              "arguments": [
+                "{{widgets.main.Digits}}"
+              ],
+              "type": "equal_to",
+              "value": "9"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "match",
+          "conditions": [
+            {
+              "friendly_name": "Digit 0",
+              "arguments": [
+                "{{widgets.main.Digits}}"
+              ],
+              "type": "equal_to",
+              "value": "0"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "noMatch"
+        }
+      ],
+      "properties": {
+        "input": "{{widgets.main.Digits}}",
+        "offset": {
+          "x": 180,
+          "y": 920
+        }
+      }
+    },
+    {
+      "name": "service_status",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "status_next",
+          "event": "success"
+        },
+        {
+          "next": "enq_service_status",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -200,
+          "y": 1080
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/service/status"
+      }
+    },
+    {
+      "name": "status_next",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "enq_service_status",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 9",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "9"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress"
+        },
+        {
+          "next": "main",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": -200,
+          "y": 1320
+        },
+        "loop": 1,
+        "say": "{{ widgets.service_status.parsed.say | default:\"We could not find recent appointments.\" }} Press 9 to talk with a service advisor. Press 0 to return to the main menu.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "enq_service_status",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 60,
+          "y": 1320
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"service_status\",\n \"ivr_path\": \"found>menu>service>status\",\n \"callSid\": \"{{trigger.call.Sid}}\",\n \"customerId\": \"{{widgets.lookup.parsed.customerId}}\",\n \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\",\n \"vin\": \"{{widgets.lookup.parsed.vin}}\",\n \"plate\": \"{{widgets.lookup.parsed.plate}}\",\n \"loyaltyTier\": \"{{widgets.lookup.parsed.tier}}\"\n}"
+      }
+    },
+    {
+      "name": "recalls_check",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "recalls_menu",
+          "event": "success"
+        },
+        {
+          "next": "recalls_menu",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 480,
+          "y": 1080
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"vin\": \"{{widgets.lookup.parsed.vin}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/recalls/check"
+      }
+    },
+    {
+      "name": "recalls_menu",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "service_schedule_recall",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 1",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "1"
+            }
+          ]
+        },
+        {
+          "next": "service_schedule_maint",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 2",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 0",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "0"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress"
+        },
+        {
+          "next": "main",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": 480,
+          "y": 1200
+        },
+        "loop": 1,
+        "say": "{% if widgets.recalls_check.parsed.recalls and widgets.recalls_check.parsed.recalls.size > 0 %}We found open recalls for your vehicle. Press 1 to schedule a recall. {% endif %}Press 2 to schedule regular maintenance. Press 0 to return to the main menu.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "service_schedule_recall",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "sched_next",
+          "event": "success"
+        },
+        {
+          "next": "main",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 480,
+          "y": 1320
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\", \"serviceType\": \"recall\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/service/schedule"
+      }
+    },
+    {
+      "name": "service_schedule_maint",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "sched_next",
+          "event": "success"
+        },
+        {
+          "next": "main",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 740,
+          "y": 1320
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\", \"serviceType\": \"maintenance\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/service/schedule"
+      }
+    },
+    {
+      "name": "sched_next",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "enq_service_schedule",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 9",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "9"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 0",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "0"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress"
+        },
+        {
+          "next": "main",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": 610,
+          "y": 1560
+        },
+        "loop": 1,
+        "say": "{{ widgets.service_schedule_recall.parsed.say | default: widgets.service_schedule_maint.parsed.say | default: \"Your appointment has been created.\" }} Press 9 to talk with service, or press 0 to return to the main menu.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "enq_service_schedule",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 880,
+          "y": 1560
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"service_schedule\",\n \"ivr_path\": \"found>menu>service>schedule\",\n \"callSid\": \"{{trigger.call.Sid}}\",\n \"customerId\": \"{{widgets.lookup.parsed.customerId}}\",\n \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\",\n \"vin\": \"{{widgets.lookup.parsed.vin}}\",\n \"plate\": \"{{widgets.lookup.parsed.plate}}\",\n \"appointment\": {\n \"datetime\": \"{{ widgets.service_schedule_recall.parsed.appointment.datetime | default: widgets.service_schedule_maint.parsed.appointment.datetime }}\",\n \"serviceType\": \"{{ widgets.service_schedule_recall.parsed.appointment.serviceType | default: widgets.service_schedule_maint.parsed.appointment.serviceType }}\"\n }\n}"
+      }
+    },
+    {
+      "name": "rec_pause",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "otp",
+          "event": "success"
+        },
+        {
+          "next": "otp",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -520,
+          "y": 1080
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"callSid\": \"{{trigger.call.Sid}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/voice/recordings/pause"
+      }
+    },
+    {
+      "name": "otp",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "rec_resume",
+          "event": "keypress"
+        },
+        {
+          "next": "rec_resume",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 4,
+        "offset": {
+          "x": -520,
+          "y": 1200
+        },
+        "loop": 1,
+        "say": "Please enter your four digit verification PIN.",
+        "stop_gather": true,
+        "timeout": 10
+      }
+    },
+    {
+      "name": "rec_resume",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "fin_balance",
+          "event": "success"
+        },
+        {
+          "next": "fin_balance",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -520,
+          "y": 1320
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"callSid\": \"{{trigger.call.Sid}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/voice/recordings/resume"
+      }
+    },
+    {
+      "name": "fin_balance",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "fin_next",
+          "event": "success"
+        },
+        {
+          "next": "enq_finance",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -520,
+          "y": 1440
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"customerId\": \"{{widgets.lookup.parsed.customerId}}\", \"otpCode\": \"{{widgets.otp.Digits}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/finance/balance"
+      }
+    },
+    {
+      "name": "fin_next",
+      "type": "gather-input-on-call",
+      "transitions": [
+        {
+          "next": "paylink",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 1",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "1"
+            }
+          ]
+        },
+        {
+          "next": "enq_finance",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 9",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "9"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress",
+          "conditions": [
+            {
+              "friendly_name": "Digit 0",
+              "arguments": [
+                null
+              ],
+              "type": "equal_to",
+              "value": "0"
+            }
+          ]
+        },
+        {
+          "next": "main",
+          "event": "keypress"
+        },
+        {
+          "next": "main",
+          "event": "timeout"
+        }
+      ],
+      "properties": {
+        "voice": "Polly.Joanna",
+        "number_of_digits": 1,
+        "offset": {
+          "x": -520,
+          "y": 1680
+        },
+        "loop": 1,
+        "say": "{{ widgets.fin_balance.parsed.say }} Press 1 to receive a payment link by message. Press 9 to speak with finance. Press 0 to return to the main menu.",
+        "stop_gather": true,
+        "timeout": 7
+      }
+    },
+    {
+      "name": "paylink",
+      "type": "make-http-request",
+      "transitions": [
+        {
+          "next": "main",
+          "event": "success"
+        },
+        {
+          "next": "main",
+          "event": "failed"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -750,
+          "y": 1800
+        },
+        "method": "POST",
+        "content_type": "application/json;charset=utf-8",
+        "add_twilio_auth": false,
+        "body": "{ \"customerId\": \"{{widgets.lookup.parsed.customerId}}\" }",
+        "url": "https://2879cc78cb7f.ngrok-free.app/api/ivr/finance/paylink"
+      }
+    },
+    {
+      "name": "enq_finance",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": -270,
+          "y": 1800
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"finance_balance\",\n \"ivr_path\": \"found>menu>finance>balance\",\n \"callSid\": \"{{trigger.call.Sid}}\",\n \"customerId\": \"{{widgets.lookup.parsed.customerId}}\",\n \"otpVerified\": \"{{widgets.fin_balance.parsed.otpVerified}}\",\n \"finance\": {\n \"balance\": \"{{widgets.fin_balance.parsed.finance.balance}}\",\n \"cashback\": \"{{widgets.fin_balance.parsed.finance.loyaltyCashback}}\",\n \"lastPayment\": \"{{widgets.fin_balance.parsed.finance.lastPayment}}\"\n }\n}"
+      }
+    },
+    {
+      "name": "enq_agent",
+      "type": "enqueue-call",
+      "transitions": [
+        {
+          "event": "callComplete"
+        },
+        {
+          "event": "failedToEnqueue"
+        },
+        {
+          "event": "callFailure"
+        }
+      ],
+      "properties": {
+        "offset": {
+          "x": 180,
+          "y": 1080
+        },
+        "workflow_sid": "WW71355e2fbe8709b1ee2f7d7219fd2e53",
+        "wait_url_method": "GET",
+        "priority": 0,
+        "task_attributes": "{\n \"intent\": \"general_inquiry\",\n \"ivr_path\": \"found>menu>agent\",\n \"callSid\": \"{{trigger.call.Sid}}\",\n \"customerId\": \"{{widgets.lookup.parsed.customerId}}\",\n \"vehicleId\": \"{{widgets.lookup.parsed.vehicleId}}\",\n \"vin\": \"{{widgets.lookup.parsed.vin}}\",\n \"plate\": \"{{widgets.lookup.parsed.plate}}\",\n \"loyaltyTier\": \"{{widgets.lookup.parsed.tier}}\"\n}"
+      }
+    }
+  ],
+  "initial_state": "Trigger",
+  "flags": {
+    "allow_concurrent_calls": true
+  }
+}
