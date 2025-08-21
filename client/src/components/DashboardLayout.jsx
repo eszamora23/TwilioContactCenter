@@ -52,12 +52,12 @@ export default function DashboardLayout({ sections }) {
 
   return (
     <Box
-      display="grid"
-      gridTemplateColumns={["1fr", "1fr", "240px 1fr"]}
+      display="flex"
+      flexDirection={["column", "column", "row"]}
       minHeight="size100vh"
     >
       {/* Mobile Navigation */}
-      <Box display={["block", "block", "none"]} gridColumn="1">
+      <Box display={["block", "block", "none"]}>
         <Disclosure state={disclosure}>
           <DisclosureHeading
             as={Button}
@@ -67,8 +67,18 @@ export default function DashboardLayout({ sections }) {
           >
             <MenuIcon decorative={false} title="Navigation menu" />
           </DisclosureHeading>
-          <DisclosureContent>
-            <Sidebar variant="default">{sidebarNav}</Sidebar>
+          <DisclosureContent
+            position="absolute"
+            top="0"
+            left="0"
+            width="100%"
+            height="100vh"
+            backgroundColor="colorBackgroundBody"
+            zIndex="zIndex60"
+          >
+            <Sidebar variant="default" height="100%">
+              {sidebarNav}
+            </Sidebar>
           </DisclosureContent>
         </Disclosure>
       </Box>
@@ -76,21 +86,22 @@ export default function DashboardLayout({ sections }) {
       {/* Desktop Sidebar */}
       <Sidebar
         variant="default"
-        gridColumn="1"
-        flexShrink={0}
         display={["none", "none", "flex"]}
+        width="240px"
+        flexShrink={0}
+        position="sticky"
+        top="0"
+        height="100vh"
       >
         {sidebarNav}
       </Sidebar>
 
-      <Box gridColumn={["1", "1", "2"]} overflow="auto">
-        <Box padding="space60">
-          {sections.map((section) => (
-            <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
-              {section.content}
-            </Box>
-          ))}
-        </Box>
+      <Box as="main" flexGrow={1} overflow="auto" padding="space60">
+        {sections.map((section) => (
+          <Box key={section.id} display={active === section.id ? 'block' : 'none'}>
+            {section.content}
+          </Box>
+        ))}
       </Box>
     </Box>
   );
