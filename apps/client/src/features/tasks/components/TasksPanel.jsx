@@ -167,6 +167,17 @@ function TaskCard({
               SLA: {formatMMSS(queueSec)} / {formatMMSS(SLA_SECONDS)}
             </Badge>
           </Stack>
+
+          <Tooltip text={translate('finishTaskTooltip')}>
+            <Button
+              aria-label={translate('finishTaskAria')}
+              variant="primary"
+              onClick={() => onFinishPress(t)}
+              disabled={!canFinish}
+            >
+              {translate('finishTask')}
+            </Button>
+          </Tooltip>
         </Stack>
 
         {/* Meta */}
@@ -189,17 +200,6 @@ function TaskCard({
           {/* Call control */}
           <AccordionItem title={translate('callControl')}>
             <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-              <Tooltip text={translate('finishTaskTooltip')}>
-                <Button
-                  aria-label={translate('finishTaskAria')}
-                  variant="primary"
-                  onClick={() => onFinishPress(t)}
-                  disabled={!canFinish}
-                >
-                  {translate('finishTask')}
-                </Button>
-              </Tooltip>
-
               <Tooltip text={translate('holdTooltip')}>
                 <Button
                   aria-label={translate('holdAria')}
