@@ -147,24 +147,31 @@ export default function Customer360({ selectedTask }) {
         {error && <Alert variant="error">{error}</Alert>}
       </Box>
       <Stack orientation="vertical" spacing="space50">
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center">
-          <Heading as="h3" variant="heading30" margin="space0">{title}</Heading>
-          {customer?.tier ? <Badge as="span" variant="new">{customer.tier}</Badge> : null}
-        </Stack>
+          <Stack
+            orientation={['vertical', 'horizontal']}
+            spacing="space40"
+            alignment="center"
+            wrap
+          >
+            <Heading as="h3" variant="heading30" margin="space0">{title}</Heading>
+            {customer?.tier ? <Badge as="span" variant="new">{customer.tier}</Badge> : null}
+          </Stack>
 
         <Box>
           <b>{t('intent')}:</b> {task.attributes?.intent || '—'}<br/>
           <b>{t('ivrPath')}:</b> {task.attributes?.ivr_path || '—'}
         </Box>
 
-        <Tabs baseId="customer-tabs">
-          <TabList aria-label={t('customerTabsAria')}>
-            <Tab>{t('vehicle')}</Tab>
-            <Tab>{t('appointments')}</Tab>
-            <Tab>{t('finance')}</Tab>
-            <Tab>{t('history')}</Tab>
-          </TabList>
-          <TabPanels>
+          <Tabs baseId="customer-tabs">
+            <Box overflowX="auto">
+              <TabList aria-label={t('customerTabsAria')}>
+                <Tab>{t('vehicle')}</Tab>
+                <Tab>{t('appointments')}</Tab>
+                <Tab>{t('finance')}</Tab>
+                <Tab>{t('history')}</Tab>
+              </TabList>
+            </Box>
+            <TabPanels>
             <TabPanel>
               {vehicle ? (
                 <Box>
