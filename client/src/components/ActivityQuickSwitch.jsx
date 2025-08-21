@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import http from '../services/http.js';
 import { Stack } from '@twilio-paste/core/stack';
 import { Badge } from '@twilio-paste/core/badge';
 import { Select, Option } from '@twilio-paste/core/select';
@@ -7,15 +7,19 @@ import { Select, Option } from '@twilio-paste/core/select';
 export default function ActivityQuickSwitch({ label, onChange }) {
   const [acts, setActs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
 
   useEffect(() => {
     let mounted = true;
-    axios.get(`${apiBase}/taskrouter/activities`)
-      .then((r) => { if (mounted) setActs(r.data || []); })
+    http
+      .get('/taskrouter/activities')
+      .then((r) => {
+        if (mounted) setActs(r.data || []);
+      })
       .finally(() => mounted && setLoading(false));
-    return () => { mounted = false; };
-  }, [apiBase]);
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const isAvailable = String(label || '').toLowerCase().includes('available');
 

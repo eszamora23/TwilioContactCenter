@@ -2,8 +2,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import useLocalStorage from '../hooks/useLocalStorage.js';
 import { useQuery } from '@tanstack/react-query';
-import Api from '../api.js';
-import axios from 'axios';
+import Api from '../services/index.js';
+import http from '../services/http.js';
 import { useTranslation } from 'react-i18next';
 
 import { Box } from '@twilio-paste/core/box';
@@ -355,8 +355,7 @@ export default function TasksPanel({ onFinished, setAvailable }) {
   /* ====== efectos ====== */
   async function loadActivities() {
     try {
-      const base = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
-      const acts = (await axios.get(`${base}/taskrouter/activities`)).data || [];
+      const acts = (await http.get('/taskrouter/activities')).data || [];
       const avail = acts.find((a) => a.available);
       if (avail) setAvailableSid(avail.sid);
       const br = acts.find((a) => /break/i.test(a.name));

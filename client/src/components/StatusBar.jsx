@@ -1,6 +1,6 @@
 // contact-center/client/src/components/StatusBar.jsx
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import http from '../services/http.js';
 import { useTranslation } from 'react-i18next';
 
 import { Box } from '@twilio-paste/core/box';
@@ -16,9 +16,8 @@ export default function StatusBar({ label, onChange }) {
   const { t } = useTranslation();
 
   useEffect(() => {
-    const base = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
-    axios
-      .get(`${base}/taskrouter/activities`)
+    http
+      .get('/taskrouter/activities')
       .then((r) => setActs(r.data || []))
       .finally(() => setLoading(false));
   }, []);
