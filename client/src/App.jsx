@@ -33,7 +33,7 @@ function AgentApp() {
   }
 
   return (
-    <Box>
+    <Box display="flex" flexDirection="column" minHeight="size100vh">
       <Toaster />
       <Button variant="destructive" onClick={logout}>Logout</Button>
       <Heading as="h2" variant="heading20" marginBottom="space60">
@@ -42,7 +42,7 @@ function AgentApp() {
 
       <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
 
-      <Box marginTop="space70">
+      <Box marginTop="space70" flex="1" overflowY="auto">
         <DashboardLayout
           sections={[
             { id: 'softphone', label: 'Softphone', content: <Softphone /> },
