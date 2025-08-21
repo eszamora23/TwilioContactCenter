@@ -1,4 +1,3 @@
-// contact-center/client/src/components/Reservations.jsx
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -11,23 +10,10 @@ import { Input } from '@twilio-paste/core/input';
 import { Separator } from '@twilio-paste/core/separator';
 import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
-
-/**
- * Reservations
- * - UI-only refactor: no cambia la data ni el contrato básico.
- * - Si lo usas dentro de <Section> (como en AgentWorkspace) déjalo con `standalone={false}` (default)
- *   para evitar “doble card”. Si quieres usarlo solo en una página, pasa `standalone`.
- *
- * Props:
- *   - items: Array<{ sid, task?:{sid}, reservationStatus?, status?, dateCreated? }>
- *   - standalone?: boolean (default false)  → envuelve en card si true
- *   - loading?: boolean                     → muestra esqueleto
- *   - onRefresh?: () => void                → botón de refresco si viene
- */
 export default function Reservations({ items = [], standalone = false, loading = false, onRefresh }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
-  const [sortKey, setSortKey] = useState('date'); // 'date' | 'status'
+  const [sortKey, setSortKey] = useState('date');
   const [sortAsc, setSortAsc] = useState(false);
 
   const count = items?.length || 0;
@@ -49,7 +35,6 @@ export default function Reservations({ items = [], standalone = false, loading =
         const sb = String(b.reservationStatus || b.status || '').toLowerCase();
         return sa.localeCompare(sb) * (sortAsc ? 1 : -1);
       } else {
-        // date
         const da = a.dateCreated ? new Date(a.dateCreated).getTime() : 0;
         const db = b.dateCreated ? new Date(b.dateCreated).getTime() : 0;
         return (da - db) * (sortAsc ? 1 : -1);
@@ -92,8 +77,6 @@ export default function Reservations({ items = [], standalone = false, loading =
         {children}
       </Box>
     ) : (
-      // Cuando se usa dentro de <Section>, ese contenedor ya provee card + scroll,
-      // aquí solo devolvemos contenido “plano”.
       <>{children}</>
     );
 
@@ -111,7 +94,6 @@ export default function Reservations({ items = [], standalone = false, loading =
         .resv__sid { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
       `}</style>
 
-      {/* Header */}
       <Stack
         orientation={['vertical', 'horizontal']}
         spacing="space50"
@@ -132,7 +114,7 @@ export default function Reservations({ items = [], standalone = false, loading =
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('filterAgentsPlaceholder') /* reutilizamos copy de i18n */}
+            placeholder={t('filterAgentsPlaceholder')}
             aria-label={t('filterAgentsAria')}
           />
           {typeof onRefresh === 'function' ? (
@@ -145,7 +127,6 @@ export default function Reservations({ items = [], standalone = false, loading =
 
       <Separator orientation="horizontal" verticalSpacing="space50" />
 
-      {/* Body */}
       <Box className="resv__body">
         {loading ? (
           <SkeletonLoader />
