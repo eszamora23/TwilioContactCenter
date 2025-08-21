@@ -1,7 +1,7 @@
 {
   "name": "twilio-contact-center",
   "private": true,
-  "workspaces": ["apps/*"],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "bootstrap": "npm install --workspaces"
   }
