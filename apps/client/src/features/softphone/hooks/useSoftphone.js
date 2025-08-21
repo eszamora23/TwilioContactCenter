@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import useLocalStorage from '../hooks/useLocalStorage.js';
-import { VoiceDevice } from './VoiceDevice.js';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+import { VoiceDevice } from '../services/VoiceDevice.js';
 
 /**
  * Hook encapsulating VoiceDevice lifecycle, BroadcastChannel sync and call controls

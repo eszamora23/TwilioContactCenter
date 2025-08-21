@@ -1,6 +1,6 @@
 // contact-center/client/src/softphone/VoiceDevice.js
 import { Device } from '@twilio/voice-sdk';
-import Api from '../services/index.js';
+import Api from '../../index.js';
 import { setCallSid } from './callSidStore.js';
 
 export class VoiceDevice {

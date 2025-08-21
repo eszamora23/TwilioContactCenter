@@ -1,9 +1,9 @@
 // contact-center/client/src/components/TasksPanel.jsx
 import { useEffect, useMemo, useState } from 'react';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import { useQuery } from '@tanstack/react-query';
-import Api from '../services/index.js';
-import http from '../services/http.js';
+import Api from '../../index.js';
+import http from '../../../shared/services/http.js';
 import { useTranslation } from 'react-i18next';
 
 import { Box } from '@twilio-paste/core/box';
@@ -29,7 +29,7 @@ import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs
 import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
 import { Toaster, useToaster } from '@twilio-paste/core/toast';
 import { Tooltip } from '@twilio-paste/core/tooltip';
-import { getCallSid } from '../softphone/callSidStore.js';
+import { getCallSid } from '../../softphone/services/callSidStore.js';
 
 /* =========================
  *   Constantes y helpers

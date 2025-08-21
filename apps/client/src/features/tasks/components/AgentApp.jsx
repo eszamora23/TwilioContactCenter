@@ -6,19 +6,19 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
 
-import { setAuth } from '../services/index.js';
+import { setAuth } from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
 import StatusBar from './StatusBar.jsx';
-import Softphone from './Softphone.jsx';
+import Softphone from '../../softphone/components/Softphone.jsx';
 import Presence from './Presence.jsx';
 import Customer360 from './Customer360.jsx';
 import TasksPanel from './TasksPanel.jsx';
 import Reservations from './Reservations.jsx';
 import AgentDesktopShell from './AgentDesktopShell.jsx';
 import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
-import CallControlsModal from './CallControlsModal.jsx';
-import CardSection from './CardSection.jsx';
-import { getCallSid } from '../softphone/callSidStore.js';
+import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
+import CardSection from '../../../shared/components/CardSection.jsx';
+import { getCallSid } from '../../softphone/services/callSidStore.js';
 
 export default function AgentApp() {
   const { activity, reservations, setAvailable } = useWorker();

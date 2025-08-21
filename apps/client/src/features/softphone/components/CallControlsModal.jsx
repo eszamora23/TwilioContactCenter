@@ -7,8 +7,8 @@ import { Separator } from '@twilio-paste/core/separator';
 import {
   Modal, ModalHeader, ModalHeading, ModalBody, ModalFooter
 } from '@twilio-paste/core/modal';
-import Api from '../services/index.js';
-import { getCallSid } from '../softphone/callSidStore.js';
+import Api from '../../index.js';
+import { getCallSid } from '../services/callSidStore.js';
 
 export default function CallControlsModal({ isOpen, onDismiss }) {
   const [agentCallSid, setAgentCallSid] = useState(null);

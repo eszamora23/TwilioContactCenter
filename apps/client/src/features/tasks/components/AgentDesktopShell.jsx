@@ -1,6 +1,6 @@
 // contact-center/client/src/components/AgentDesktopShell.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import useLocalStorage from '../hooks/useLocalStorage.js';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import PropTypes from 'prop-types';
 
 import { Box } from '@twilio-paste/core/box';

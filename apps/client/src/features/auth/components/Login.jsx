@@ -1,6 +1,6 @@
 // contact-center/client/src/components/Login.jsx
 import { useState } from 'react';
-import Api, { setAuth } from '../services/index.js';
+import Api, { setAuth } from '../../index.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Heading } from '@twilio-paste/core/heading';

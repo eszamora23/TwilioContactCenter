@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import useSoftphone from '../softphone/useSoftphone.js';
-import DialPad from '../softphone/components/DialPad.jsx';
-import IncomingModal from '../softphone/components/IncomingModal.jsx';
-import DtmfModal from '../softphone/components/DtmfModal.jsx';
-import PopoutButton from '../softphone/components/PopoutButton.jsx';
+import useSoftphone from '../hooks/useSoftphone.js';
+import DialPad from './DialPad.jsx';
+import IncomingModal from './IncomingModal.jsx';
+import DtmfModal from './DtmfModal.jsx';
+import PopoutButton from './PopoutButton.jsx';
 
 import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';

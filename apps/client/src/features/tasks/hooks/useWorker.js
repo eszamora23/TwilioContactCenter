@@ -1,6 +1,6 @@
 // contact-center/client/src/hooks/useWorker.js
 import { useEffect, useRef, useState } from 'react';
-import Api from '../services/index.js';
+import Api from '../../index.js';
 
 export function useWorker() {
   const [worker, setWorker] = useState(null);

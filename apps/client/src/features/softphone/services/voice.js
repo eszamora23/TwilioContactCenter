@@ -1,4 +1,4 @@
-import http, { retry } from './http.js';
+import http, { retry } from '../../../shared/services/http.js';
 
 export const voiceToken = () =>
   retry(() => http.get('/token/voice').then((r) => r.data.token));

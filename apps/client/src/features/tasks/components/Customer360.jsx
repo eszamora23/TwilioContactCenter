@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import Api from '../services/index.js';
+import Api from '../../index.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Card } from '@twilio-paste/core/card';
