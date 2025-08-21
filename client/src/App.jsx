@@ -19,6 +19,7 @@ import { Box } from '@twilio-paste/core/box';
 import { Heading } from '@twilio-paste/core/heading';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
+import { Stack } from '@twilio-paste/core/stack';
 import DashboardLayout from './components/DashboardLayout.jsx';
 
 function AgentApp() {
@@ -35,10 +36,20 @@ function AgentApp() {
   return (
     <Box display="flex" flexDirection="column" minHeight="size100vh">
       <Toaster />
-      <Button variant="destructive" onClick={logout}>Logout</Button>
-      <Heading as="h2" variant="heading20" marginBottom="space60">
-        Agent Desktop
-      </Heading>
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        justifyContent="space-between"
+        alignment="center"
+        spacing="space40"
+        marginBottom="space60"
+      >
+        <Heading as="h2" variant="heading20">
+          Agent Desktop
+        </Heading>
+        <Button variant="destructive" onClick={logout}>
+          Logout
+        </Button>
+      </Stack>
 
       <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
 
