@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import { VoiceDevice } from '../services/VoiceDevice.js';
-import { getCallSid } from '../services/callSidStore.js';
+import { getCallSid, setCallSid } from '../services/callSidStore.js';
 import Api from '../../index.js';
 
 /**
@@ -67,6 +67,7 @@ export default function useSoftphone(remoteOnly = false) {
           to,
           elapsed,
           hasIncoming: !!incoming,
+          callSid: getCallSid(),
         },
       });
     } catch (e) {
@@ -218,6 +219,8 @@ export default function useSoftphone(remoteOnly = false) {
           setTo(payload.to || '');
           setIncoming(payload.hasIncoming ? {} : null);
           setIncomingOpen(!!payload.hasIncoming);
+          if (payload.callStatus === 'Idle') setCallSid(null);
+          else setCallSid(payload.callSid);
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
             const sec = m * 60 + s;
