@@ -118,6 +118,21 @@ export default function AgentApp() {
     };
   }, [worker]);
 
+  const incrementUnread = (sid) =>
+    setChatSessions((prev) =>
+      prev.map((s) => (s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s))
+    );
+
+  const clearUnread = (sid) =>
+    setChatSessions((prev) =>
+      prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
+    );
+
+  const updateLabel = (sid, label) =>
+    setChatSessions((prev) =>
+      prev.map((s) => (s.sid === sid ? { ...s, label } : s))
+    );
+
   const sections = [
     { id: 'softphone', label: 'Softphone', content: () => <Softphone popupOpen={isSoftphonePopout} /> },
     { id: 'presence', label: 'Presence', content: () => <Presence /> },
@@ -212,6 +227,9 @@ export default function AgentApp() {
             onClose={(sid) =>
               setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
             }
+            onIncrementUnread={incrementUnread}
+            onClearUnread={clearUnread}
+            onLabel={updateLabel}
           />
         </Box>
       )}
