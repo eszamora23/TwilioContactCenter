@@ -37,12 +37,35 @@ export async function getOrCreateConversation({ uniqueName, friendlyName, attrib
 
 
 /** Add a WebChat participant via Conversations SDK identity */
-export function addChatParticipant(conversationSid, { identity, attributes } = {}) {
-if (!identity) throw new Error('identity required');
-return service.conversations(conversationSid).participants.create({
-identity,
-attributes: attributes ? JSON.stringify(attributes) : undefined,
-});
+export async function addChatParticipant(
+  conversationSid,
+  { identity, attributes } = {}
+) {
+  if (!identity) throw new Error('identity required');
+  try {
+    return await service
+      .conversations(conversationSid)
+      .participants.create({
+        identity,
+        attributes: attributes ? JSON.stringify(attributes) : undefined,
+      });
+  } catch (err) {
+    if (err.status === 409 || err.code === 50433) {
+      try {
+        return await service
+          .conversations(conversationSid)
+          .participants(identity)
+          .fetch();
+      } catch (fetchErr) {
+        throw new Error(
+          `Participant already exists but could not be fetched: ${fetchErr.message}`
+        );
+      }
+    }
+    throw new Error(
+      `Failed to add participant ${identity} to conversation ${conversationSid}: ${err.message}`
+    );
+  }
 }
 
 
