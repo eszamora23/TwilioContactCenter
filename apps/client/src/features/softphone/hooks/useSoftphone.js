@@ -8,10 +8,10 @@ import Api from '../../index.js';
 /**
  * Hook encapsulating VoiceDevice lifecycle, BroadcastChannel sync and call controls
  */
-export default function useSoftphone() {
+export default function useSoftphone(remoteOnly = false) {
   const { t } = useTranslation();
 
-  const [dev] = useState(() => new VoiceDevice());
+  const [dev] = useState(() => (remoteOnly ? null : new VoiceDevice()));
   const [ready, setReady] = useState(false);
   const [to, setTo] = useState('');
   const [incoming, setIncoming] = useState(null);
@@ -39,6 +39,7 @@ export default function useSoftphone() {
   }, [callStart, force]);
 
   const publishState = useCallback(() => {
+    if (remoteOnly) return;
     try {
       chanRef.current?.postMessage({
         type: 'state',
@@ -52,10 +53,17 @@ export default function useSoftphone() {
         },
       });
     } catch {}
-  }, [ready, callStatus, isMuted, to, elapsed, incoming]);
+  }, [ready, callStatus, isMuted, to, elapsed, incoming, remoteOnly]);
+
+  const sendCmd = useCallback((action, extra = {}) => {
+    try {
+      chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra } });
+    } catch {}
+  }, []);
 
   // Device lifecycle
   useEffect(() => {
+    if (remoteOnly) return undefined;
     const boot = async () => {
       dev.onIncoming = (call) => {
         setIncoming(call);
@@ -90,7 +98,7 @@ export default function useSoftphone() {
       dev.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [remoteOnly]);
 
   // BroadcastChannel setup
   useEffect(() => {
@@ -99,6 +107,25 @@ export default function useSoftphone() {
 
     ch.onmessage = async (evt) => {
       const { type, payload } = evt.data || {};
+      if (remoteOnly) {
+        if (type === 'state') {
+          setReady(!!payload.ready);
+          setCallStatus(payload.callStatus || 'Idle');
+          setIsMuted(!!payload.isMuted);
+          setTo(payload.to || '');
+          setIncoming(payload.hasIncoming ? {} : null);
+          setIncomingOpen(!!payload.hasIncoming);
+          if (payload.elapsed) {
+            const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
+            const sec = m * 60 + s;
+            setCallStart(payload.callStatus === 'In Call' ? Date.now() - sec * 1000 : null);
+          } else {
+            setCallStart(null);
+          }
+        }
+        return;
+      }
+
       if (type !== 'cmd') return;
       try {
         if (payload.action === 'ping') {
@@ -116,6 +143,8 @@ export default function useSoftphone() {
         if (payload.action === 'mute') await toggleMute(true);
         if (payload.action === 'unmute') await toggleMute(false);
         if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
+        if (payload.action === 'accept') await acceptIncoming();
+        if (payload.action === 'reject') await rejectIncoming();
       } catch (e) {
         console.error('[softphone cmd error]', e);
       } finally {
@@ -123,14 +152,19 @@ export default function useSoftphone() {
       }
     };
 
+    if (remoteOnly) {
+      try { ch.postMessage({ type: 'cmd', payload: { action: 'ping' } }); } catch {}
+    }
+
     return () => {
       try { ch.close(); } catch {}
     };
-  }, [publishState]);
+  }, [publishState, remoteOnly]);
 
-  useEffect(() => { publishState(); }, [publishState]);
+  useEffect(() => { if (!remoteOnly) publishState(); }, [publishState, remoteOnly]);
 
   useEffect(() => {
+    if (remoteOnly) return undefined;
     const iv = setInterval(() => {
       if (popupOpen && popupWinRef.current && popupWinRef.current.closed) {
         setPopupOpen(false);
@@ -138,9 +172,13 @@ export default function useSoftphone() {
       }
     }, 800);
     return () => clearInterval(iv);
-  }, [popupOpen]);
+  }, [popupOpen, remoteOnly]);
 
   async function dial(num = to) {
+    if (remoteOnly) {
+      sendCmd('dial', { to: num });
+      return;
+    }
     try {
       setError('');
       const call = await dev.dial(String(num).trim());
@@ -154,6 +192,12 @@ export default function useSoftphone() {
   }
 
   async function hangup() {
+    if (remoteOnly) {
+      sendCmd('hangup');
+      setCallStatus('Idle');
+      setIsMuted(false);
+      return;
+    }
     try {
       setError('');
       const sid = getCallSid();
@@ -167,6 +211,11 @@ export default function useSoftphone() {
   }
 
   async function toggleMute(next) {
+    if (remoteOnly) {
+      sendCmd(next ? 'mute' : 'unmute');
+      setIsMuted(next);
+      return;
+    }
     try {
       setError('');
       await dev.mute(next);
@@ -177,6 +226,11 @@ export default function useSoftphone() {
   }
 
   async function acceptIncoming() {
+    if (remoteOnly) {
+      sendCmd('accept');
+      setIncomingOpen(false);
+      return;
+    }
     try {
       setError('');
       await incoming?.accept();
@@ -190,6 +244,11 @@ export default function useSoftphone() {
   }
 
   async function rejectIncoming() {
+    if (remoteOnly) {
+      sendCmd('reject');
+      setIncomingOpen(false);
+      return;
+    }
     try {
       setError('');
       await incoming?.reject();
@@ -201,7 +260,11 @@ export default function useSoftphone() {
   }
 
   function sendDtmf(digit) {
-    try { dev?.sendDigits(digit); } catch {}
+    if (remoteOnly) {
+      sendCmd('dtmf', { digit });
+    } else {
+      try { dev?.sendDigits(digit); } catch {}
+    }
   }
 
   function openPopOut() {

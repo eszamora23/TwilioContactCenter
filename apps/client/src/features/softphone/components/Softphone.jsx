@@ -39,7 +39,7 @@ export default function Softphone({ remoteOnly }) {
     rejectIncoming,
     sendDtmf,
     openPopOut,
-  } = useSoftphone();
+  } = useSoftphone(remoteOnly);
 
   const [isDtmfOpen, setIsDtmfOpen] = useState(false);
 
