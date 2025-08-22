@@ -39,6 +39,14 @@ export default function useSoftphone(remoteOnly = false) {
   const [popupOpen, setPopupOpen] = useState(false);
   const popupWinRef = useRef(null);
 
+  useEffect(() => {
+    if (!dev) return undefined;
+    dev.onMuteSync = setIsMuted;
+    return () => {
+      dev.onMuteSync = null;
+    };
+  }, [dev, setIsMuted]);
+
   const elapsed = useMemo(() => {
     if (!callStart) return '00:00';
     const sec = Math.floor((Date.now() - callStart) / 1000);
