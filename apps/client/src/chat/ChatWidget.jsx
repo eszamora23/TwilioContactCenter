@@ -14,7 +14,12 @@ import { Heading } from '@twilio-paste/core/heading';
 import { Text } from '@twilio-paste/core/text';
 import styles from './ChatWidget.module.css';
 
-export default function ChatWidget({ conversationIdOrUniqueName }) {
+export default function ChatWidget({
+  conversationIdOrUniqueName,
+  onMessageAdded,
+  onLabel,
+  isActive,
+}) {
   const [client, setClient] = useState(null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -70,9 +75,16 @@ if (!conversation) return;
 (async () => {
 const page = await conversation.getMessages();
 setMessages(page.items);
-conversation.on('messageAdded', (m) => setMessages((prev) => [...prev, m]));
+const handler = (m) => {
+setMessages((prev) => [...prev, m]);
+if (m.author !== identityRef.current) onMessageAdded?.(conversation.sid, m);
+};
+conversation.on('messageAdded', handler);
 })();
-}, [conversation]);
+return () => {
+try { conversation.off('messageAdded', handler); } catch {}
+};
+}, [conversation, onMessageAdded]);
 
 useEffect(() => {
 if (!client || !conversation) return;
@@ -95,10 +107,36 @@ if (!conversation) return;
 const markRead = () => {
 try { conversation.setAllMessagesRead(); } catch {}
 };
-markRead();
-window.addEventListener('focus', markRead);
-return () => window.removeEventListener('focus', markRead);
-}, [conversation]);
+if (isActive) markRead();
+const onFocus = () => {
+if (isActive) markRead();
+};
+window.addEventListener('focus', onFocus);
+return () => window.removeEventListener('focus', onFocus);
+}, [conversation, isActive]);
+
+// update label from conversation attributes or participants
+useEffect(() => {
+if (!conversation) return;
+(async () => {
+try {
+let label =
+conversation?.attributes?.title ||
+conversation?.attributes?.friendlyName ||
+conversation?.friendlyName;
+if (!label) {
+const participants = await conversation.getParticipants();
+label = participants
+.map((p) => p.attributes?.friendlyName || p.identity)
+.filter(Boolean)
+.join(', ');
+}
+onLabel?.(label);
+} catch (e) {
+console.error('conversation info error', e);
+}
+})();
+}, [conversation, onLabel]);
 
 
   useEffect(() => {
