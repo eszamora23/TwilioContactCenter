@@ -1,6 +1,6 @@
 // contact-center/client/src/components/AgentApp.jsx
 import { useState, useEffect, useRef } from 'react';
-import ChatWidget from '../../../chat/ChatWidget.jsx';
+import ChatPanel from '../../../chat/ChatPanel.jsx';
 import { Client as ConversationsClient } from '@twilio/conversations';
 
 import { Box } from '@twilio-paste/core/box';
@@ -25,7 +25,7 @@ import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 export default function AgentApp() {
   const { worker, activity, reservations, setAvailable } = useWorker();
-  const [chatSid, setChatSid] = useState(null);
+  const [chatSessions, setChatSessions] = useState([]);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
   const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage(
@@ -98,7 +98,13 @@ export default function AgentApp() {
               body: JSON.stringify({ type: 'chat', identity }),
             });
           }
-          setChatSid(conversationSid);
+
+          const label =
+            attrs.customerName || attrs.from || attrs.name || conversationSid;
+          setChatSessions((prev) => {
+            if (prev.some((s) => s.sid === conversationSid)) return prev;
+            return [...prev, { sid: conversationSid, label, unread: 0 }];
+          });
         }
       } catch (e) {
         console.error('reservation.accepted handler error', e);
@@ -199,9 +205,14 @@ export default function AgentApp() {
   return (
     <Box minHeight="100vh" width="100%">
       <Toaster />
-      {chatSid && (
+      {chatSessions.length > 0 && (
         <Box marginBottom="space70">
-          <ChatWidget conversationIdOrUniqueName={chatSid} />
+          <ChatPanel
+            sessions={chatSessions}
+            onClose={(sid) =>
+              setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
+            }
+          />
         </Box>
       )}
 
