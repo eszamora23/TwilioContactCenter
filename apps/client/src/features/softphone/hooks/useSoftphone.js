@@ -33,6 +33,7 @@ export default function useSoftphone(remoteOnly = false) {
   const [, force] = useState(0);
 
   const chanRef = useRef(null);
+  const pendingRef = useRef({});
   const POPUP_NAME = 'softphone_popup';
   const POPUP_URL = `${window.location.origin}?popup=softphone`;
   const [popupOpen, setPopupOpen] = useState(false);
@@ -73,14 +74,21 @@ export default function useSoftphone(remoteOnly = false) {
   }, [publishState]);
 
   const sendCmd = useCallback(
-    (action, extra = {}) => {
-      try {
-        chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra } });
-      } catch (e) {
-        console.warn('[softphone channel cmd error]', e);
-        setChannelError(true);
-        setUseStorageFallback(true);
-      }
+    (action, extra = {}, waitForAck = false) => {
+      const id = waitForAck ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
+      return new Promise((resolve, reject) => {
+        try {
+          if (id) pendingRef.current[id] = { resolve, reject };
+          chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
+          if (!id) resolve();
+        } catch (e) {
+          console.warn('[softphone channel cmd error]', e);
+          setChannelError(true);
+          setUseStorageFallback(true);
+          if (id) delete pendingRef.current[id];
+          reject(e);
+        }
+      });
     },
     []
   );
@@ -176,7 +184,7 @@ export default function useSoftphone(remoteOnly = false) {
     chanRef.current = ch;
 
     ch.onmessage = async (evt) => {
-      const { type, payload } = evt.data || {};
+      const { type, payload, id, ok } = evt.data || {};
       if (isPopup) {
         if (type === 'state') {
           setReady(!!payload.ready);
@@ -203,11 +211,17 @@ export default function useSoftphone(remoteOnly = false) {
             clearInterval(tickRef.current);
             tickRef.current = null;
           }
+        } else if (type === 'resp' && id && pendingRef.current[id]) {
+          const { resolve, reject } = pendingRef.current[id];
+          delete pendingRef.current[id];
+          if (ok) resolve();
+          else reject(new Error('cmd failed'));
         }
         return;
       }
 
       if (type !== 'cmd') return;
+      let success = true;
       try {
         if (payload.action === 'ping') {
           publishState();
@@ -224,12 +238,20 @@ export default function useSoftphone(remoteOnly = false) {
         if (payload.action === 'mute') await toggleMute(true);
         if (payload.action === 'unmute') await toggleMute(false);
         if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
-        if (payload.action === 'accept') await acceptIncoming();
-        if (payload.action === 'reject') await rejectIncoming();
+        if (payload.action === 'accept') success = await acceptIncoming();
+        if (payload.action === 'reject') success = await rejectIncoming();
       } catch (e) {
         console.error('[softphone cmd error]', e);
+        success = false;
       } finally {
         publishState();
+        if (id) {
+          try {
+            ch.postMessage({ type: 'resp', id, ok: success });
+          } catch (e) {
+            console.warn('[softphone channel resp error]', e);
+          }
+        }
       }
     };
 
@@ -325,9 +347,14 @@ export default function useSoftphone(remoteOnly = false) {
 
   async function acceptIncoming() {
     if (isPopup) {
-      sendCmd('accept');
-      setIncomingOpen(false);
-      setIncoming(null);
+      setError('');
+      try {
+        await sendCmd('accept', {}, true);
+        setIncomingOpen(false);
+        setIncoming(null);
+      } catch {
+        setError(t('acceptError'));
+      }
       return;
     }
     try {
@@ -336,32 +363,47 @@ export default function useSoftphone(remoteOnly = false) {
       setIncomingOpen(false);
       setIncoming(null);
       setCallStatus('In Call');
+      setTimeout(() => publishStateRef.current(), 0);
+      return true;
     } catch {
       setError(t('acceptError'));
       setIncomingOpen(false);
       setCallStatus('Idle');
       setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return false;
     }
-    setTimeout(() => publishStateRef.current(), 0);
   }
 
   async function rejectIncoming() {
     if (isPopup) {
-      sendCmd('reject');
-      setIncomingOpen(false);
-      setIncoming(null);
+      setError('');
+      try {
+        await sendCmd('reject', {}, true);
+        setIncomingOpen(false);
+        setIncoming(null);
+        setCallStatus('Idle');
+      } catch {
+        setError(t('rejectError'));
+      }
       return;
     }
     try {
       setError('');
       await incoming?.reject();
+      setIncomingOpen(false);
+      setCallStatus('Idle');
+      setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return true;
     } catch {
       setError(t('rejectError'));
+      setIncomingOpen(false);
+      setCallStatus('Idle');
+      setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return false;
     }
-    setIncomingOpen(false);
-    setCallStatus('Idle');
-    setIncoming(null);
-    setTimeout(() => publishStateRef.current(), 0);
   }
 
   function sendDtmf(digit) {
