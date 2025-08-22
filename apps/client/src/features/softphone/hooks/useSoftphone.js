@@ -26,6 +26,8 @@ export default function useSoftphone(remoteOnly = false) {
   const [isMuted, setIsMuted] = useLocalStorage('mute_state', false);
   const [callStart, setCallStart] = useState(null);
   const [error, setError] = useState('');
+  const [channelError, setChannelError] = useState(false);
+  const [useStorageFallback, setUseStorageFallback] = useState(false);
 
   const tickRef = useRef(null);
   const [, force] = useState(0);
@@ -58,7 +60,11 @@ export default function useSoftphone(remoteOnly = false) {
           hasIncoming: !!incoming,
         },
       });
-    } catch {}
+    } catch (e) {
+      console.warn('[softphone channel state error]', e);
+      setChannelError(true);
+      setUseStorageFallback(true);
+    }
   }, [ready, callStatus, isMuted, to, elapsed, incoming, isPopup]);
 
   const publishStateRef = useRef(publishState);
@@ -66,11 +72,18 @@ export default function useSoftphone(remoteOnly = false) {
     publishStateRef.current = publishState;
   }, [publishState]);
 
-  const sendCmd = useCallback((action, extra = {}) => {
-    try {
-      chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra } });
-    } catch {}
-  }, []);
+  const sendCmd = useCallback(
+    (action, extra = {}) => {
+      try {
+        chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra } });
+      } catch (e) {
+        console.warn('[softphone channel cmd error]', e);
+        setChannelError(true);
+        setUseStorageFallback(true);
+      }
+    },
+    []
+  );
 
   // Device lifecycle
   useEffect(() => {
@@ -113,9 +126,53 @@ export default function useSoftphone(remoteOnly = false) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPopup]);
 
-  // BroadcastChannel setup
+  // BroadcastChannel or fallback channel setup
   useEffect(() => {
-    const ch = new BroadcastChannel('softphone-control');
+    const KEY = 'softphone-control';
+    let ch;
+    let usingStorage = useStorageFallback;
+
+    if (!usingStorage && typeof window !== 'undefined' && typeof BroadcastChannel === 'function') {
+      try {
+        ch = new BroadcastChannel(KEY);
+      } catch (e) {
+        console.warn('[softphone channel init error]', e);
+        setChannelError(true);
+        usingStorage = true;
+        setUseStorageFallback(true);
+      }
+    } else if (!usingStorage) {
+      setChannelError(true);
+      usingStorage = true;
+      setUseStorageFallback(true);
+    }
+
+    if (usingStorage) {
+      const storageHandler = (e) => {
+        if (e.key === KEY && e.newValue) {
+          try {
+            const data = JSON.parse(e.newValue);
+            chanRef.current?.onmessage?.({ data });
+          } catch (err) {
+            console.error('[softphone storage channel parse error]', err);
+          }
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      ch = {
+        postMessage: (msg) => {
+          try {
+            localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), ...msg }));
+          } catch (err) {
+            console.error('[softphone storage channel post error]', err);
+            setChannelError(true);
+          }
+        },
+        close: () => window.removeEventListener('storage', storageHandler),
+        onmessage: null,
+      };
+    }
+
     chanRef.current = ch;
 
     ch.onmessage = async (evt) => {
@@ -177,15 +234,25 @@ export default function useSoftphone(remoteOnly = false) {
     };
 
     if (isPopup) {
-      try { ch.postMessage({ type: 'cmd', payload: { action: 'ping' } }); } catch {}
+      try {
+        ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
+      } catch (e) {
+        console.warn('[softphone channel ping error]', e);
+        setChannelError(true);
+        setUseStorageFallback(true);
+      }
     }
 
     return () => {
-      try { ch.close(); } catch {}
+      try {
+        ch.close();
+      } catch (e) {
+        console.warn('[softphone channel close error]', e);
+      }
       clearInterval(tickRef.current);
       tickRef.current = null;
     };
-  }, [publishState, isPopup]);
+  }, [publishState, isPopup, useStorageFallback]);
 
   useEffect(() => { if (!isPopup) publishState(); }, [publishState, isPopup]);
 
@@ -345,6 +412,7 @@ export default function useSoftphone(remoteOnly = false) {
     isMuted,
     elapsed,
     error,
+    channelError,
     dial,
     hangup,
     toggleMute,
@@ -355,5 +423,6 @@ export default function useSoftphone(remoteOnly = false) {
     closePopOut,
     popupOpen,
     setError,
+    setChannelError,
   };
 }
