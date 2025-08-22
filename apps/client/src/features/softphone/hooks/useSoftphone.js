@@ -219,6 +219,11 @@ export default function useSoftphone(remoteOnly = false) {
         }
         return;
       }
+      if (type === 'popup-closed') {
+        setPopupOpen(false);
+        popupWinRef.current = null;
+        return;
+      }
 
       if (type !== 'cmd') return;
       let success = true;
@@ -279,15 +284,21 @@ export default function useSoftphone(remoteOnly = false) {
   useEffect(() => { if (!isPopup) publishState(); }, [publishState, isPopup]);
 
   useEffect(() => {
-    if (isPopup) return undefined;
-    const iv = setInterval(() => {
-      if (popupOpen && popupWinRef.current && popupWinRef.current.closed) {
-        setPopupOpen(false);
-        popupWinRef.current = null;
+    if (!isPopup) return undefined;
+    const notifyClose = () => {
+      try {
+        chanRef.current?.postMessage({ type: 'popup-closed' });
+      } catch (e) {
+        console.warn('[softphone popup close notify error]', e);
       }
-    }, 800);
-    return () => clearInterval(iv);
-  }, [popupOpen, isPopup]);
+    };
+    window.addEventListener('beforeunload', notifyClose);
+    window.addEventListener('unload', notifyClose);
+    return () => {
+      window.removeEventListener('beforeunload', notifyClose);
+      window.removeEventListener('unload', notifyClose);
+    };
+  }, [isPopup]);
 
   async function dial(num = to) {
     if (isPopup) {

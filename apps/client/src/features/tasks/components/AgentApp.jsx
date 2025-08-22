@@ -19,7 +19,6 @@ import AgentDesktopShell from './AgentDesktopShell.jsx';
 import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
-import { getCallSid } from '../../softphone/services/callSidStore.js';
 
 export default function AgentApp() {
   const { activity, reservations, setAvailable } = useWorker();
@@ -29,19 +28,42 @@ export default function AgentApp() {
   const softphoneWinRef = useRef(null);
 
   useEffect(() => {
-    const iv = setInterval(() => setHasCall(Boolean(getCallSid())), 800);
-    return () => clearInterval(iv);
-  }, []);
+    const KEY = 'softphone-control';
+    let ch;
 
-  useEffect(() => {
-    const iv = setInterval(() => {
-      if (isSoftphonePopout && softphoneWinRef.current && softphoneWinRef.current.closed) {
+    const onMessage = (evt) => {
+      const { type, payload } = evt.data || {};
+      if (type === 'state') {
+        setHasCall(payload.callStatus === 'In Call' || payload.callStatus === 'Incoming');
+      }
+      if (type === 'popup-closed') {
         setSoftphonePopout(false);
         softphoneWinRef.current = null;
       }
-    }, 800);
-    return () => clearInterval(iv);
-  }, [isSoftphonePopout]);
+    };
+
+    if (typeof window !== 'undefined' && typeof BroadcastChannel === 'function') {
+      ch = new BroadcastChannel(KEY);
+      ch.onmessage = onMessage;
+    } else {
+      const storageHandler = (e) => {
+        if (e.key === KEY && e.newValue) {
+          try {
+            const data = JSON.parse(e.newValue);
+            onMessage({ data });
+          } catch (err) {
+            console.error('[agentApp storage channel parse error]', err);
+          }
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      ch = { close: () => window.removeEventListener('storage', storageHandler) };
+    }
+
+    return () => {
+      try { ch.close(); } catch {}
+    };
+  }, []);
 
   const sections = [
     { id: 'softphone', label: 'Softphone', content: () => <Softphone popupOpen={isSoftphonePopout} /> },
