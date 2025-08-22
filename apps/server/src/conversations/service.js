@@ -13,19 +13,19 @@ TWILIO_MESSENGER_PAGE_ID, // optional FB Page ID for Messenger
 * Create or fetch a Conversation by uniqueName. Prefer uniqueName as a stable key per case/ticket.
 */
 export async function getOrCreateConversation({ uniqueName, friendlyName, attributes = {} }) {
-if (!uniqueName) throw new Error('uniqueName required');
-try {
-// Twilio REST allows SID or uniqueName in the path for fetch — we attempt fetch first.
-return await client.conversations.v1.conversations(uniqueName).fetch();
-} catch (err) {
-if (err.status !== 404) throw err;
-return client.conversations.v1.conversations.create({
-uniqueName,
-friendlyName: friendlyName || uniqueName,
-attributes: JSON.stringify(attributes),
-messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID || undefined,
-});
-}
+  if (!uniqueName) throw new Error('uniqueName required');
+  try {
+    // Twilio REST allows SID or uniqueName in the path for fetch — we attempt fetch first.
+    return await client.conversations.v1.conversations(uniqueName).fetch();
+  } catch (err) {
+    if (err.status !== 404) throw err;
+    return client.conversations.v1.conversations.create({
+      uniqueName,
+      friendlyName: friendlyName || uniqueName,
+      attributes: JSON.stringify({ ...attributes, taskSid: null }),
+      messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID || undefined,
+    });
+  }
 }
 
 
@@ -93,4 +93,16 @@ cfg['configuration.filters'] = filters;
 cfg['configuration.flowSid'] = flowSid;
 }
 return client.conversations.v1.conversations(conversationSid).webhooks.create({ target, ...cfg });
+}
+
+export const fetchConversation = (sid) =>
+  client.conversations.v1.conversations(sid).fetch();
+
+export async function updateConversationAttributes(conversationSid, newAttributes = {}) {
+  const convo = await fetchConversation(conversationSid);
+  const current = convo.attributes ? JSON.parse(convo.attributes) : {};
+  const merged = { ...current, ...newAttributes };
+  return client.conversations.v1.conversations(conversationSid).update({
+    attributes: JSON.stringify(merged)
+  });
 }

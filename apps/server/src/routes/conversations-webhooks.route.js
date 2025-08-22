@@ -1,8 +1,8 @@
 import express from 'express';
 import { createTask, completeTask, pushEvent } from '../services/taskrouter.js';
+import { fetchConversation, updateConversationAttributes } from '../conversations/service.js';
 
 const router = express.Router();
-const tasksByConversation = new Map();
 
 // Twilio will POST events like onMessageAdded here if you attach a webhook per‑conversation.
 router.post('/', async (req, res) => {
@@ -19,7 +19,7 @@ router.post('/', async (req, res) => {
           attributes: { channel: 'chat', conversationSid, direction: 'inbound' },
           taskChannel: 'chat'
         });
-        tasksByConversation.set(conversationSid, task.sid);
+        await updateConversationAttributes(conversationSid, { taskSid: task.sid });
         pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
         io?.emit('task_created', { taskSid: task.sid, conversationSid });
       }
@@ -27,12 +27,13 @@ router.post('/', async (req, res) => {
       const status = String(req.body.Status || '').toLowerCase();
       if (status === 'closed') {
         const conversationSid = req.body.ConversationSid;
-        const taskSid = tasksByConversation.get(conversationSid);
+        const convo = await fetchConversation(conversationSid);
+        const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+        const taskSid = attrs.taskSid;
         if (taskSid) {
           await completeTask(taskSid, 'Conversation closed');
           pushEvent('TASK_COMPLETED', { taskSid, conversationSid });
           io?.emit('task_completed', { taskSid, conversationSid });
-          tasksByConversation.delete(conversationSid);
         }
       }
     }
