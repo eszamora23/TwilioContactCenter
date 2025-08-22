@@ -18,6 +18,7 @@ import { Separator } from '@twilio-paste/core/separator';
 import { HelpText } from '@twilio-paste/core/help-text';
 import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
 import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
+import styles from './Softphone.module.css';
 
 export default function Softphone({ remoteOnly, popupOpen = false }) {
   const { t } = useTranslation();
@@ -63,14 +64,6 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
       height="100%"
       minHeight="0"
     >
-      <style>{`
-        .sf__body { flex: 1; min-height: 0; display: grid; gap: var(--paste-space-70); }
-        @media (min-width: 768px) { .sf__body { grid-template-columns: 1fr 1fr; } }
-        @media (max-width: 767px) { .sf__body { grid-template-columns: 1fr; } }
-        .sf__key { width: 100%; height: 48px; }
-        .sf__padGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--paste-space-40); }
-        .sf__pill { border-radius: 9999px; padding: 2px 10px; background: var(--paste-color-backgroundStrong); }
-      `}</style>
 
       {error ? (
         <Box marginBottom="space50">
@@ -102,13 +95,13 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
               {t('call')}: {callStatus}
             </Badge>
           </Box>
-          {callStatus === 'In Call' ? <Box className="sf__pill">⏱ {elapsed}</Box> : null}
+          {callStatus === 'In Call' ? <Box className={styles.pill}>⏱ {elapsed}</Box> : null}
         </Stack>
       </Stack>
 
       <Separator orientation="horizontal" verticalSpacing="space50" />
 
-      <Box className="sf__body">
+      <Box className={styles.body}>
         <Box display="flex" flexDirection="column" gap="space60" minHeight="0">
           <Stack orientation={['vertical', 'horizontal']} spacing="space50" style={{ flexWrap: 'wrap' }}>
             <Input
