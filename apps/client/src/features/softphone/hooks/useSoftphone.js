@@ -58,6 +58,7 @@ export default function useSoftphone(remoteOnly = false) {
   const publishState = useCallback(() => {
     if (isPopup) return;
     try {
+      const sid = getCallSid();
       chanRef.current?.postMessage({
         type: 'state',
         payload: {
@@ -67,7 +68,7 @@ export default function useSoftphone(remoteOnly = false) {
           to,
           elapsed,
           hasIncoming: !!incoming,
-          callSid: getCallSid(),
+          callSid: sid,
         },
       });
     } catch (e) {
@@ -219,8 +220,11 @@ export default function useSoftphone(remoteOnly = false) {
           setTo(payload.to || '');
           setIncoming(payload.hasIncoming ? {} : null);
           setIncomingOpen(!!payload.hasIncoming);
-          if (payload.callStatus === 'Idle') setCallSid(null);
-          else setCallSid(payload.callSid);
+          if (payload.callStatus === 'Idle') {
+            setCallSid(null);
+          } else if (payload.callSid) {
+            setCallSid(payload.callSid);
+          }
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
             const sec = m * 60 + s;
