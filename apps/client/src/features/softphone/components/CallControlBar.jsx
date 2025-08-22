@@ -3,7 +3,7 @@ import { ButtonGroup } from '@twilio-paste/core/button-group';
 import { IconButton } from '@twilio-paste/core/button';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
-import { HangupIcon } from '@twilio-paste/icons/esm/HangupIcon';
+import { HangUpIcon } from '@twilio-paste/icons/esm/HangUpIcon';
 import { DialpadIcon } from '@twilio-paste/icons/esm/DialpadIcon';
 import { HoldIcon } from '@twilio-paste/icons/esm/HoldIcon';
 import { MoreIcon } from '@twilio-paste/icons/esm/MoreIcon';
@@ -50,7 +50,7 @@ export default function CallControlBar({
         <Tooltip text={t('hangup')}>
           <IconButton
             onClick={hangup}
-            icon={<HangupIcon decorative />}
+            icon={<HangUpIcon decorative />}
             aria-label={t('hangupAria')}
             variant="destructive"
             disabled={callStatus !== 'In Call' && callStatus !== 'Incoming'}
