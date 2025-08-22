@@ -18,6 +18,10 @@ import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Separator } from '@twilio-paste/core/separator';
 import { HelpText } from '@twilio-paste/core/help-text';
+import { Flex } from '@twilio-paste/core/flex';
+import { SuccessIcon } from '@twilio-paste/icons/esm/SuccessIcon';
+import { WarningIcon } from '@twilio-paste/icons/esm/WarningIcon';
+import { ErrorIcon } from '@twilio-paste/icons/esm/ErrorIcon';
 import styles from './Softphone.module.css';
 
 export default function Softphone({ remoteOnly, popupOpen = false }) {
@@ -66,33 +70,39 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
           </Box>
         ) : null}
 
-        <Stack
-          orientation={['vertical', 'horizontal']}
-          spacing="space50"
-          distribution="spaceBetween"
-          alignment="center"
+        <Flex
+          justifyContent="space-between"
+          alignItems="center"
+          columnGap="space50"
           style={{ flexWrap: 'wrap' }}
         >
           <Heading as="h3" variant="heading30" margin="space0">
             {t('softphone')}
           </Heading>
 
-          <Stack orientation="horizontal" spacing="space50" style={{ flexWrap: 'wrap' }}>
-            <Box>
-              <Badge as="span" variant="success">{t('registered')}</Badge>
-            </Box>
-            <Separator orientation="vertical" />
-            <Box>
-              <Badge
-                as="span"
-                variant={callStatus === 'In Call' ? 'new' : callStatus === 'Incoming' ? 'warning' : 'neutral'}
-              >
-                {t('call')}: {callStatus}
+          <Flex alignItems="center" columnGap="space50" style={{ flexWrap: 'wrap' }}>
+            <Flex alignItems="center" columnGap="space40" style={{ flexWrap: 'wrap' }}>
+              <Badge as="span" variant="success">
+                <SuccessIcon decorative size="sizeIcon10" /> {t('registered')}
               </Badge>
-            </Box>
-            {callStatus === 'In Call' ? <Box className={styles.pill}>⏱ {elapsed}</Box> : null}
-          </Stack>
-        </Stack>
+              {callStatus === 'In Call' ? <Box className={styles.pill}>⏱ {elapsed}</Box> : null}
+            </Flex>
+            <Separator orientation="vertical" />
+            <Badge
+              as="span"
+              variant={callStatus === 'In Call' ? 'success' : callStatus === 'Incoming' ? 'warning' : 'error'}
+            >
+              {callStatus === 'In Call' ? (
+                <SuccessIcon decorative size="sizeIcon10" />
+              ) : callStatus === 'Incoming' ? (
+                <WarningIcon decorative size="sizeIcon10" />
+              ) : (
+                <ErrorIcon decorative size="sizeIcon10" />
+              )}{' '}
+              {t('call')}: {callStatus}
+            </Badge>
+          </Flex>
+        </Flex>
 
         <Separator orientation="horizontal" verticalSpacing="space50" />
       </Box>
