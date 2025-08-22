@@ -25,6 +25,8 @@ export default function useSoftphone(remoteOnly = false) {
   const [callStatus, setCallStatus] = useState('Idle');
   const [isMuted, setIsMuted] = useLocalStorage('mute_state', false);
   const [callStart, setCallStart] = useState(null);
+  const [holding, setHolding] = useState(false);
+  const [recStatus, setRecStatus] = useState('inactive');
   const [error, setError] = useState('');
   const [channelError, setChannelError] = useState(false);
   const [useStorageFallback, setUseStorageFallback] = useState(false);
@@ -65,6 +67,8 @@ export default function useSoftphone(remoteOnly = false) {
           ready,
           callStatus,
           isMuted,
+          holding,
+          recStatus,
           to,
           elapsed,
           hasIncoming: !!incoming,
@@ -76,7 +80,7 @@ export default function useSoftphone(remoteOnly = false) {
       setChannelError(true);
       setUseStorageFallback(true);
     }
-  }, [ready, callStatus, isMuted, to, elapsed, incoming, isPopup]);
+  }, [ready, callStatus, isMuted, holding, recStatus, to, elapsed, incoming, isPopup]);
 
   const publishStateRef = useRef(publishState);
   useEffect(() => {
@@ -91,11 +95,13 @@ export default function useSoftphone(remoteOnly = false) {
       setCallStart(Date.now());
       clearInterval(tickRef.current);
       tickRef.current = setInterval(() => force((x) => x + 1), 1000);
-      Api.recStatus(sid).catch(() => {
-        setCallStatus('Idle');
-        setCallStart(null);
-        clearInterval(tickRef.current);
-      });
+      Api.recStatus(sid)
+        .then((s) => setRecStatus(s || 'inactive'))
+        .catch(() => {
+          setCallStatus('Idle');
+          setCallStart(null);
+          clearInterval(tickRef.current);
+        });
       setTimeout(() => publishStateRef.current(), 0);
     }
   }, [isPopup]);
@@ -152,10 +158,14 @@ export default function useSoftphone(remoteOnly = false) {
           setCallStart(Date.now());
           clearInterval(tickRef.current);
           tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+          const sid = getCallSid();
+          if (sid) Api.recStatus(sid).then((s) => setRecStatus(s || 'inactive')).catch(() => setRecStatus('inactive'));
         }
         if (status === 'Idle') {
           setCallStart(null);
           setIsMuted(false);
+          setHolding(false);
+          setRecStatus('inactive');
           clearInterval(tickRef.current);
         }
         setTimeout(() => publishStateRef.current(), 0);
@@ -233,6 +243,8 @@ export default function useSoftphone(remoteOnly = false) {
           setReady(!!payload.ready);
           setCallStatus(payload.callStatus || 'Idle');
           setIsMuted(!!payload.isMuted);
+          setHolding(!!payload.holding);
+          setRecStatus(payload.recStatus || 'inactive');
           setTo(payload.to || '');
           setIncoming(payload.hasIncoming ? {} : null);
           setIncomingOpen(!!payload.hasIncoming);
@@ -293,6 +305,12 @@ export default function useSoftphone(remoteOnly = false) {
         if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
         if (payload.action === 'accept') success = await acceptIncoming();
         if (payload.action === 'reject') success = await rejectIncoming();
+        if (payload.action === 'hold') await holdStart();
+        if (payload.action === 'unhold') await holdStop();
+        if (payload.action === 'recStart') await recStart();
+        if (payload.action === 'recPause') await recPause();
+        if (payload.action === 'recResume') await recResume();
+        if (payload.action === 'recStop') await recStop();
       } catch (e) {
         console.error('[softphone cmd error]', e);
         success = false;
@@ -402,6 +420,8 @@ export default function useSoftphone(remoteOnly = false) {
     }
     setCallStatus('Idle');
     setIsMuted(false);
+    setHolding(false);
+    setRecStatus('inactive');
     setIncoming(null);
     setTimeout(() => publishStateRef.current(), 0);
   }
@@ -418,6 +438,112 @@ export default function useSoftphone(remoteOnly = false) {
       setIsMuted(next);
     } catch {
       setError(t('muteError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function holdStart() {
+    if (isPopup) {
+      sendCmd('hold');
+      setHolding(true);
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) {
+        await Api.holdStart({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      }
+      setHolding(true);
+    } catch {
+      setError(t('holdError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function holdStop() {
+    if (isPopup) {
+      sendCmd('unhold');
+      setHolding(false);
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) {
+        await Api.holdStop({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      }
+      setHolding(false);
+    } catch {
+      setError(t('unholdError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recStart() {
+    if (isPopup) {
+      sendCmd('recStart');
+      setRecStatus('in-progress');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recStart(sid);
+      setRecStatus('in-progress');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recPause() {
+    if (isPopup) {
+      sendCmd('recPause');
+      setRecStatus('paused');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recPause(sid);
+      setRecStatus('paused');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recResume() {
+    if (isPopup) {
+      sendCmd('recResume');
+      setRecStatus('in-progress');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recResume(sid);
+      setRecStatus('in-progress');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recStop() {
+    if (isPopup) {
+      sendCmd('recStop');
+      setRecStatus('stopped');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recStop(sid);
+      setRecStatus('stopped');
+    } catch {
+      setError(t('recControlError'));
     }
     setTimeout(() => publishStateRef.current(), 0);
   }
@@ -529,12 +655,20 @@ export default function useSoftphone(remoteOnly = false) {
     setIncomingOpen,
     callStatus,
     isMuted,
+    holding,
+    recStatus,
     elapsed,
     error,
     channelError,
     dial,
     hangup,
     toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
     acceptIncoming,
     rejectIncoming,
     sendDtmf,
