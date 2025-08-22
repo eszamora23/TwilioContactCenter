@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebChat Sample</title>
+</head>
+<body>
+  <form id="chat-form">
+    <label>
+      Name:
+      <input id="name" type="text" required />
+    </label>
+    <label>
+      Email:
+      <input id="email" type="email" required />
+    </label>
+    <button type="submit">Start Chat</button>
+  </form>
+  <div id="chat" style="display:none;"></div>
+  <script src="https://media.twiliocdn.com/sdk/js/conversations/v1.4/conversations.min.js"></script>
+  <script src="./chat.js"></script>
+</body>
+</html>
