@@ -35,22 +35,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       alert('Failed to fetch token');
       return;
     }
-    const { token, identity } = await tokenRes.json();
-
-    // Add this user as chat participant
-    const participantRes = await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'chat',
-        identity,
-        attributes: { name, email }
-      })
-    });
-    if (!participantRes.ok) {
-      alert('Failed to add participant to conversation');
-      return;
-    }
+    const { token } = await tokenRes.json();
 
     // Initialize Conversations client and join
     if (!window.Twilio?.Conversations?.Client) {
@@ -64,7 +49,9 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       );
     }
     conversation = await client.getConversationBySid(convoData.sid);
-    await conversation.join();
+    if (conversation.state !== 'joined') {
+      await conversation.join();
+    }
 
     startForm.style.display = 'none';
     chatContainer.style.display = 'block';
