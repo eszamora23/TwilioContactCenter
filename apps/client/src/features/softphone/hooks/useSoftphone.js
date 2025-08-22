@@ -55,6 +55,11 @@ export default function useSoftphone(remoteOnly = false) {
     } catch {}
   }, [ready, callStatus, isMuted, to, elapsed, incoming, remoteOnly]);
 
+  const publishStateRef = useRef(publishState);
+  useEffect(() => {
+    publishStateRef.current = publishState;
+  }, [publishState]);
+
   const sendCmd = useCallback((action, extra = {}) => {
     try {
       chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra } });
@@ -69,6 +74,7 @@ export default function useSoftphone(remoteOnly = false) {
         setIncoming(call);
         setIncomingOpen(true);
         setCallStatus('Incoming');
+        setTimeout(() => publishStateRef.current(), 0);
       };
       dev.onStatusChange = (status) => {
         setCallStatus(status);
@@ -82,6 +88,7 @@ export default function useSoftphone(remoteOnly = false) {
           setIsMuted(false);
           clearInterval(tickRef.current);
         }
+        setTimeout(() => publishStateRef.current(), 0);
       };
 
       try {
@@ -118,9 +125,20 @@ export default function useSoftphone(remoteOnly = false) {
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
             const sec = m * 60 + s;
-            setCallStart(payload.callStatus === 'In Call' ? Date.now() - sec * 1000 : null);
+            const startTime = payload.callStatus === 'In Call' ? Date.now() - sec * 1000 : null;
+            setCallStart(startTime);
+            if (payload.callStatus === 'In Call') {
+              if (!tickRef.current) {
+                tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+              }
+            } else {
+              clearInterval(tickRef.current);
+              tickRef.current = null;
+            }
           } else {
             setCallStart(null);
+            clearInterval(tickRef.current);
+            tickRef.current = null;
           }
         }
         return;
@@ -158,6 +176,8 @@ export default function useSoftphone(remoteOnly = false) {
 
     return () => {
       try { ch.close(); } catch {}
+      clearInterval(tickRef.current);
+      tickRef.current = null;
     };
   }, [publishState, remoteOnly]);
 
@@ -189,6 +209,7 @@ export default function useSoftphone(remoteOnly = false) {
     } catch {
       setError(t('dialError'));
     }
+    setTimeout(() => publishStateRef.current(), 0);
   }
 
   async function hangup() {
@@ -208,6 +229,7 @@ export default function useSoftphone(remoteOnly = false) {
     }
     setCallStatus('Idle');
     setIsMuted(false);
+    setTimeout(() => publishStateRef.current(), 0);
   }
 
   async function toggleMute(next) {
@@ -223,6 +245,7 @@ export default function useSoftphone(remoteOnly = false) {
     } catch {
       setError(t('muteError'));
     }
+    setTimeout(() => publishStateRef.current(), 0);
   }
 
   async function acceptIncoming() {
@@ -241,6 +264,7 @@ export default function useSoftphone(remoteOnly = false) {
       setIncomingOpen(false);
       setCallStatus('Idle');
     }
+    setTimeout(() => publishStateRef.current(), 0);
   }
 
   async function rejectIncoming() {
@@ -257,6 +281,7 @@ export default function useSoftphone(remoteOnly = false) {
     }
     setIncomingOpen(false);
     setCallStatus('Idle');
+    setTimeout(() => publishStateRef.current(), 0);
   }
 
   function sendDtmf(digit) {
@@ -284,7 +309,7 @@ export default function useSoftphone(remoteOnly = false) {
     if (w) {
       popupWinRef.current = w;
       setPopupOpen(true);
-      setTimeout(() => publishState(), 150);
+      setTimeout(() => publishStateRef.current(), 150);
     }
   }
 
