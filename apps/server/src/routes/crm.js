@@ -13,7 +13,7 @@ import {
 } from '../controllers/crm.js';
 
 export const crmProxy = Router();
-crmProxy.use(requireAuth);
+crmProxy.use('/crm', requireAuth);
 crmProxy.get('/crm/vehicles/by-id/:id', getVehicleById);
 crmProxy.get('/crm/customers/:id', getCustomerById);
 crmProxy.get('/crm/vehicles/by-plate/:plate', getVehicleByPlate);
