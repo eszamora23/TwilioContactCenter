@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import useSoftphone from '../hooks/useSoftphone.js';
+import useCallControls from './useCallControls.js';
 import DialPad from './DialPad.jsx';
 import IncomingModal from './IncomingModal.jsx';
 import DtmfModal from './DtmfModal.jsx';
@@ -21,19 +22,26 @@ import styles from './Softphone.module.css';
 
 export default function Softphone({ remoteOnly, popupOpen = false }) {
   const { t } = useTranslation();
+  const softphone = useSoftphone(remoteOnly);
   const {
     ready,
     to,
     setTo,
     isIncomingOpen,
     setIncomingOpen,
+    elapsed,
+    error,
+    dial,
+    acceptIncoming,
+    rejectIncoming,
+    sendDtmf,
+  } = softphone;
+
+  const {
     callStatus,
     isMuted,
     holding,
     recStatus,
-    elapsed,
-    error,
-    dial,
     hangup,
     toggleMute,
     holdStart,
@@ -42,10 +50,7 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
     recPause,
     recResume,
     recStop,
-    acceptIncoming,
-    rejectIncoming,
-    sendDtmf,
-  } = useSoftphone(remoteOnly);
+  } = useCallControls(softphone);
 
   const [isDtmfOpen, setIsDtmfOpen] = useState(false);
 
