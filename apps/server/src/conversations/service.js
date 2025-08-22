@@ -19,11 +19,15 @@ export async function getOrCreateConversation({ uniqueName, friendlyName, attrib
     return await client.conversations.v1.conversations(uniqueName).fetch();
   } catch (err) {
     if (err.status !== 404) throw err;
-    return client.conversations.v1.conversations.create({
+    const convo = await client.conversations.v1.conversations.create({
       uniqueName,
       friendlyName: friendlyName || uniqueName,
       attributes: JSON.stringify({ ...attributes, taskSid: null }),
       messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID || undefined,
+    });
+    return client.conversations.v1.conversations(convo.sid).update({
+      'timers.inactive': 'PT15M',
+      'timers.closed': 'P1D'
     });
   }
 }
@@ -116,4 +120,11 @@ export async function updateConversationAttributes(conversationSid, newAttribute
   return client.conversations.v1.conversations(conversationSid).update({
     attributes: JSON.stringify(merged)
   });
+}
+
+export function updateConversationTimers(conversationSid, { inactive, closed } = {}) {
+  const payload = {};
+  if (inactive) payload['timers.inactive'] = inactive;
+  if (closed) payload['timers.closed'] = closed;
+  return client.conversations.v1.conversations(conversationSid).update(payload);
 }
