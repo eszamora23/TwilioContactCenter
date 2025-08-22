@@ -81,6 +81,23 @@ export default function useSoftphone(remoteOnly = false) {
     publishStateRef.current = publishState;
   }, [publishState]);
 
+  useEffect(() => {
+    if (isPopup) return;
+    const sid = getCallSid();
+    if (sid) {
+      setCallStatus('In Call');
+      setCallStart(Date.now());
+      clearInterval(tickRef.current);
+      tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+      Api.recStatus(sid).catch(() => {
+        setCallStatus('Idle');
+        setCallStart(null);
+        clearInterval(tickRef.current);
+      });
+      setTimeout(() => publishStateRef.current(), 0);
+    }
+  }, [isPopup]);
+
   const sendCmd = useCallback(
     (action, extra = {}, waitForAck = false) => {
       const id = waitForAck ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
@@ -337,8 +354,8 @@ export default function useSoftphone(remoteOnly = false) {
     try {
       setError('');
       const sid = getCallSid();
-      await dev.disconnect();
-      await Api.hangup(sid);
+      if (dev) await dev.disconnect();
+      if (sid) await Api.hangup(sid);
     } catch {
       setError(t('hangupError'));
     }
