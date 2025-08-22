@@ -22,7 +22,7 @@ try {
 const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
 res.json(convo);
 } catch (e) {
-res.status(500).json({ error: e.message });
+res.status(e.status || 500).json({ error: e.message });
 }
 });
 
@@ -59,7 +59,7 @@ return res.status(400).json({ error: 'Unsupported type' });
 }
 res.json(result);
 } catch (e) {
-res.status(500).json({ error: e.message });
+res.status(e.status || 500).json({ error: e.message });
 }
 });
 
@@ -71,7 +71,7 @@ try {
 const msg = await sendMessage(sid, req.body);
 res.json(msg);
 } catch (e) {
-res.status(500).json({ error: e.message });
+res.status(e.status || 500).json({ error: e.message });
 }
 });
 
@@ -82,7 +82,7 @@ router.get('/:sid/messages/:messageSid/receipts', async (req, res) => {
     const receipts = await listMessageReceipts(sid, messageSid);
     res.json(receipts);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -94,7 +94,7 @@ try {
 const convo = await updateConversationTimers(sid, req.body);
 res.json(convo);
 } catch (e) {
-res.status(500).json({ error: e.message });
+res.status(e.status || 500).json({ error: e.message });
 }
 });
 
@@ -106,7 +106,7 @@ try {
 const wh = await attachWebhook(sid, req.body);
 res.json(wh);
 } catch (e) {
-res.status(500).json({ error: e.message });
+res.status(e.status || 500).json({ error: e.message });
 }
 });
 
