@@ -4,7 +4,6 @@ import useSoftphone from '../hooks/useSoftphone.js';
 import DialPad from './DialPad.jsx';
 import IncomingModal from './IncomingModal.jsx';
 import DtmfModal from './DtmfModal.jsx';
-import PopoutButton from './PopoutButton.jsx';
 
 import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
@@ -20,7 +19,7 @@ import { HelpText } from '@twilio-paste/core/help-text';
 import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
 import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
 
-export default function Softphone({ remoteOnly }) {
+export default function Softphone({ remoteOnly, popupOpen = false }) {
   const { t } = useTranslation();
   const {
     ready,
@@ -38,11 +37,11 @@ export default function Softphone({ remoteOnly }) {
     acceptIncoming,
     rejectIncoming,
     sendDtmf,
-    openPopOut,
   } = useSoftphone(remoteOnly);
 
   const [isDtmfOpen, setIsDtmfOpen] = useState(false);
 
+  if (!remoteOnly && popupOpen) return null;
   if (!ready) return <SkeletonLoader />;
 
   return (
@@ -96,7 +95,6 @@ export default function Softphone({ remoteOnly }) {
             </Badge>
           </Box>
           {callStatus === 'In Call' ? <Box className="sf__pill">⏱ {elapsed}</Box> : null}
-          {!remoteOnly && <PopoutButton onClick={openPopOut} />}
         </Stack>
       </Stack>
 
