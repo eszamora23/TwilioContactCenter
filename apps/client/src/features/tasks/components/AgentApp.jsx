@@ -19,12 +19,16 @@ import AgentDesktopShell from './AgentDesktopShell.jsx';
 import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 export default function AgentApp() {
   const { activity, reservations, setAvailable } = useWorker();
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
-  const [isSoftphonePopout, setSoftphonePopout] = useState(false);
+  const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage(
+    'softphone_popout',
+    false
+  );
   const softphoneWinRef = useRef(null);
 
   useEffect(() => {
@@ -85,16 +89,8 @@ export default function AgentApp() {
     window.location.reload();
   }
 
-  function toggleSoftphonePopout() {
-    if (isSoftphonePopout) {
-      try {
-        softphoneWinRef.current?.close();
-      } catch {}
-      softphoneWinRef.current = null;
-      setSoftphonePopout(false);
-      return;
-    }
-
+  useEffect(() => {
+    if (!isSoftphonePopout || softphoneWinRef.current) return;
     const w = window.open(
       `${window.location.origin}?popup=softphone`,
       'softphone_popup',
@@ -110,6 +106,19 @@ export default function AgentApp() {
     );
     if (w) {
       softphoneWinRef.current = w;
+    } else {
+      setSoftphonePopout(false);
+    }
+  }, [isSoftphonePopout]);
+
+  function toggleSoftphonePopout() {
+    if (isSoftphonePopout) {
+      try {
+        softphoneWinRef.current?.close();
+      } catch {}
+      softphoneWinRef.current = null;
+      setSoftphonePopout(false);
+    } else {
       setSoftphonePopout(true);
     }
   }
@@ -121,7 +130,7 @@ export default function AgentApp() {
         onChange={(sid) => setAvailable(sid)}
       />
       <Button
-        variant="secondary"
+        variant={isSoftphonePopout ? 'primary' : 'secondary'}
         onClick={toggleSoftphonePopout}
         aria-pressed={isSoftphonePopout}
         aria-label={
@@ -131,7 +140,7 @@ export default function AgentApp() {
           isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'
         }
       >
-        <CallIcon decorative />
+        <CallIcon decorative color={isSoftphonePopout ? 'colorTextInverse' : undefined} />
       </Button>
       {hasCall && (
         <Button variant="primary" onClick={() => setControlsOpen(true)}>
