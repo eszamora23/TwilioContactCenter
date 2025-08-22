@@ -14,6 +14,16 @@ export const fetchTask = (taskSid) =>
 export const updateTask = (taskSid, payload) =>
   rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).update(payload);
 
+export function createTask({ attributes = {}, taskChannel, ...opts } = {}) {
+  const attrs = typeof attributes === 'string' ? attributes : JSON.stringify(attributes);
+  const payload = { attributes: attrs, workflowSid: env.workflowSid, ...opts };
+  if (taskChannel) payload.taskChannel = taskChannel;
+  return rest.taskrouter.v1.workspaces(env.workspaceSid).tasks.create(payload);
+}
+
+export const completeTask = (taskSid, reason = 'Conversation closed') =>
+  updateTask(taskSid, { assignmentStatus: 'completed', reason });
+
 export const listWorkers = () =>
   rest.taskrouter.v1.workspaces(env.workspaceSid).workers.list({ limit: 200 });
 
