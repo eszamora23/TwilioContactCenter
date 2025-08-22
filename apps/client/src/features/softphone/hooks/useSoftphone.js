@@ -222,8 +222,8 @@ export default function useSoftphone(remoteOnly = false) {
           setIncomingOpen(!!payload.hasIncoming);
           if (payload.callStatus === 'Idle') {
             setCallSid(null);
-          } else if (payload.callSid) {
-            setCallSid(payload.callSid);
+          } else {
+            setCallSid(payload.callSid || null);
           }
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);

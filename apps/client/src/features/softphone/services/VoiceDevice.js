@@ -96,6 +96,7 @@ export class VoiceDevice {
     call.on('disconnect', () => {
       console.log('Call ended');
       setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
       if (this.current === call) this.current = undefined;
       this._status('Idle');
     });
@@ -103,6 +104,7 @@ export class VoiceDevice {
     call.on('cancel', () => {
       console.log('Call cancelled');
       setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
       if (this.current === call) this.current = undefined;
       this._status('Idle');
       this.onIncoming?.(null);
@@ -111,6 +113,7 @@ export class VoiceDevice {
     call.on('error', (e) => {
       console.error('Call error', e);
       setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
       this._status('Idle');
     });
   }
