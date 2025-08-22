@@ -223,6 +223,7 @@ export default function useSoftphone(remoteOnly = false) {
       sendCmd('hangup');
       setCallStatus('Idle');
       setIsMuted(false);
+      setIncoming(null);
       return;
     }
     try {
@@ -235,6 +236,7 @@ export default function useSoftphone(remoteOnly = false) {
     }
     setCallStatus('Idle');
     setIsMuted(false);
+    setIncoming(null);
     setTimeout(() => publishStateRef.current(), 0);
   }
 
@@ -258,17 +260,20 @@ export default function useSoftphone(remoteOnly = false) {
     if (isPopup) {
       sendCmd('accept');
       setIncomingOpen(false);
+      setIncoming(null);
       return;
     }
     try {
       setError('');
       await incoming?.accept();
       setIncomingOpen(false);
+      setIncoming(null);
       setCallStatus('In Call');
     } catch {
       setError(t('acceptError'));
       setIncomingOpen(false);
       setCallStatus('Idle');
+      setIncoming(null);
     }
     setTimeout(() => publishStateRef.current(), 0);
   }
@@ -277,6 +282,7 @@ export default function useSoftphone(remoteOnly = false) {
     if (isPopup) {
       sendCmd('reject');
       setIncomingOpen(false);
+      setIncoming(null);
       return;
     }
     try {
@@ -287,6 +293,7 @@ export default function useSoftphone(remoteOnly = false) {
     }
     setIncomingOpen(false);
     setCallStatus('Idle');
+    setIncoming(null);
     setTimeout(() => publishStateRef.current(), 0);
   }
 
