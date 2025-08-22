@@ -57,7 +57,12 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       alert('Twilio Conversations SDK failed to load.');
       return;
     }
-    const client = await Twilio.Conversations.Client.create(token);
+    const client = new Twilio.Conversations.Client(token);
+    if (client.state !== 'initialized') {
+      await new Promise((resolve) =>
+        client.on('stateChanged', (state) => state === 'initialized' && resolve())
+      );
+    }
     conversation = await client.getConversationBySid(convoData.sid);
     await conversation.join();
 
