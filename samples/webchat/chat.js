@@ -20,14 +20,22 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ attributes: { name, email } })
     });
+    if (!convoRes.ok) {
+      alert('Failed to create conversation');
+      return;
+    }
     const convoData = await convoRes.json();
 
     // Fetch token for Conversations SDK
     const tokenRes = await fetch(`${API_BASE}/api/chat/token`);
+    if (!tokenRes.ok) {
+      alert('Failed to fetch token');
+      return;
+    }
     const { token, identity } = await tokenRes.json();
 
     // Add this user as chat participant
-    await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
+    const participantRes = await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -36,6 +44,10 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
         attributes: { name, email }
       })
     });
+    if (!participantRes.ok) {
+      alert('Failed to add participant to conversation');
+      return;
+    }
 
     // Initialize Conversations client and join
     const client = await Twilio.Conversations.Client.create(token);
