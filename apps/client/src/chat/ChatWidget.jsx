@@ -1,13 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { Client as ConversationsClient } from '@twilio/conversations';
 
-
 export default function ChatWidget({ conversationIdOrUniqueName }) {
   const [client, setClient] = useState(null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const identityRef = useRef();
+  const [isTyping, setIsTyping] = useState(false);
 
 
   const fetchToken = async () => {
@@ -60,6 +60,32 @@ conversation.on('messageAdded', (m) => setMessages((prev) => [...prev, m]));
 })();
 }, [conversation]);
 
+useEffect(() => {
+if (!client || !conversation) return;
+const handleStart = ({ conversationSid }) => {
+if (conversationSid === conversation.sid) setIsTyping(true);
+};
+const handleEnd = ({ conversationSid }) => {
+if (conversationSid === conversation.sid) setIsTyping(false);
+};
+client.on('typingStarted', handleStart);
+client.on('typingEnded', handleEnd);
+return () => {
+client.off('typingStarted', handleStart);
+client.off('typingEnded', handleEnd);
+};
+}, [client, conversation]);
+
+useEffect(() => {
+if (!conversation) return;
+const markRead = () => {
+try { conversation.setAllMessagesRead(); } catch {}
+};
+markRead();
+window.addEventListener('focus', markRead);
+return () => window.removeEventListener('focus', markRead);
+}, [conversation]);
+
 
 const send = async () => {
 if (!conversation || !text.trim()) return;
@@ -79,6 +105,7 @@ return (
 </div>
 ))}
 </div>
+{isTyping && <div style={{fontSize:12, color:'#999', marginBottom:8}}>Typing...</div>}
 <div style={{display:'flex', gap:8}}>
 <input value={text} onChange={e=>setText(e.target.value)} placeholder="Escribe..."
 style={{flex:1, padding:'8px 10px', border:'1px solid #ccc', borderRadius:6}} />
