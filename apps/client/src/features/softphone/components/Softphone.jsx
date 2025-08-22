@@ -29,11 +29,19 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
     setIncomingOpen,
     callStatus,
     isMuted,
+    holding,
+    recStatus,
     elapsed,
     error,
     dial,
     hangup,
     toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
     acceptIncoming,
     rejectIncoming,
     sendDtmf,
@@ -160,9 +168,67 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
             >
               {t('dtmf')}
             </Button>
+
+            <Button
+              variant="secondary"
+              onClick={holding ? holdStop : holdStart}
+              disabled={callStatus !== 'In Call'}
+              aria-label={holding ? t('resumeAria') : t('holdAria')}
+              title={holding ? t('resumeAria') : t('holdAria')}
+            >
+              {holding ? t('resume') : t('hold')}
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={recStart}
+              disabled={
+                callStatus !== 'In Call' || (recStatus !== 'inactive' && recStatus !== 'stopped')
+              }
+              aria-label={t('startRecAria')}
+              title={t('startRecTitle')}
+            >
+              {t('startRecTitle')}
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={recPause}
+              disabled={recStatus !== 'in-progress'}
+              aria-label={t('pauseRecAria')}
+              title={t('pauseRecTitle')}
+            >
+              {t('pauseRecTitle')}
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={recResume}
+              disabled={recStatus !== 'paused'}
+              aria-label={t('resumeRecAria')}
+              title={t('resumeRecTitle')}
+            >
+              {t('resumeRecTitle')}
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={recStop}
+              disabled={recStatus === 'inactive'}
+              aria-label={t('stopRecAria')}
+              title={t('stopRecTitle')}
+            >
+              {t('stopRecTitle')}
+            </Button>
           </Stack>
 
           <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
+          <HelpText variant="default">
+            {t('hold')}: {holding ? t('yes') : t('no')}
+          </HelpText>
+          <HelpText variant="default">
+            {t('recording')}: {recStatus}
+          </HelpText>
         </Box>
 
         <Box>
