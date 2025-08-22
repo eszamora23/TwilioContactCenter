@@ -1,37 +1,53 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Client as ConversationsClient } from '@twilio/conversations';
 
 
 export default function ChatWidget({ conversationIdOrUniqueName }) {
-const [client, setClient] = useState(null);
-const [conversation, setConversation] = useState(null);
-const [messages, setMessages] = useState([]);
-const [text, setText] = useState('');
+  const [client, setClient] = useState(null);
+  const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const identityRef = useRef();
 
 
-// bootstrap SDK
-useEffect(() => {
-let mounted = true;
-(async () => {
-const r = await fetch('/api/chat/token');
-const { token } = await r.json();
-const c = await ConversationsClient.create(token);
-if (!mounted) return;
-setClient(c);
-try {
-let convo = await c.getConversationBySid(conversationIdOrUniqueName);
-setConversation(convo);
-} catch (e) {
-try {
-const convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
-setConversation(convo);
-} catch (err) {
-console.error('Conversation not found; ensure server created it first');
-}
-}
-})();
-return () => { mounted = false; client?.shutdown?.(); };
-}, [conversationIdOrUniqueName]);
+  const fetchToken = async () => {
+    const url = identityRef.current
+      ? `/api/chat/refresh?identity=${encodeURIComponent(identityRef.current)}`
+      : '/api/chat/token';
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.identity) identityRef.current = data.identity;
+    return data.token;
+  };
+
+  // bootstrap SDK
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const token = await fetchToken();
+      const c = await ConversationsClient.create(token);
+      if (!mounted) return;
+      const refresh = async () => {
+        const newToken = await fetchToken();
+        await c.updateToken(newToken);
+      };
+      c.on('tokenAboutToExpire', refresh);
+      c.on('tokenExpired', refresh);
+      setClient(c);
+      try {
+        let convo = await c.getConversationBySid(conversationIdOrUniqueName);
+        setConversation(convo);
+      } catch (e) {
+        try {
+          const convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
+          setConversation(convo);
+        } catch (err) {
+          console.error('Conversation not found; ensure server created it first');
+        }
+      }
+    })();
+    return () => { mounted = false; client?.shutdown?.(); };
+  }, [conversationIdOrUniqueName]);
 
 
 // load history & subscribe to new messages
