@@ -18,7 +18,10 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     const convoRes = await fetch(`${API_BASE}/api/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ attributes: { name, email } })
+      body: JSON.stringify({
+        uniqueName: email,
+        attributes: { name, email }
+      })
     });
     if (!convoRes.ok) {
       alert('Failed to create conversation');
