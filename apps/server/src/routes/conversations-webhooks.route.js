@@ -15,8 +15,15 @@ router.post('/', async (req, res) => {
       const source = String(req.body.Source || '').toLowerCase();
       if (!['api', 'sdk'].includes(source)) {
         const conversationSid = req.body.ConversationSid;
+        const convo = await fetchConversation(conversationSid);
+        const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
         const task = await createTask({
-          attributes: { channel: 'chat', conversationSid, direction: 'inbound' },
+          attributes: {
+            channel: 'chat',
+            conversationSid,
+            direction: 'inbound',
+            ...convoAttrs
+          },
           taskChannel: 'chat'
         });
         await updateConversationAttributes(conversationSid, { taskSid: task.sid });
