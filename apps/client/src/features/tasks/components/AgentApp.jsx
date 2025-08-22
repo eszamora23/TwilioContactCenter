@@ -5,7 +5,7 @@ import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster } from '@twilio-paste/core/toast';
-import { PhoneIcon } from '@twilio-paste/icons/esm/PhoneIcon';
+import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
@@ -109,7 +109,7 @@ export default function AgentApp() {
           isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'
         }
       >
-        <PhoneIcon decorative />
+        <CallIcon decorative />
       </Button>
       {hasCall && (
         <Button variant="primary" onClick={() => setControlsOpen(true)}>
