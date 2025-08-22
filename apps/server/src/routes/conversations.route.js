@@ -7,6 +7,7 @@ addWhatsappParticipant,
 addMessengerParticipant,
 sendMessage,
 attachWebhook,
+updateConversationTimers,
 } from '../conversations/service.js';
 
 
@@ -68,6 +69,18 @@ const { sid } = req.params;
 try {
 const msg = await sendMessage(sid, req.body);
 res.json(msg);
+} catch (e) {
+res.status(500).json({ error: e.message });
+}
+});
+
+
+// Update conversation timers (e.g., to hang up)
+router.post('/:sid/timers', async (req, res) => {
+const { sid } = req.params;
+try {
+const convo = await updateConversationTimers(sid, req.body);
+res.json(convo);
 } catch (e) {
 res.status(500).json({ error: e.message });
 }
