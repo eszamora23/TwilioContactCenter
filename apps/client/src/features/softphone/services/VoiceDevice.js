@@ -100,6 +100,14 @@ export class VoiceDevice {
       this._status('Idle');
     });
 
+    call.on('cancel', () => {
+      console.log('Call cancelled');
+      setCallSid(null);
+      if (this.current === call) this.current = undefined;
+      this._status('Idle');
+      this.onIncoming?.(null);
+    });
+
     call.on('error', (e) => {
       console.error('Call error', e);
       setCallSid(null);
