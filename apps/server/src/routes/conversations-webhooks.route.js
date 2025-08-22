@@ -11,24 +11,37 @@ router.post('/', async (req, res) => {
   console.log('[Conversations Webhook]', eventType, req.body?.MessageSid || '');
   const io = req.app.get('io');
   try {
-    if (eventType === 'onConversationAdded') {
-      const source = String(req.body.Source || '').toLowerCase();
-      if (!['api', 'sdk'].includes(source)) {
+    if (eventType === 'onMessageAdded') {
+      const author = String(req.body.Author || '').toLowerCase();
+      let participantAttrs = {};
+      try {
+        participantAttrs = req.body.ParticipantAttributes
+          ? JSON.parse(req.body.ParticipantAttributes)
+          : {};
+      } catch {
+        participantAttrs = {};
+      }
+      const isAgent = participantAttrs.role === 'agent';
+      if (author !== 'system' && !isAgent) {
         const conversationSid = req.body.ConversationSid;
         const convo = await fetchConversation(conversationSid);
         const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
-        const task = await createTask({
-          attributes: {
-            channel: 'chat',
-            conversationSid,
-            direction: 'inbound',
-            ...convoAttrs
-          },
-          taskChannel: 'chat'
-        });
-        await updateConversationAttributes(conversationSid, { taskSid: task.sid });
-        pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
-        io?.emit('task_created', { taskSid: task.sid, conversationSid });
+        if (!convoAttrs.taskSid) {
+          const task = await createTask({
+            attributes: {
+              channel: 'chat',
+              conversationSid,
+              direction: 'inbound',
+              ...convoAttrs
+            },
+            taskChannel: 'chat'
+          });
+          await updateConversationAttributes(conversationSid, {
+            taskSid: task.sid
+          });
+          pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
+          io?.emit('task_created', { taskSid: task.sid, conversationSid });
+        }
       }
     } else if (eventType === 'onConversationStateUpdated') {
       const status = String(req.body.Status || '').toLowerCase();
