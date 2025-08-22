@@ -1,3 +1,5 @@
+const API_BASE = window.API_BASE || 'http://localhost:4000';
+
 (async function () {
   const startForm = document.getElementById('start-form');
   const chatContainer = document.getElementById('chat-container');
@@ -13,7 +15,7 @@
     const email = document.getElementById('email').value;
 
     // Create conversation with attributes
-    const convoRes = await fetch('/api/conversations', {
+    const convoRes = await fetch(`${API_BASE}/api/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ attributes: { name, email } })
@@ -21,11 +23,11 @@
     const convoData = await convoRes.json();
 
     // Fetch token for Conversations SDK
-    const tokenRes = await fetch('/api/chat/token');
+    const tokenRes = await fetch(`${API_BASE}/api/chat/token`);
     const { token, identity } = await tokenRes.json();
 
     // Add this user as chat participant
-    await fetch(`/api/conversations/${convoData.sid}/participants`, {
+    await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
