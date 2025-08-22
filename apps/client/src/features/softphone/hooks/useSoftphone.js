@@ -10,8 +10,14 @@ import Api from '../../index.js';
  */
 export default function useSoftphone(remoteOnly = false) {
   const { t } = useTranslation();
+  const isPopupRef = useRef(
+    remoteOnly ||
+      (typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('popup') === 'softphone')
+  );
+  const isPopup = isPopupRef.current;
 
-  const [dev] = useState(() => (remoteOnly ? null : new VoiceDevice()));
+  const [dev] = useState(() => (isPopup ? null : new VoiceDevice()));
   const [ready, setReady] = useState(false);
   const [to, setTo] = useState('');
   const [incoming, setIncoming] = useState(null);
@@ -39,7 +45,7 @@ export default function useSoftphone(remoteOnly = false) {
   }, [callStart, force]);
 
   const publishState = useCallback(() => {
-    if (remoteOnly) return;
+    if (isPopup) return;
     try {
       chanRef.current?.postMessage({
         type: 'state',
@@ -53,7 +59,7 @@ export default function useSoftphone(remoteOnly = false) {
         },
       });
     } catch {}
-  }, [ready, callStatus, isMuted, to, elapsed, incoming, remoteOnly]);
+  }, [ready, callStatus, isMuted, to, elapsed, incoming, isPopup]);
 
   const publishStateRef = useRef(publishState);
   useEffect(() => {
@@ -68,7 +74,7 @@ export default function useSoftphone(remoteOnly = false) {
 
   // Device lifecycle
   useEffect(() => {
-    if (remoteOnly) return undefined;
+    if (isPopup) return undefined;
     const boot = async () => {
       dev.onIncoming = (call) => {
         setIncoming(call);
@@ -105,7 +111,7 @@ export default function useSoftphone(remoteOnly = false) {
       dev.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remoteOnly]);
+  }, [isPopup]);
 
   // BroadcastChannel setup
   useEffect(() => {
@@ -114,7 +120,7 @@ export default function useSoftphone(remoteOnly = false) {
 
     ch.onmessage = async (evt) => {
       const { type, payload } = evt.data || {};
-      if (remoteOnly) {
+      if (isPopup) {
         if (type === 'state') {
           setReady(!!payload.ready);
           setCallStatus(payload.callStatus || 'Idle');
@@ -170,7 +176,7 @@ export default function useSoftphone(remoteOnly = false) {
       }
     };
 
-    if (remoteOnly) {
+    if (isPopup) {
       try { ch.postMessage({ type: 'cmd', payload: { action: 'ping' } }); } catch {}
     }
 
@@ -179,12 +185,12 @@ export default function useSoftphone(remoteOnly = false) {
       clearInterval(tickRef.current);
       tickRef.current = null;
     };
-  }, [publishState, remoteOnly]);
+  }, [publishState, isPopup]);
 
-  useEffect(() => { if (!remoteOnly) publishState(); }, [publishState, remoteOnly]);
+  useEffect(() => { if (!isPopup) publishState(); }, [publishState, isPopup]);
 
   useEffect(() => {
-    if (remoteOnly) return undefined;
+    if (isPopup) return undefined;
     const iv = setInterval(() => {
       if (popupOpen && popupWinRef.current && popupWinRef.current.closed) {
         setPopupOpen(false);
@@ -192,10 +198,10 @@ export default function useSoftphone(remoteOnly = false) {
       }
     }, 800);
     return () => clearInterval(iv);
-  }, [popupOpen, remoteOnly]);
+  }, [popupOpen, isPopup]);
 
   async function dial(num = to) {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd('dial', { to: num });
       return;
     }
@@ -213,7 +219,7 @@ export default function useSoftphone(remoteOnly = false) {
   }
 
   async function hangup() {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd('hangup');
       setCallStatus('Idle');
       setIsMuted(false);
@@ -233,7 +239,7 @@ export default function useSoftphone(remoteOnly = false) {
   }
 
   async function toggleMute(next) {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd(next ? 'mute' : 'unmute');
       setIsMuted(next);
       return;
@@ -249,7 +255,7 @@ export default function useSoftphone(remoteOnly = false) {
   }
 
   async function acceptIncoming() {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd('accept');
       setIncomingOpen(false);
       return;
@@ -268,7 +274,7 @@ export default function useSoftphone(remoteOnly = false) {
   }
 
   async function rejectIncoming() {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd('reject');
       setIncomingOpen(false);
       return;
@@ -285,7 +291,7 @@ export default function useSoftphone(remoteOnly = false) {
   }
 
   function sendDtmf(digit) {
-    if (remoteOnly) {
+    if (isPopup) {
       sendCmd('dtmf', { digit });
     } else {
       try { dev?.sendDigits(digit); } catch {}
