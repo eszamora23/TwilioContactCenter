@@ -36,6 +36,19 @@ router.post('/', async (req, res) => {
           io?.emit('task_completed', { taskSid, conversationSid });
         }
       }
+    } else if (eventType === 'onDeliveryUpdated') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const deliveryStatus = req.body.DeliveryStatus;
+      if (conversationSid && messageSid && deliveryStatus) {
+        const convo = await fetchConversation(conversationSid);
+        const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+        const receipts = attrs.deliveryReceipts || {};
+        receipts[messageSid] = deliveryStatus;
+        await updateConversationAttributes(conversationSid, { deliveryReceipts: receipts });
+        pushEvent('MESSAGE_DELIVERY_UPDATED', { conversationSid, messageSid, deliveryStatus });
+        io?.emit('message_delivery_updated', { conversationSid, messageSid, deliveryStatus });
+      }
     }
     res.status(200).send('ok');
   } catch (e) {

@@ -8,6 +8,7 @@ addMessengerParticipant,
 sendMessage,
 attachWebhook,
 updateConversationTimers,
+listMessageReceipts,
 } from '../conversations/service.js';
 
 
@@ -72,6 +73,17 @@ res.json(msg);
 } catch (e) {
 res.status(500).json({ error: e.message });
 }
+});
+
+// Retrieve delivery receipts for a message
+router.get('/:sid/messages/:messageSid/receipts', async (req, res) => {
+  const { sid, messageSid } = req.params;
+  try {
+    const receipts = await listMessageReceipts(sid, messageSid);
+    res.json(receipts);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
