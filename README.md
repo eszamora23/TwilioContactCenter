@@ -135,6 +135,12 @@ npm start -w apps/server
 
 Default port: `4000`. The server exposes REST endpoints under `/api/*` and uses Socket.IO for presence updates.
 
+### Conversations REST messaging
+The server's Conversations helper uses Twilio's REST API to send messages. It sets the
+`X-Twilio-Webhook-Enabled: true` header so that Twilio triggers any configured
+webhooks after a message is sent programmatically. Include this header only when
+you need to receive the webhook following a REST send.
+
 ## Web Client
 A React application built with Vite and Twilio Paste components. It communicates with the server via REST and WebSocket and embeds the Twilio Voice SDK & TaskRouter JS SDK.
 

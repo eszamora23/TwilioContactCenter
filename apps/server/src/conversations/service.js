@@ -72,13 +72,24 @@ return client.conversations.v1.conversations(conversationSid).participants.creat
 }
 
 
-/** Send a message (works for all channels) */
-export function sendMessage(conversationSid, { author = 'system', body, mediaSid, attributes }) {
-const payload = { author };
-if (body) payload.body = body;
-if (mediaSid) payload.mediaSid = mediaSid;
-if (attributes) payload.attributes = JSON.stringify(attributes);
-return client.conversations.v1.conversations(conversationSid).messages.create(payload);
+/**
+ * Send a message (works for all channels).
+ *
+ * The `xTwilioWebhookEnabled` option instructs Twilio to fire any configured
+ * Conversation webhooks even though the message was sent via REST. Use this
+ * header only when a webhook callback is desired after a REST send.
+ */
+export function sendMessage(
+  conversationSid,
+  { author = 'system', body, mediaSid, attributes }
+) {
+  const payload = { author };
+  if (body) payload.body = body;
+  if (mediaSid) payload.mediaSid = mediaSid;
+  if (attributes) payload.attributes = JSON.stringify(attributes);
+  return client.conversations.v1
+    .conversations(conversationSid)
+    .messages.create(payload, { xTwilioWebhookEnabled: true });
 }
 
 
