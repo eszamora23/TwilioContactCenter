@@ -1,5 +1,4 @@
 const API_BASE = window.API_BASE || 'http://localhost:4000';
-const STUDIO_FLOW_SID = '<YOUR_STUDIO_FLOW_SID>';
 
 (async function () {
   const startForm = document.getElementById('start-form');
@@ -29,20 +28,6 @@ const STUDIO_FLOW_SID = '<YOUR_STUDIO_FLOW_SID>';
       return;
     }
     const convoData = await convoRes.json();
-
-    // Attach Studio Flow webhook to this conversation
-    const webhookRes = await fetch(
-      `${API_BASE}/api/conversations/${convoData.sid}/webhooks`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: 'studio', flowSid: STUDIO_FLOW_SID }),
-      }
-    );
-    if (!webhookRes.ok) {
-      alert('Failed to attach Studio Flow');
-      return;
-    }
 
     // Fetch token for Conversations SDK
     const tokenRes = await fetch(`${API_BASE}/api/chat/token`);
