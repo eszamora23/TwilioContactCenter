@@ -319,6 +319,14 @@ export default function useSoftphone(remoteOnly = false) {
     }
   }
 
+  function closePopOut() {
+    try {
+      popupWinRef.current?.close();
+    } catch {}
+    popupWinRef.current = null;
+    setPopupOpen(false);
+  }
+
   return {
     ready,
     to,
@@ -337,6 +345,8 @@ export default function useSoftphone(remoteOnly = false) {
     rejectIncoming,
     sendDtmf,
     openPopOut,
+    closePopOut,
+    popupOpen,
     setError,
   };
 }
