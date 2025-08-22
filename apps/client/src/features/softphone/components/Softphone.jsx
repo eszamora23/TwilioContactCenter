@@ -4,6 +4,7 @@ import useSoftphone from '../hooks/useSoftphone.js';
 import DialPad from './DialPad.jsx';
 import IncomingModal from './IncomingModal.jsx';
 import DtmfModal from './DtmfModal.jsx';
+import CallControlBar from './CallControlBar.jsx';
 
 import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
@@ -11,13 +12,10 @@ import { Heading } from '@twilio-paste/core/heading';
 import { Input } from '@twilio-paste/core/input';
 import { Button } from '@twilio-paste/core/button';
 import { Badge } from '@twilio-paste/core/badge';
-import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Alert } from '@twilio-paste/core/alert';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Separator } from '@twilio-paste/core/separator';
 import { HelpText } from '@twilio-paste/core/help-text';
-import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
-import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
 import styles from './Softphone.module.css';
 
 export default function Softphone({ remoteOnly, popupOpen = false }) {
@@ -121,99 +119,21 @@ export default function Softphone({ remoteOnly, popupOpen = false }) {
             </Button>
           </Stack>
 
-          <Stack orientation={['vertical', 'horizontal']} spacing="space50" style={{ flexWrap: 'wrap' }}>
-            <Tooltip text={t('toggleMuteTooltip')}>
-              <Button
-                variant="secondary"
-                onClick={() => toggleMute(!isMuted)}
-                aria-pressed={isMuted}
-                aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
-                title={isMuted ? t('unmuteAria') : t('muteAria')}
-              >
-                {isMuted ? (
-                  <>
-                    <MicrophoneOffIcon decorative /> {t('unmute')}
-                  </>
-                ) : (
-                  <>
-                    <MicrophoneOnIcon decorative /> {t('mute')}
-                  </>
-                )}
-              </Button>
-            </Tooltip>
-
-            <Button
-              variant="destructive"
-              onClick={hangup}
-              disabled={callStatus !== 'In Call' && callStatus !== 'Incoming'}
-              aria-label={t('hangupAria')}
-              title={t('hangupAria')}
-            >
-              {t('hangup')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={() => setIsDtmfOpen(true)}
-              disabled={callStatus !== 'In Call'}
-              aria-label={t('dtmfAria')}
-              title={t('dtmfAria')}
-            >
-              {t('dtmf')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={holding ? holdStop : holdStart}
-              disabled={callStatus !== 'In Call'}
-              aria-label={holding ? t('resumeAria') : t('holdAria')}
-              title={holding ? t('resumeAria') : t('holdAria')}
-            >
-              {holding ? t('resume') : t('hold')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={recStart}
-              disabled={
-                callStatus !== 'In Call' || (recStatus !== 'inactive' && recStatus !== 'stopped')
-              }
-              aria-label={t('startRecAria')}
-              title={t('startRecTitle')}
-            >
-              {t('startRecTitle')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={recPause}
-              disabled={recStatus !== 'in-progress'}
-              aria-label={t('pauseRecAria')}
-              title={t('pauseRecTitle')}
-            >
-              {t('pauseRecTitle')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={recResume}
-              disabled={recStatus !== 'paused'}
-              aria-label={t('resumeRecAria')}
-              title={t('resumeRecTitle')}
-            >
-              {t('resumeRecTitle')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={recStop}
-              disabled={recStatus === 'inactive'}
-              aria-label={t('stopRecAria')}
-              title={t('stopRecTitle')}
-            >
-              {t('stopRecTitle')}
-            </Button>
-          </Stack>
+          <CallControlBar
+            callStatus={callStatus}
+            isMuted={isMuted}
+            holding={holding}
+            recStatus={recStatus}
+            hangup={hangup}
+            toggleMute={toggleMute}
+            holdStart={holdStart}
+            holdStop={holdStop}
+            recStart={recStart}
+            recPause={recPause}
+            recResume={recResume}
+            recStop={recStop}
+            onOpenDtmf={() => setIsDtmfOpen(true)}
+          />
 
           <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
           <HelpText variant="default">
