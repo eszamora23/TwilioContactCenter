@@ -316,6 +316,24 @@ export default function useSoftphone(remoteOnly = false) {
   useEffect(() => { if (!isPopup) publishState(); }, [publishState, isPopup]);
 
   useEffect(() => {
+    if (isPopup) return undefined;
+    const hangupOnUnload = () => {
+      try {
+        const sid = getCallSid();
+        if (sid) Api.hangup(sid);
+      } catch (e) {
+        console.warn('[softphone unload hangup error]', e);
+      }
+    };
+    window.addEventListener('beforeunload', hangupOnUnload);
+    window.addEventListener('unload', hangupOnUnload);
+    return () => {
+      window.removeEventListener('beforeunload', hangupOnUnload);
+      window.removeEventListener('unload', hangupOnUnload);
+    };
+  }, [isPopup]);
+
+  useEffect(() => {
     if (!isPopup) return undefined;
     const notifyClose = () => {
       try {
