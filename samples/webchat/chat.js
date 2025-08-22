@@ -35,9 +35,39 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       alert('Failed to fetch token');
       return;
     }
-    const { token } = await tokenRes.json();
+    const { token, identity } = await tokenRes.json();
 
-    // Initialize Conversations client and join
+    // Add this user as a participant via REST
+    try {
+      const addRes = await fetch(
+        `${API_BASE}/api/conversations/${convoData.sid}/participants`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'chat',
+            identity,
+            attributes: { name, email },
+          }),
+        }
+      );
+      if (!addRes.ok && addRes.status !== 409) {
+        const errData = await addRes.json().catch(() => ({}));
+        if (errData.error?.code !== 50433) {
+          throw Object.assign(
+            new Error(errData.error?.message || 'Failed to add participant'),
+            { status: addRes.status, code: errData.error?.code }
+          );
+        }
+      }
+    } catch (err) {
+      if (err.status !== 409 && err.code !== 50433) {
+        alert('Failed to join conversation');
+        return;
+      }
+    }
+
+    // Initialize Conversations client
     if (!window.Twilio?.Conversations?.Client) {
       alert('Twilio Conversations SDK failed to load.');
       return;
@@ -49,9 +79,6 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       );
     }
     conversation = await client.getConversationBySid(convoData.sid);
-    if (conversation.state !== 'joined') {
-      await conversation.join();
-    }
 
     startForm.style.display = 'none';
     chatContainer.style.display = 'block';
