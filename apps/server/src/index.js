@@ -14,6 +14,9 @@ import { transfer } from './routes/transfer.js';
 import { voiceControl } from './routes/voiceControl.js';
 import { ivr } from './routes/ivr.js';
 import { crmProxy } from './routes/crm.js';
+import chatTokenRoute from './routes/chat-token.route.js';
+import conversationsRoute from './routes/conversations.route.js';
+import conversationsWebhooksRoute from './routes/conversations-webhooks.route.js';
 
 const app = express();
 validateEnv();
@@ -56,7 +59,9 @@ app.use('/api', voiceControl);
 app.use('/api/ivr/finance', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }));
 app.use('/api', ivr);
 app.use('/api', crmProxy);
-
+app.use('/api/chat', chatTokenRoute);
+app.use('/api/conversations', conversationsRoute);
+app.use('/webhooks/conversations', conversationsWebhooksRoute);
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
 const io = new Server(server, {
