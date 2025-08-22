@@ -122,6 +122,16 @@ export async function updateConversationAttributes(conversationSid, newAttribute
   });
 }
 
+export function listMessageReceipts(conversationSid, messageSid) {
+  if (!conversationSid || !messageSid) {
+    throw new Error('conversationSid and messageSid are required');
+  }
+  return client.conversations.v1
+    .conversations(conversationSid)
+    .messages(messageSid)
+    .deliveryReceipts.list();
+}
+
 export function updateConversationTimers(conversationSid, { inactive, closed } = {}) {
   const payload = {};
   if (inactive) payload['timers.inactive'] = inactive;
