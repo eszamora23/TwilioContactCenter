@@ -1,7 +1,7 @@
-import { jwt } from 'twilio';
+import twilio from 'twilio';
 
 
-const { AccessToken } = jwt;
+const { AccessToken } = twilio.jwt;
 const { ChatGrant } = AccessToken; // Conversations uses ChatGrant with serviceSid
 
 
