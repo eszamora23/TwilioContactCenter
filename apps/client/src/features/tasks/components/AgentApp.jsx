@@ -1,5 +1,7 @@
 // contact-center/client/src/components/AgentApp.jsx
 import { useState, useEffect, useRef } from 'react';
+import ChatWidget from '../../../chat/ChatWidget.jsx';
+import { Client as ConversationsClient } from '@twilio/conversations';
 
 import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
@@ -22,7 +24,8 @@ import CardSection from '../../../shared/components/CardSection.jsx';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 export default function AgentApp() {
-  const { activity, reservations, setAvailable } = useWorker();
+  const { worker, activity, reservations, setAvailable } = useWorker();
+  const [chatSid, setChatSid] = useState(null);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
   const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage(
@@ -68,6 +71,46 @@ export default function AgentApp() {
       try { ch.close(); } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    if (!worker) return;
+    const handler = async (r) => {
+      try {
+        const attrs = r.task?.attributes || {};
+        if (attrs.channel === 'chat') {
+          const conversationSid = attrs.conversationSid || attrs.conversation_sid;
+          const tokenResp = await fetch('/api/chat/token');
+          const { token, identity } = await tokenResp.json();
+          let isParticipant = true;
+          let client;
+          try {
+            client = await ConversationsClient.create(token);
+            await client.getConversationBySid(conversationSid);
+          } catch (err) {
+            isParticipant = false;
+          } finally {
+            try { await client?.shutdown?.(); } catch {}
+          }
+          if (!isParticipant) {
+            await fetch(`/api/conversations/${conversationSid}/participants`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'chat', identity }),
+            });
+          }
+          setChatSid(conversationSid);
+        }
+      } catch (e) {
+        console.error('reservation.accepted handler error', e);
+      }
+    };
+    worker.on('reservation.accepted', handler);
+    return () => {
+      try {
+        worker.removeListener('reservation.accepted', handler);
+      } catch {}
+    };
+  }, [worker]);
 
   const sections = [
     { id: 'softphone', label: 'Softphone', content: () => <Softphone popupOpen={isSoftphonePopout} /> },
@@ -156,6 +199,11 @@ export default function AgentApp() {
   return (
     <Box minHeight="100vh" width="100%">
       <Toaster />
+      {chatSid && (
+        <Box marginBottom="space70">
+          <ChatWidget conversationIdOrUniqueName={chatSid} />
+        </Box>
+      )}
 
       <CallControlsModal
         isOpen={controlsOpen}
