@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { ButtonGroup } from '@twilio-paste/core/button-group';
-import { IconButton } from '@twilio-paste/core/icon-button';
+import { IconButton } from '@twilio-paste/core/button';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
 import { HangupIcon } from '@twilio-paste/icons/esm/HangupIcon';
