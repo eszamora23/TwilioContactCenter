@@ -1,4 +1,4 @@
-﻿import Twilio from 'twilio';
+import twilio from 'twilio';
 import { serverEnv as env } from 'shared/env';
 
 export function verifyTwilioSignature(req, res, next) {
@@ -12,7 +12,12 @@ export function verifyTwilioSignature(req, res, next) {
     const url = base + req.originalUrl;
     const params = req.body || {};
 
-    const valid = Twilio.validateRequest(env.authToken, signature, url, params);
+    const valid = twilio.webhook.validateRequest(
+      env.authToken,
+      signature,
+      url,
+      params
+    );
     if (!valid) return res.status(403).send('Invalid Twilio signature');
 
     return next();
