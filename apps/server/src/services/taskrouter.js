@@ -15,7 +15,9 @@ export const updateTask = (taskSid, payload) =>
   rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).update(payload);
 
 export function createTask({ attributes = {}, taskChannel, ...opts } = {}) {
-  const attrs = typeof attributes === 'string' ? attributes : JSON.stringify(attributes);
+  const attrsObj = typeof attributes === 'string' ? JSON.parse(attributes) : { ...attributes };
+  if (!('taskSid' in attrsObj)) attrsObj.taskSid = null;
+  const attrs = JSON.stringify(attrsObj);
   const payload = { attributes: attrs, workflowSid: env.workflowSid, ...opts };
   if (taskChannel) payload.taskChannel = taskChannel;
   return rest.taskrouter.v1.workspaces(env.workspaceSid).tasks.create(payload);
