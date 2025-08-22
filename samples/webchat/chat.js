@@ -29,6 +29,16 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     }
     const convoData = await convoRes.json();
 
+    // Send initial system message
+    await fetch(`${API_BASE}/api/conversations/${convoData.sid}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        author: 'system',
+        body: 'Thank you! An agent will join soon.'
+      })
+    });
+
     // Fetch token for Conversations SDK
     const tokenRes = await fetch(`${API_BASE}/api/chat/token`);
     if (!tokenRes.ok) {
