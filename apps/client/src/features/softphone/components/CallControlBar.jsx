@@ -1,11 +1,13 @@
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { ButtonGroup } from '@twilio-paste/core/button-group';
-import { IconButton } from '@twilio-paste/core/button';
+import { Button } from '@twilio-paste/core/button';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
-import { HangUpIcon } from '@twilio-paste/icons/esm/HangUpIcon';
+
+import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { DialpadIcon } from '@twilio-paste/icons/esm/DialpadIcon';
-import { HoldIcon } from '@twilio-paste/icons/esm/HoldIcon';
+import { CallHoldIcon } from '@twilio-paste/icons/esm/CallHoldIcon';
 import { MoreIcon } from '@twilio-paste/icons/esm/MoreIcon';
 import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
 import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
@@ -28,54 +30,59 @@ export default function CallControlBar({
   const { t } = useTranslation();
   const menu = useMenuState();
 
+  const inCall = callStatus === 'In Call';
+  const canHang = inCall || callStatus === 'Incoming';
+
   return (
     <>
       <ButtonGroup>
         <Tooltip text={isMuted ? t('unmute') : t('mute')}>
-          <IconButton
-            onClick={() => toggleMute(!isMuted)}
-            icon={
-              isMuted ? (
-                <MicrophoneOffIcon decorative />
-              ) : (
-                <MicrophoneOnIcon decorative />
-              )
-            }
-            aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
+          <Button
             variant="secondary"
-            pressed={isMuted}
-          />
+            size="icon"
+            onClick={() => toggleMute(!isMuted)}
+            aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
+            aria-pressed={isMuted}
+          >
+            {isMuted ? <MicrophoneOffIcon decorative /> : <MicrophoneOnIcon decorative />}
+          </Button>
         </Tooltip>
 
         <Tooltip text={t('hangup')}>
-          <IconButton
-            onClick={hangup}
-            icon={<HangUpIcon decorative />}
-            aria-label={t('hangupAria')}
+          <Button
             variant="destructive"
-            disabled={callStatus !== 'In Call' && callStatus !== 'Incoming'}
-          />
+            size="icon"
+            onClick={hangup}
+            aria-label={t('hangupAria')}
+            disabled={!canHang}
+          >
+            <CallIcon decorative />
+          </Button>
         </Tooltip>
 
         <Tooltip text={t('dtmf')}>
-          <IconButton
-            onClick={onOpenDtmf}
-            icon={<DialpadIcon decorative />}
-            aria-label={t('dtmfAria')}
+          <Button
             variant="secondary"
-            disabled={callStatus !== 'In Call'}
-          />
+            size="icon"
+            onClick={onOpenDtmf}
+            aria-label={t('dtmfAria')}
+            disabled={!inCall}
+          >
+            <DialpadIcon decorative />
+          </Button>
         </Tooltip>
 
         <Tooltip text={holding ? t('resume') : t('hold')}>
-          <IconButton
-            onClick={holding ? holdStop : holdStart}
-            icon={<HoldIcon decorative />}
-            aria-label={holding ? t('resumeAria') : t('holdAria')}
+          <Button
             variant="secondary"
-            disabled={callStatus !== 'In Call'}
-            pressed={holding}
-          />
+            size="icon"
+            onClick={holding ? holdStop : holdStart}
+            aria-label={holding ? t('resumeAria') : t('holdAria')}
+            aria-pressed={holding}
+            disabled={!inCall}
+          >
+            <CallHoldIcon decorative />
+          </Button>
         </Tooltip>
 
         <Tooltip text={t('more')}>
@@ -88,9 +95,7 @@ export default function CallControlBar({
       <Menu {...menu} aria-label={t('more')}>
         <MenuItem
           onClick={recStart}
-          disabled={
-            callStatus !== 'In Call' || (recStatus !== 'inactive' && recStatus !== 'stopped')
-          }
+          disabled={!inCall || (recStatus !== 'inactive' && recStatus !== 'stopped')}
         >
           {t('startRecTitle')}
         </MenuItem>
