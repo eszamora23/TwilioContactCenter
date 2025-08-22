@@ -1,5 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { Client as ConversationsClient } from '@twilio/conversations';
+import { Box } from '@twilio-paste/core/box';
+import {
+  ChatLog,
+  ChatMessage,
+  ChatBubble,
+  ChatMessageMeta,
+  ChatMessageMetaItem,
+} from '@twilio-paste/core/chat-log';
+import { Input } from '@twilio-paste/core/input';
+import { Button } from '@twilio-paste/core/button';
+import { Heading } from '@twilio-paste/core/heading';
+import { Text } from '@twilio-paste/core/text';
+import styles from './ChatWidget.module.css';
 
 export default function ChatWidget({ conversationIdOrUniqueName }) {
   const [client, setClient] = useState(null);
@@ -8,6 +21,7 @@ export default function ChatWidget({ conversationIdOrUniqueName }) {
   const [text, setText] = useState('');
   const identityRef = useRef();
   const [isTyping, setIsTyping] = useState(false);
+  const bottomRef = useRef(null);
 
 
   const fetchToken = async () => {
@@ -87,6 +101,11 @@ return () => window.removeEventListener('focus', markRead);
 }, [conversation]);
 
 
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+
 const send = async () => {
 if (!conversation || !text.trim()) return;
 await conversation.sendMessage(text.trim());
@@ -95,22 +114,63 @@ setText('');
 
 
 return (
-<div className="twcc-chat" style={{border:'1px solid #ddd', borderRadius:8, padding:12, width:360, fontFamily:'system-ui'}}>
-<div style={{fontWeight:600, marginBottom:8}}>Support Chat</div>
-<div style={{height:260, overflowY:'auto', background:'#fafafa', padding:8, borderRadius:6, marginBottom:8}}>
-{messages.map(m => (
-<div key={m.sid} style={{margin:'6px 0'}}>
-<div style={{fontSize:12, color:'#555'}}>{m.author || 'system'}</div>
-<div>{m.body}</div>
-</div>
-))}
-</div>
-{isTyping && <div style={{fontSize:12, color:'#999', marginBottom:8}}>Typing...</div>}
-<div style={{display:'flex', gap:8}}>
-<input value={text} onChange={e=>setText(e.target.value)} placeholder="Escribe..."
-style={{flex:1, padding:'8px 10px', border:'1px solid #ccc', borderRadius:6}} />
-<button onClick={send} style={{padding:'8px 12px', borderRadius:6}}>Enviar</button>
-</div>
-</div>
+    <Box
+      className={styles.container}
+      borderStyle="solid"
+      borderColor="colorBorderWeaker"
+      borderWidth="borderWidth10"
+      borderRadius="borderRadius30"
+      padding="space60"
+    >
+      <Heading as="h3" variant="heading30" marginBottom="space50">
+        Support Chat
+      </Heading>
+      <Box
+        className={styles.log}
+        overflowY="auto"
+        backgroundColor="colorBackground"
+        padding="space50"
+        borderRadius="borderRadius20"
+        marginBottom="space50"
+      >
+        <ChatLog>
+          {messages.map((m) => (
+            <ChatMessage
+              key={m.sid}
+              variant={m.author === identityRef.current ? 'outbound' : 'inbound'}
+            >
+              <ChatBubble>
+                <Text as="p">{m.body}</Text>
+              </ChatBubble>
+              <ChatMessageMeta>
+                <ChatMessageMetaItem>
+                  <Text as="span" color="colorTextWeak" fontSize="fontSize20">
+                    {m.author || 'system'}
+                  </Text>
+                </ChatMessageMetaItem>
+              </ChatMessageMeta>
+            </ChatMessage>
+          ))}
+          <Box ref={bottomRef} />
+        </ChatLog>
+      </Box>
+      {isTyping && (
+        <Text as="p" color="colorTextWeak" fontSize="fontSize20" marginBottom="space50">
+          Typing...
+        </Text>
+      )}
+      <Box display="flex" columnGap="space50">
+        <Box flexGrow={1}>
+          <Input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Escribe..."
+          />
+        </Box>
+        <Button variant="primary" onClick={send}>
+          Enviar
+        </Button>
+      </Box>
+    </Box>
 );
 }
