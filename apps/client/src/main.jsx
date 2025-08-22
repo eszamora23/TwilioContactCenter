@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Theme } from '@twilio-paste/core/theme';
 import App from './App.jsx';
 import Softphone from './features/softphone/components/Softphone.jsx';
+import SoftphoneLayout from './features/softphone/components/SoftphoneLayout.jsx';
 
 const root = createRoot(document.getElementById('root'));
 
@@ -13,9 +14,9 @@ root.render(
   <Theme.Provider theme="default">
     {remoteOnly ? (
       // Popup renders the Softphone in remoteOnly mode
-      <div style={{ minHeight: '100vh', background: 'var(--paste-color-background-body)', padding: '16px' }}>
+      <SoftphoneLayout>
         <Softphone remoteOnly={remoteOnly} />
-      </div>
+      </SoftphoneLayout>
     ) : (
       <App />
     )}
