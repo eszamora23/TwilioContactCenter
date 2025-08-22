@@ -79,6 +79,10 @@ const resources = {
       "muteError": "Failed to toggle mute.",
       "hangupError": "Failed to hangup.",
       "dialError": "Failed to dial.",
+      "callControls": "Call controls",
+      "agentCall": "Agent call",
+      "customerCall": "Customer call",
+      "openSoftphonePopout": "Open Softphone pop-out",
 
       // TasksPanel
       "myTasks": "My Tasks",
@@ -279,6 +283,10 @@ const resources = {
       "muteError": "No se pudo alternar mute.",
       "hangupError": "No se pudo colgar.",
       "dialError": "No se pudo marcar.",
+      "callControls": "Controles de llamada",
+      "agentCall": "Llamada del agente",
+      "customerCall": "Llamada del cliente",
+      "openSoftphonePopout": "Abrir ventana emergente del Softphone",
 
       // TasksPanel
       "myTasks": "Mis Tareas",

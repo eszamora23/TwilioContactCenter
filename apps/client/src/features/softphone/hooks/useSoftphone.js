@@ -4,6 +4,10 @@ import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import { VoiceDevice } from '../services/VoiceDevice.js';
 import { getCallSid, setCallSid } from '../services/callSidStore.js';
 import Api from '../../index.js';
+import {
+  SOFTPHONE_CHANNEL_KEY,
+  SOFTPHONE_POPUP_FEATURES,
+} from '../constants.js';
 
 /**
  * Hook encapsulating VoiceDevice lifecycle, BroadcastChannel sync and call controls
@@ -189,13 +193,12 @@ export default function useSoftphone(remoteOnly = false) {
 
   // BroadcastChannel or fallback channel setup
   useEffect(() => {
-    const KEY = 'softphone-control';
     let ch;
     let usingStorage = useStorageFallback;
 
     if (!usingStorage && typeof window !== 'undefined' && typeof BroadcastChannel === 'function') {
       try {
-        ch = new BroadcastChannel(KEY);
+        ch = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
       } catch (e) {
         console.warn('[softphone channel init error]', e);
         setChannelError(true);
@@ -210,7 +213,7 @@ export default function useSoftphone(remoteOnly = false) {
 
     if (usingStorage) {
       const storageHandler = (e) => {
-        if (e.key === KEY && e.newValue) {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
           try {
             const data = JSON.parse(e.newValue);
             chanRef.current?.onmessage?.({ data });
@@ -223,7 +226,10 @@ export default function useSoftphone(remoteOnly = false) {
       ch = {
         postMessage: (msg) => {
           try {
-            localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), ...msg }));
+            localStorage.setItem(
+              SOFTPHONE_CHANNEL_KEY,
+              JSON.stringify({ t: Date.now(), ...msg }),
+            );
           } catch (err) {
             console.error('[softphone storage channel post error]', err);
             setChannelError(true);
@@ -613,24 +619,16 @@ export default function useSoftphone(remoteOnly = false) {
     if (isPopup) {
       sendCmd('dtmf', { digit });
     } else {
-      try { dev?.sendDigits(digit); } catch {}
+      try {
+        dev?.sendDigits(digit);
+      } catch (err) {
+        console.error(err);
+      }
     }
   }
 
   function openPopOut() {
-    const w = window.open(
-      POPUP_URL,
-      POPUP_NAME,
-      [
-        'width=420',
-        'height=640',
-        'menubar=no',
-        'toolbar=no',
-        'resizable=yes',
-        'status=no',
-        'scrollbars=yes',
-      ].join(',')
-    );
+    const w = window.open(POPUP_URL, POPUP_NAME, SOFTPHONE_POPUP_FEATURES);
     if (w) {
       popupWinRef.current = w;
       setPopupOpen(true);
@@ -641,7 +639,9 @@ export default function useSoftphone(remoteOnly = false) {
   function closePopOut() {
     try {
       popupWinRef.current?.close();
-    } catch {}
+    } catch (err) {
+      console.error(err);
+    }
     popupWinRef.current = null;
     setPopupOpen(false);
   }

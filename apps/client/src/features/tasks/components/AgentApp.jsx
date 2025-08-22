@@ -22,6 +22,10 @@ import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+import {
+  SOFTPHONE_CHANNEL_KEY,
+  SOFTPHONE_POPUP_FEATURES,
+} from '../../softphone/constants.js';
 
 export default function AgentApp() {
   const { worker, activity, reservations, setAvailable } = useWorker();
@@ -35,7 +39,6 @@ export default function AgentApp() {
   const softphoneWinRef = useRef(null);
 
   useEffect(() => {
-    const KEY = 'softphone-control';
     let ch;
 
     const onMessage = (evt) => {
@@ -50,11 +53,11 @@ export default function AgentApp() {
     };
 
     if (typeof window !== 'undefined' && typeof BroadcastChannel === 'function') {
-      ch = new BroadcastChannel(KEY);
+      ch = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
       ch.onmessage = onMessage;
     } else {
       const storageHandler = (e) => {
-        if (e.key === KEY && e.newValue) {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
           try {
             const data = JSON.parse(e.newValue);
             onMessage({ data });
@@ -158,15 +161,7 @@ export default function AgentApp() {
     const w = window.open(
       `${window.location.origin}?popup=softphone`,
       'softphone_popup',
-      [
-        'width=420',
-        'height=640',
-        'menubar=no',
-        'toolbar=no',
-        'resizable=yes',
-        'status=no',
-        'scrollbars=yes',
-      ].join(',')
+      SOFTPHONE_POPUP_FEATURES,
     );
     if (w) {
       softphoneWinRef.current = w;
