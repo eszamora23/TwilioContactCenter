@@ -128,6 +128,22 @@ export default function useSoftphone(remoteOnly = false) {
         setIncoming(call);
         setIncomingOpen(true);
         setCallStatus('Incoming');
+
+        if (
+          typeof window !== 'undefined' &&
+          typeof Notification === 'function' &&
+          (document.hidden || !document.hasFocus())
+        ) {
+          Notification.requestPermission().then((perm) => {
+            if (perm === 'granted') {
+              const n = new Notification(t('incomingCall'), {
+                body: t('acceptIncomingPrompt'),
+              });
+              n.onclick = () => window.focus();
+            }
+          });
+        }
+
         setTimeout(() => publishStateRef.current(), 0);
       };
       dev.onStatusChange = (status) => {
