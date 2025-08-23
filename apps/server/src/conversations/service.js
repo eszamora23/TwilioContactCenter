@@ -164,3 +164,13 @@ export function updateConversationTimers(conversationSid, { inactive, closed } =
   if (closed) payload['timers.closed'] = closed;
   return service.conversations(conversationSid).update(payload);
 }
+
+export function configureServiceWebhooks({ preWebhookUrl } = {}) {
+  const payload = {};
+  if (preWebhookUrl) {
+    payload.preWebhookUrl = preWebhookUrl;
+    payload.preWebhookMethod = 'POST';
+  }
+  if (Object.keys(payload).length === 0) return Promise.resolve();
+  return service.update(payload);
+}
