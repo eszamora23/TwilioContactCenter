@@ -21,8 +21,7 @@ router.post('/', async (req, res) => {
       } catch {
         participantAttrs = {};
       }
-      const isAgent = participantAttrs.role === 'agent';
-      if (author !== 'system' && !isAgent) {
+      if (author !== 'system' && participantAttrs.role !== 'agent') {
         const conversationSid = req.body.ConversationSid;
         const convo = await fetchConversation(conversationSid);
         const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
