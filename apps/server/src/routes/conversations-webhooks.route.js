@@ -7,6 +7,7 @@ import {
   updateTask
 } from '../services/taskrouter.js';
 import { fetchConversation, updateConversationAttributes } from '../conversations/service.js';
+import { logInteraction } from '../services/crm.js';
 
 const router = express.Router();
 
@@ -156,6 +157,27 @@ router.post('/', async (req, res) => {
           io?.emit('task_completed', { taskSid, conversationSid });
         }
       }
+    } else if (eventType === 'onConversationRemoved') {
+      const conversationSid = req.body.ConversationSid;
+      let attrs = {};
+      try {
+        attrs = req.body.Attributes ? JSON.parse(req.body.Attributes) : {};
+      } catch {
+        attrs = {};
+      }
+      const taskSid = attrs.taskSid;
+      if (taskSid) {
+        await completeTask(taskSid, 'Conversation removed');
+        pushEvent('TASK_COMPLETED', { taskSid, conversationSid });
+        io?.emit('task_completed', { taskSid, conversationSid });
+      }
+      try {
+        await logInteraction({ conversationSid, taskSid, type: 'conversation_removed' });
+      } catch (err) {
+        console.warn('CRM cleanup failed', err);
+      }
+      pushEvent('CONVERSATION_REMOVED', { conversationSid, taskSid: taskSid || null });
+      io?.emit('conversation_removed', { conversationSid, taskSid: taskSid || null });
     } else if (eventType === 'onDeliveryUpdated') {
       const conversationSid = req.body.ConversationSid;
       const messageSid = req.body.MessageSid;
