@@ -17,6 +17,8 @@ import { crmProxy } from './routes/crm.js';
 import chatTokenRoute from './routes/chat-token.route.js';
 import conversationsRoute from './routes/conversations.route.js';
 import conversationsWebhooksRoute from './routes/conversations-webhooks.route.js';
+import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.route.js';
+import { configureServiceWebhooks } from './conversations/service.js';
 
 const app = express();
 validateEnv();
@@ -61,7 +63,14 @@ app.use('/api', ivr);
 app.use('/api', crmProxy);
 app.use('/api/chat', chatTokenRoute);
 app.use('/api/conversations', conversationsRoute);
+app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);
+
+if (env.publicBaseUrl) {
+  configureServiceWebhooks({
+    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`
+  }).catch(e => console.error('Failed to configure Conversations pre-webhook', e));
+}
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
 const io = new Server(server, {
