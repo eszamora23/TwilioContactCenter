@@ -170,6 +170,7 @@ export function configureServiceWebhooks({ preWebhookUrl } = {}) {
   if (preWebhookUrl) {
     payload.preWebhookUrl = preWebhookUrl;
     payload.preWebhookMethod = 'POST';
+    payload.preWebhookFilters = ['onMessageAdd', 'onConversationAdd'];
   }
   if (Object.keys(payload).length === 0) return Promise.resolve();
   return service.update(payload);
