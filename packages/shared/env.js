@@ -12,6 +12,7 @@ export const serverEnv = {
 
   twimlAppSid: process.env.TWIML_APP_SID,
   callerId: process.env.VOICE_CALLER_ID,
+  conversationsServiceSid: process.env.TWILIO_CONVERSATIONS_SERVICE_SID,
 
   port: Number(process.env.PORT || 4000),
   jwtSecret: process.env.JWT_SECRET || 'dev',

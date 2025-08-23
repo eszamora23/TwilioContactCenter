@@ -3,7 +3,7 @@ export function validateEnv() {
   const required = [
     'accountSid','authToken','apiKey','apiSecret',
     'workspaceSid','workflowSid','wrapActivitySid',
-    'callerId'
+    'callerId','conversationsServiceSid'
   ];
   const missing = required.filter(k => !env[k]);
   if (missing.length) {
