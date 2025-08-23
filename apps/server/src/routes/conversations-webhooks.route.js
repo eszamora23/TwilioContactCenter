@@ -49,6 +49,45 @@ router.post('/', async (req, res) => {
           io?.emit('task_created', { taskSid: task.sid, conversationSid });
         }
       }
+    } else if (eventType === 'onMessageUpdated') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const body = req.body.Body;
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const transcript = attrs.transcript || {};
+      const existing = transcript[messageSid] || {};
+      const previousBody = existing.body || req.body.PreviousBody || null;
+      transcript[messageSid] = { ...existing, body, updatedAt: new Date().toISOString() };
+      await updateConversationAttributes(conversationSid, { transcript });
+      pushEvent('MESSAGE_UPDATED', { conversationSid, messageSid, body });
+      io?.emit('message_updated', { conversationSid, messageSid, body });
+      if (previousBody && previousBody !== body) {
+        try {
+          await logInteraction({ conversationSid, messageSid, type: 'message_updated', previousBody });
+        } catch (err) {
+          console.warn('logInteraction failed (non-blocking)', err);
+        }
+      }
+    } else if (eventType === 'onMessageRemoved') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const transcript = attrs.transcript || {};
+      const removed = transcript[messageSid];
+      delete transcript[messageSid];
+      await updateConversationAttributes(conversationSid, { transcript });
+      pushEvent('MESSAGE_REMOVED', { conversationSid, messageSid });
+      io?.emit('message_removed', { conversationSid, messageSid });
+      const previousBody = req.body.PreviousBody || removed?.body;
+      if (previousBody) {
+        try {
+          await logInteraction({ conversationSid, messageSid, type: 'message_removed', previousBody });
+        } catch (err) {
+          console.warn('logInteraction failed (non-blocking)', err);
+        }
+      }
     } else if (eventType === 'onParticipantAdded') {
       const conversationSid = req.body.ConversationSid;
       const participantSid = req.body.ParticipantSid;
