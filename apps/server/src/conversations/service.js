@@ -189,16 +189,28 @@ export function updateConversationTimers(conversationSid, { inactive, closed } =
   return service.conversations(conversationSid).update(payload);
 }
 
-export function configureServiceWebhooks({ preWebhookUrl } = {}) {
+export function configureServiceWebhooks({
+  preWebhookUrl,
+  postWebhookUrl,
+  filters = [],
+  method = 'POST'
+} = {}) {
   if (!service) {
-    console.warn('[Conversations] Skipping service webhook configuration: TWILIO_CONVERSATIONS_SERVICE_SID is not set');
+    console.warn(
+      '[Conversations] Skipping service webhook configuration: TWILIO_CONVERSATIONS_SERVICE_SID is not set'
+    );
     return Promise.resolve();
   }
   const payload = {};
   if (preWebhookUrl) {
     payload.preWebhookUrl = preWebhookUrl;
-    payload.preWebhookMethod = 'POST';
-    payload.preWebhookFilters = ['onMessageAdd', 'onConversationAdd'];
+    payload.preWebhookMethod = method;
+    if (filters.length) payload.preWebhookFilters = filters;
+  }
+  if (postWebhookUrl) {
+    payload.postWebhookUrl = postWebhookUrl;
+    payload.postWebhookMethod = method;
+    if (filters.length) payload.postWebhookFilters = filters;
   }
   if (Object.keys(payload).length === 0) return Promise.resolve();
   return service.update(payload);

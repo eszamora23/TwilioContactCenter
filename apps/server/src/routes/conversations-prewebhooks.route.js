@@ -1,5 +1,6 @@
 import express from 'express';
 import { fetchConversation } from '../conversations/service.js';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ function failsModeration(body = '') {
   return bannedWords.some(w => lower.includes(w));
 }
 
-router.post('/', async (req, res) => {
+router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
   console.log('[Conversations PreWebhook]', eventType, req.body?.MessageSid || req.body?.ConversationSid || '');
 

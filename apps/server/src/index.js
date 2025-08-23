@@ -68,8 +68,17 @@ app.use('/webhooks/conversations', conversationsWebhooksRoute);
 
 if (env.publicBaseUrl) {
   configureServiceWebhooks({
-    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`
-  }).catch(e => console.error('Failed to configure Conversations pre-webhook', e));
+    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`,
+    postWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations`,
+    // Un solo "filters" sirve para pre y post; incluye eventos pre y post.
+    filters: [
+      'onConversationAdd', 'onMessageAdd',                    // PRE
+      'onMessageAdded', 'onMessageUpdated', 'onMessageRemoved',// POST
+      'onParticipantAdded', 'onParticipantRemoved',
+      'onDeliveryUpdated', 'onConversationStateUpdated'
+    ],
+    method: 'POST'
+  }).catch(e => console.error('Failed to configure Conversations webhooks', e));
 }
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
