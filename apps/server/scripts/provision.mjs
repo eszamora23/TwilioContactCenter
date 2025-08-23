@@ -58,6 +58,17 @@ async function ensureWorkflow(wsSid, queueSid, name = 'Default Workflow', assign
     .create({ friendlyName: name, assignmentCallbackUrl, configuration: JSON.stringify(config) });
 }
 
+async function ensureTaskChannel(wsSid, uniqueName = 'chat', friendlyName = 'Chat') {
+  const list = await client.taskrouter.v1.workspaces(wsSid).taskChannels.list({ limit: 50 });
+  const found = list.find(c => c.uniqueName === uniqueName);
+  if (found) return found;
+  return client.taskrouter.v1.workspaces(wsSid).taskChannels.create({
+    uniqueName,
+    friendlyName,
+    channelOptimizedRouting: true
+  });
+}
+
 async function main() {
   const base = process.env.PUBLIC_BASE_URL || 'https://example.ngrok.app';
   const voiceUrl = `${base}/api/voice/outbound`;
@@ -70,12 +81,14 @@ async function main() {
   const actW = await ensureActivity(ws.sid, 'Wrapping', false);
   const queue = await ensureQueue(ws.sid, 'Default Queue');
   const wf = await ensureWorkflow(ws.sid, queue.sid, 'Default Workflow', assignmentCallbackUrl);
+  const chatCh = await ensureTaskChannel(ws.sid, 'chat', 'Chat');
 
   console.log('\n=== Provisioned ===');
   console.log('TWIML_APP_SID=', app.sid);
   console.log('TR_WORKSPACE_SID=', ws.sid);
   console.log('TR_WORKFLOW_SID=', wf.sid);
   console.log('TR_WRAP_ACTIVITY_SID=', actW.sid);
+  console.log('TR_CHAT_CHANNEL_SID=', chatCh.sid);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
