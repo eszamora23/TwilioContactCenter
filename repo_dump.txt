@@ -1,0 +1,2577 @@
+==== package.json ====
+{
+  "name": "contact-center-server",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "provision": "node ./scripts/provision.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "shared": "file:../../packages/shared",
+    "socket.io": "^4.8.1",
+    "twilio": "^5.8.0"
+  }
+}
+
+==== /package.json ====
+
+==== scripts\provision.mjs ====
+import 'dotenv/config';
+import Twilio from 'twilio';
+
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+  console.error('Missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN');
+  process.exit(1);
+}
+
+const client = Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+async function ensureTwiMLApp(name = 'ContactCenter Web Outbound', voiceUrl) {
+  const apps = await client.applications.list({ limit: 50 });
+  const found = apps.find(a => a.friendlyName === name);
+  if (found) return found;
+  return client.applications.create({ friendlyName: name, voiceUrl, voiceMethod: 'POST' });
+}
+
+async function ensureWorkspace(name = 'ContactCenter Workspace') {
+  const list = await client.taskrouter.v1.workspaces.list({ limit: 50 });
+  const found = list.find(w => w.friendlyName === name);
+  if (found) return found;
+  return client.taskrouter.v1.workspaces.create({ friendlyName: name });
+}
+
+async function ensureActivity(wsSid, friendlyName, available) {
+  const list = await client.taskrouter.v1.workspaces(wsSid).activities.list({ limit: 50 });
+  const found = list.find(a => a.friendlyName === friendlyName);
+  if (found) return found;
+  return client.taskrouter.v1.workspaces(wsSid).activities.create({ friendlyName, available });
+}
+
+async function ensureQueue(wsSid, name = 'Default Queue') {
+  const list = await client.taskrouter.v1.workspaces(wsSid).taskQueues.list({ limit: 50 });
+  const found = list.find(q => q.friendlyName === name);
+  if (found) return found;
+  return client.taskrouter.v1.workspaces(wsSid).taskQueues.create({
+    friendlyName: name,
+    targetWorkers: '1==1'
+  });
+}
+
+async function ensureWorkflow(wsSid, queueSid, name = 'Default Workflow', assignmentCallbackUrl) {
+  const list = await client.taskrouter.v1.workspaces(wsSid).workflows.list({ limit: 50 });
+  const found = list.find(w => w.friendlyName === name);
+  const config = {
+    task_routing: {
+      filters: [],
+      default_filter: { queue: queueSid }
+    }
+  };
+  if (found) {
+    return client.taskrouter.v1.workspaces(wsSid).workflows(found.sid)
+      .update({ assignmentCallbackUrl, configuration: JSON.stringify(config) });
+  }
+  return client.taskrouter.v1.workspaces(wsSid).workflows
+    .create({ friendlyName: name, assignmentCallbackUrl, configuration: JSON.stringify(config) });
+}
+
+async function main() {
+  const base = process.env.PUBLIC_BASE_URL || 'https://example.ngrok.app';
+  const voiceUrl = `${base}/api/voice/outbound`;
+  const assignmentCallbackUrl = `${base}/api/taskrouter/assignment`;
+
+  const app = await ensureTwiMLApp('ContactCenter Web Outbound', voiceUrl);
+  const ws = await ensureWorkspace('ContactCenter Workspace');
+  const actA = await ensureActivity(ws.sid, 'Available', true);
+  const actU = await ensureActivity(ws.sid, 'Unavailable', false);
+  const actW = await ensureActivity(ws.sid, 'Wrapping', false);
+  const queue = await ensureQueue(ws.sid, 'Default Queue');
+  const wf = await ensureWorkflow(ws.sid, queue.sid, 'Default Workflow', assignmentCallbackUrl);
+
+  console.log('\n=== Provisioned ===');
+  console.log('TWIML_APP_SID=', app.sid);
+  console.log('TR_WORKSPACE_SID=', ws.sid);
+  console.log('TR_WORKFLOW_SID=', wf.sid);
+  console.log('TR_WRAP_ACTIVITY_SID=', actW.sid);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });
+
+==== /scripts\provision.mjs ====
+
+==== src\controllers\crm.js ====
+import {
+  vehicleById,
+  customerById,
+  vehicleByPlate,
+  vehicleByVin,
+  appointments,
+  createAppointment,
+  finance,
+  payLink,
+  logInteraction
+} from '../services/crm.js';
+
+export async function getVehicleById(req, res) {
+  try { res.json(await vehicleById(req.params.id)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getCustomerById(req, res) {
+  try { res.json(await customerById(req.params.id)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getVehicleByPlate(req, res) {
+  try { res.json(await vehicleByPlate(req.params.plate)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getVehicleByVin(req, res) {
+  try { res.json(await vehicleByVin(req.params.vin)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getAppointments(req, res) {
+  try { res.json(await appointments(req.params.vehicleId)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function postAppointment(req, res) {
+  try { res.json(await createAppointment(req.body)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getFinance(req, res) {
+  try {
+    const otpVerified = String(req.query.otpVerified || 'false') === 'true';
+    res.json(await finance(req.params.customerId, otpVerified));
+  } catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function postPayLink(req, res) {
+  try { res.json(await payLink(req.body.customerId)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function postInteraction(req, res) {
+  try { res.json(await logInteraction(req.body)); }
+  catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+==== /src\controllers\crm.js ====
+
+==== src\controllers\health.js ====
+export function getHealth(_req, res) {
+  res.json({ ok: true });
+}
+
+==== /src\controllers\health.js ====
+
+==== src\controllers\ivr.js ====
+import {
+  findVehicleByVin,
+  findVehicleByPlate,
+  findCustomerByAni,
+  findVehicleById,
+  findCustomerById,
+  getAppointments,
+  createAppointment,
+  getRecallsByVin,
+  getFinance,
+  createPayLink
+} from '../services/ivr.js';
+
+export async function lookup(req, res) {
+  try {
+    const { From, plate, vin } = req.body || {};
+    let customer = null, vehicle = null;
+
+    if (vin) {
+      vehicle = await findVehicleByVin(vin);
+    } else if (plate) {
+      vehicle = await findVehicleByPlate(plate);
+    }
+
+    if (!vehicle && From) {
+      customer = await findCustomerByAni(From);
+      if (customer?.defaultVehicleId) {
+        try {
+          vehicle = await findVehicleById(customer.defaultVehicleId);
+        } catch {}
+      }
+    }
+
+    if (vehicle && !customer && vehicle?.customerId) {
+      customer = await findCustomerById(vehicle.customerId);
+    }
+
+    res.json({
+      customerId: customer?._id || null,
+      name: customer?.name || null,
+      vehicleId: vehicle?._id || null,
+      vin: vehicle?.vin || null,
+      plate: vehicle?.plate || null,
+      tier: customer?.tier || 'Standard'
+    });
+  } catch {
+    res.status(500).json({ error: 'lookup failed' });
+  }
+}
+
+export async function serviceStatus(req, res) {
+  try {
+    const { vehicleId } = req.body || {};
+    if (!vehicleId) return res.status(400).json({ error: 'missing vehicleId' });
+    const appts = await getAppointments(vehicleId);
+    const last = appts?.[0] || null;
+    const say = last
+      ? `Your last appointment is ${new Date(last.datetime).toLocaleString()}. Status: ${last.status}.`
+      : `No recent appointments found.`;
+    res.json({ appointment: last, say });
+  } catch {
+    res.status(500).json({ error: 'status failed' });
+  }
+}
+
+export async function scheduleService(req, res) {
+  try {
+    const { vehicleId, preferDate, serviceType } = req.body || {};
+    if (!vehicleId) return res.status(400).json({ error: 'missing vehicleId' });
+    const dt = preferDate ? new Date(preferDate) : new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    dt.setHours(10, 30, 0, 0);
+    const appt = await createAppointment({ vehicleId, datetime: dt, serviceType: serviceType || 'maintenance' });
+    res.json({ appointment: appt, say: `Your appointment is set for ${dt.toLocaleString()}.` });
+  } catch {
+    res.status(500).json({ error: 'schedule failed' });
+  }
+}
+
+export async function checkRecalls(req, res) {
+  try {
+    const { vin } = req.body || {};
+    if (!vin) return res.status(400).json({ error: 'missing vin' });
+    const list = await getRecallsByVin(vin);
+    const say = !list.length
+      ? 'There are no open recalls for your vehicle.'
+      : `We found ${list.length} open recall${list.length>1?'s':''}.`;
+    res.json({ recalls: list, say });
+  } catch {
+    res.status(500).json({ error: 'recalls failed' });
+  }
+}
+
+export async function financeBalance(req, res) {
+  try {
+    const { customerId, otpCode } = req.body || {};
+    if (!customerId) return res.status(400).json({ error: 'missing customerId' });
+    const otpVerified = !!String(otpCode || '').match(/^\d{4,}$/);
+    const f = await getFinance(customerId, otpVerified);
+    const say = otpVerified
+      ? `Your balance is ${typeof f.balance === 'number' ? f.balance : 'not available'}.`
+      : `Verification required to reveal the balance.`;
+    res.json({ finance: f, otpVerified, say });
+  } catch {
+    res.status(500).json({ error: 'finance failed' });
+  }
+}
+
+export async function financePaylink(req, res) {
+  try {
+    const { customerId } = req.body || {};
+    if (!customerId) return res.status(400).json({ error: 'missing customerId' });
+    const r = await createPayLink(customerId);
+    res.json({ ok: true, url: r.url });
+  } catch {
+    res.status(500).json({ error: 'paylink failed' });
+  }
+}
+
+==== /src\controllers\ivr.js ====
+
+==== src\controllers\taskrouter.js ====
+﻿import { requireAuth } from 'shared/auth';
+import {
+  listActivities,
+  listWorkerReservations,
+  fetchTask,
+  updateTask,
+  listWorkers,
+  listWorkersWithRetry,
+  pushEvent,
+  recentEvents,
+  axios,
+  env
+} from '../services/taskrouter.js';
+
+export function assignment(req, res) {
+  try {
+    const taskSid = String(req.body.TaskSid || '').trim();
+    if (!env.callerId) {
+      return res.status(200).json({ instruction: 'reject', reason: 'missing callerId' });
+    }
+    const conferenceName = taskSid || `task-${Date.now()}`;
+    const payload = {
+      instruction: 'conference',
+      from: env.callerId,
+      conference_name: conferenceName,
+      end_conference_on_exit: false,
+      beep: 'onEnter',
+      wait_url: env.holdMusicUrl,
+      post_work_activity_sid: env.wrapActivitySid,
+    };
+    return res.status(200).json(payload);
+  } catch {
+    return res.status(200).json({ instruction: 'reject', reason: 'assignment error' });
+  }
+}
+
+export async function events(req, res) {
+  console.log('TR event', req.body.EventType, req.body.TaskSid || '', req.body.ReservationSid || '');
+  if (req.body.EventType === 'worker.activity.update') {
+    const presenceData = await listWorkers();
+    const formatted = presenceData.map(w => {
+      let contact = null;
+      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch {}
+      return {
+        workerSid: w.sid,
+        friendlyName: w.friendlyName,
+        activitySid: w.activitySid,
+        activityName: w.activityName,
+        available: !!w.available,
+        contactUri: contact
+      };
+    });
+    req.app.get('io')?.emit('presence_update', { data: formatted });
+  }
+  res.sendStatus(200);
+}
+
+export async function activities(_req, res) {
+  try {
+    const list = await listActivities();
+    res.json(list.map(a => ({ sid: a.sid, name: a.friendlyName, available: a.available })));
+  } catch {
+    res.status(500).json({ error: 'cannot fetch activities' });
+  }
+}
+
+export async function myTasks(req, res) {
+  try {
+    const { workerSid } = req.claims;
+    if (!workerSid) return res.status(400).json({ error: 'missing workerSid in claims' });
+    const statuses = (req.query.statuses || 'wrapping,assigned,reserved')
+      .split(',').map(s => s.trim().toLowerCase());
+    const reservations = await listWorkerReservations(workerSid);
+    const uniqueTaskSids = [...new Set(reservations.map(r => r.taskSid).filter(Boolean))];
+    const fetchedTasks = await Promise.all(
+      uniqueTaskSids.map(taskSid => fetchTask(taskSid).catch(() => null))
+    );
+    const tasks = fetchedTasks
+      .filter(t => t && statuses.includes(String(t.assignmentStatus).toLowerCase()))
+      .map(t => ({
+        sid: t.sid,
+        assignmentStatus: t.assignmentStatus,
+        age: t.age,
+        reason: t.reason || null,
+        attributes: safeParseJson(t.attributes),
+      }));
+    const resvByTask = {};
+    for (const r of reservations) {
+      if (!resvByTask[r.taskSid]) resvByTask[r.taskSid] = [];
+      resvByTask[r.taskSid].push({
+        sid: r.sid,
+        reservationStatus: r.reservationStatus,
+        dateCreated: r.dateCreated,
+      });
+    }
+    const enriched = tasks.map(t => ({ ...t, reservations: resvByTask[t.sid] || [] }));
+    return res.json(enriched);
+  } catch (e) {
+    console.error('[MY_TASKS] error:', e);
+    return res.status(500).json({ error: 'cannot list my tasks' });
+  }
+}
+
+export async function completeTask(req, res) {
+  try {
+    const { taskSid } = req.params;
+    const { reason, disposition } = req.body || {};
+    if (!taskSid) return res.status(400).json({ error: 'missing taskSid' });
+    const task = await fetchTask(taskSid);
+    if (String(task.assignmentStatus).toLowerCase() !== 'wrapping') {
+      return res.status(400).json({ error: 'task is not in wrapping', assignmentStatus: task.assignmentStatus });
+    }
+    let attrs = {};
+    try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+    if (disposition) attrs.disposition = disposition;
+    if (reason) attrs.wrapup_reason = reason;
+    const updated = await updateTask(taskSid, {
+      assignmentStatus: 'completed',
+      reason: reason ? String(reason).slice(0, 200) : 'Finished from Agent UI',
+      attributes: JSON.stringify(attrs)
+    });
+    pushEvent('TASK_COMPLETED', {
+      taskSid: updated.sid,
+      workerSid: req.claims?.workerSid || null,
+      disposition: disposition || null,
+      reason: reason || null
+    });
+    try {
+      await axios.post('https://analytics.example.com/track', {
+        disposition,
+        duration: task.age,
+        intent: attrs.intent,
+      });
+    } catch (analyticsError) {
+      console.warn('Analytics post failed', analyticsError);
+    }
+    return res.json({
+      sid: updated.sid,
+      assignmentStatus: updated.assignmentStatus,
+      reason: updated.reason || null
+    });
+  } catch (e) {
+    console.error('[COMPLETE_TASK] error:', e);
+    return res.status(500).json({ error: 'cannot complete task' });
+  }
+}
+
+export async function availableWorkers(_req, res) {
+  try {
+    const acts = await listActivities();
+    const availableSids = acts.filter(a => a.available).map(a => a.sid);
+    const workers = await listWorkers();
+    const out = [];
+    for (const w of workers) {
+      if (!availableSids.includes(w.activitySid)) continue;
+      let contact = null;
+      try {
+        const attrs = JSON.parse(w.attributes || '{}');
+        contact = attrs.contact_uri || null;
+      } catch {}
+      out.push({ workerSid: w.sid, friendlyName: w.friendlyName, contactUri: contact });
+    }
+    res.json(out);
+  } catch (e) {
+    console.error('[AVAILABLE_WORKERS] error', e);
+    res.status(500).json({ error: 'cannot list available workers' });
+  }
+}
+
+export async function presence(_req, res) {
+  try {
+    const workers = await listWorkersWithRetry();
+    const out = workers.map(w => {
+      let contact = null;
+      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch {}
+      return {
+        workerSid: w.sid,
+        friendlyName: w.friendlyName,
+        activitySid: w.activitySid,
+        activityName: w.activityName,
+        available: !!w.available,
+        contactUri: contact
+      };
+    });
+    res.json(out);
+  } catch (e) {
+    console.error('[PRESENCE] upstream error:', e?.code || e?.message || e);
+    res.status(502).json({ error: 'twilio_unreachable', detail: 'Network or DNS issue reaching Twilio TaskRouter' });
+  }
+}
+
+export function recent(req, res) {
+  res.json(recentEvents());
+}
+
+function safeParseJson(str) {
+  try { return JSON.parse(str || '{}'); } catch { return {}; }
+}
+
+
+==== /src\controllers\taskrouter.js ====
+
+==== src\controllers\tokens.js ====
+﻿import crypto from 'crypto';
+import { signAgentToken } from 'shared/auth';
+import { serverEnv as env } from 'shared/env';
+import { fetchWorker, createVoiceToken, createWorkerToken } from '../services/tokens.js';
+
+const refreshTokens = new Map();
+
+const accessCookieOpts = {
+  httpOnly: true,
+  secure: env.cookieSecure,
+  sameSite: 'strict',
+  domain: env.cookieDomain,
+  maxAge: 8 * 60 * 60 * 1000,
+};
+
+const refreshCookieOpts = {
+  httpOnly: true,
+  secure: env.cookieSecure,
+  sameSite: 'strict',
+  domain: env.cookieDomain,
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+};
+
+function getCookie(req, name) {
+  const raw = req.headers?.cookie;
+  if (!raw) return undefined;
+  return raw
+    .split(';')
+    .map(c => c.trim())
+    .find(c => c.startsWith(`${name}=`))
+    ?.split('=')[1];
+}
+
+function toContactUri(raw) {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+  if (val.startsWith('client:')) return val;
+  if (val.startsWith('agent:')) return `client:${val}`;
+  return `client:agent:${val}`;
+}
+
+export async function login(req, res) {
+  const { agentId, workerSid, identity } = req.body;
+  if (!agentId || !workerSid || identity == null) {
+    return res.status(400).json({ error: 'missing fields' });
+  }
+  try {
+    const worker = await fetchWorker(workerSid);
+    const attrs = JSON.parse(worker.attributes || '{}');
+    const normalized = toContactUri(identity);
+    if (!attrs.contact_uri || attrs.contact_uri !== normalized) {
+      return res.status(400).json({
+        error: 'identity mismatch with worker.contact_uri',
+        expected: normalized,
+        got: attrs.contact_uri || null,
+        hint: 'Verifica que el Worker tenga attributes.contact_uri igual al expected.'
+      });
+    }
+    const access = signAgentToken(agentId, workerSid, normalized);
+    const refresh = crypto.randomUUID();
+    refreshTokens.set(refresh, { agentId, workerSid, identity: normalized });
+    res.cookie(env.accessTokenName, access, accessCookieOpts);
+    res.cookie(env.refreshTokenName, refresh, refreshCookieOpts);
+    return res.json({
+      agent: { id: agentId, workerSid, identity: normalized }
+    });
+  } catch (e) {
+    console.error('[AUTH/LOGIN] Error fetching worker or TR config:', e?.message || e);
+    return res.status(400).json({ error: 'invalid workerSid or TR config' });
+  }
+}
+
+export function me(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (!token || !refreshTokens.has(token)) {
+    return res.status(401).json({ error: 'invalid refresh token' });
+  }
+  const { agentId, workerSid, identity } = refreshTokens.get(token);
+  const access = signAgentToken(agentId, workerSid, identity);
+  res.cookie(env.accessTokenName, access, accessCookieOpts);
+  return res.json({ agent: { id: agentId, workerSid, identity } });
+}
+
+export function refresh(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (!token || !refreshTokens.has(token)) {
+    return res.status(401).json({ error: 'invalid refresh token' });
+  }
+  const { agentId, workerSid, identity } = refreshTokens.get(token);
+  const access = signAgentToken(agentId, workerSid, identity);
+  res.cookie(env.accessTokenName, access, accessCookieOpts);
+  return res.json({ ok: true });
+}
+
+export function logout(req, res) {
+  const token = getCookie(req, env.refreshTokenName);
+  if (token) refreshTokens.delete(token);
+  res.clearCookie(env.accessTokenName, { domain: env.cookieDomain });
+  res.clearCookie(env.refreshTokenName, { domain: env.cookieDomain });
+  res.status(204).end();
+}
+
+export function voiceToken(req, res) {
+  try {
+    const { identity } = req.claims;
+    if (!identity) {
+      return res.status(400).json({ error: 'missing identity in claims' });
+    }
+    const missing = [];
+    if (!env.accountSid) missing.push('TWILIO_ACCOUNT_SID');
+    if (!env.apiKey) missing.push('TWILIO_API_KEY_SID');
+    if (!env.apiSecret) missing.push('TWILIO_API_KEY_SECRET');
+    if (missing.length) {
+      console.error('[VOICE_TOKEN] Missing ENV:', missing);
+      return res.status(500).json({ error: 'voice token build failed: missing env', missing });
+    }
+    const token = createVoiceToken(identity);
+    return res.json({ token });
+  } catch (e) {
+    console.error('[VOICE_TOKEN] Error building token:', e);
+    return res.status(500).json({
+      error: 'voice token build failed',
+      details: e?.message || String(e)
+    });
+  }
+}
+
+export function workerToken(req, res) {
+  const { workerSid } = req.claims;
+  const missing = [];
+  if (!env.accountSid) missing.push('TWILIO_ACCOUNT_SID');
+  if (!env.authToken) missing.push('TWILIO_AUTH_TOKEN');
+  if (!env.workspaceSid) missing.push('TR_WORKSPACE_SID');
+  if (!workerSid) {
+    return res.status(400).json({ error: 'missing workerSid in claims' });
+  }
+  if (missing.length) {
+    console.error('[TR_WORKER_TOKEN] Missing ENV:', missing);
+    return res.status(500).json({
+      error: 'worker token build failed: missing env',
+      missing
+    });
+  }
+  try {
+    const token = createWorkerToken(workerSid);
+    return res.json({ token });
+  } catch (e) {
+    console.error('[TR_WORKER_TOKEN] Error building token:', e?.message || e);
+    return res.status(500).json({ error: 'worker token build failed' });
+  }
+}
+
+
+==== /src\controllers\tokens.js ====
+
+==== src\controllers\transfer.js ====
+import { env, waitUntilInProgress, updateCall, createCall } from '../services/transfer.js';
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+function conferenceTwiml(name, { endOnExit = false, beep = false } = {}) {
+  return `
+<Response>
+  <Dial callerId="${esc(env.callerId)}">
+    <Conference beep="${beep ? 'true' : 'false'}"
+                endConferenceOnExit="${endOnExit ? 'true' : 'false'}">${esc(name)}</Conference>
+  </Dial>
+</Response>`.trim();
+}
+
+function normalizeTargetIdentity(targetIdentity) {
+  const raw = String(targetIdentity || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('client:')) return raw;
+  if (raw.startsWith('agent:')) return `client:${raw}`;
+  return `client:agent:${raw}`;
+}
+
+export async function cold(req, res) {
+  try {
+    const { customerCallSid, targetIdentity, agentCallSid } = req.body || {};
+    if (!customerCallSid || !targetIdentity) {
+      return res.status(400).json({ error: 'missing customerCallSid or targetIdentity' });
+    }
+    const toClient = normalizeTargetIdentity(targetIdentity);
+    if (!toClient) return res.status(400).json({ error: 'invalid targetIdentity' });
+    try {
+      await waitUntilInProgress(customerCallSid);
+    } catch (e) {
+      return res.status(409).json({
+        error: 'call not in-progress',
+        details: e.message,
+        twilioStatus: e.twilioStatus || undefined
+      });
+    }
+    const twiml = `
+<Response>
+  <Dial callerId="${esc(env.callerId)}">
+    <Client>${esc(toClient.replace('client:', ''))}</Client>
+  </Dial>
+</Response>`.trim();
+    await updateCall(customerCallSid, { twiml });
+    if (agentCallSid) {
+      try { await updateCall(agentCallSid, { status: 'completed' }); } catch {}
+    }
+    return res.json({ ok: true, mode: 'cold' });
+  } catch (e) {
+    console.error('[TRANSFER/COLD] error', e);
+    return res.status(500).json({ error: 'cold transfer failed' });
+  }
+}
+
+export async function warm(req, res) {
+  try {
+    const { taskSid, customerCallSid, agentCallSid, targetIdentity } = req.body || {};
+    if (!customerCallSid || !agentCallSid || !targetIdentity) {
+      return res.status(400).json({ error: 'missing required fields' });
+    }
+    const toClient = normalizeTargetIdentity(targetIdentity);
+    if (!toClient) return res.status(400).json({ error: 'invalid targetIdentity' });
+    try {
+      await waitUntilInProgress(customerCallSid);
+      await waitUntilInProgress(agentCallSid);
+    } catch (e) {
+      return res.status(409).json({
+        error: 'call not in-progress',
+        details: e.message,
+        twilioStatus: e.twilioStatus || undefined
+      });
+    }
+    const confName = taskSid ? `task-${taskSid}` : `xfer-${customerCallSid}`;
+    const twimlCustomer = conferenceTwiml(confName, { endOnExit: true, beep: false });
+    await updateCall(customerCallSid, { twiml: twimlCustomer });
+    const twimlAgent = conferenceTwiml(confName, { endOnExit: false, beep: false });
+    await updateCall(agentCallSid, { twiml: twimlAgent });
+    const twimlTarget = conferenceTwiml(confName, { endOnExit: false, beep: true });
+    await createCall({ to: toClient, from: env.callerId, twiml: twimlTarget });
+    return res.json({ ok: true, mode: 'warm', conference: confName });
+  } catch (e) {
+    console.error('[TRANSFER/WARM] error', e);
+    return res.status(500).json({ error: 'warm transfer failed' });
+  }
+}
+
+export async function complete(req, res) {
+  try {
+    const { agentCallSid } = req.body || {};
+    if (!agentCallSid) return res.status(400).json({ error: 'missing agentCallSid' });
+    await updateCall(agentCallSid, { status: 'completed' });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[TRANSFER/COMPLETE] error', e);
+    return res.status(500).json({ error: 'complete transfer failed' });
+  }
+}
+
+==== /src\controllers\transfer.js ====
+
+==== src\controllers\voice.js ====
+import { buildOutboundTwiml } from '../services/voice.js';
+
+export function outbound(req, res) {
+  const to = (req.body.To || '').trim();
+  const twiml = buildOutboundTwiml(to);
+  return res.type('text/xml').status(200).send(twiml);
+}
+
+==== /src\controllers\voice.js ====
+
+==== src\controllers\voiceControl.js ====
+import { rest } from '../twilio.js';
+import {  waitForConferenceByName,
+  waitForConferenceBySid,
+  waitForParticipantByCallSid,
+  waitUntilParticipantConnected,
+  getConferenceFromTask,
+  ensureConferenceReadyByName,
+  updateHold,
+  latestRecordingForCall,
+  createRecording,
+  updateRecording,
+  createParticipant,
+  env
+} from '../services/voiceControl.js';
+import { pushEvent } from '../services/taskrouter.js';
+
+const holdMap = new Map();
+
+export async function holdStart(req, res) {
+  try {
+    const { taskSid, customerCallSid, agentCallSid, who = 'customer' } = req.body || {};
+    if (!customerCallSid || !agentCallSid) {
+      return res.status(400).json({ error: 'missing callSids', need: ['customerCallSid','agentCallSid'] });
+    }
+    let confSid, targetCallSid;
+    if (taskSid) {
+      const info = await getConferenceFromTask(taskSid);
+      if (info?.confSid) {
+        confSid = info.confSid;
+        targetCallSid = (who === 'agent')
+          ? (info.workerCallSid || agentCallSid)
+          : (info.customerCallSid || customerCallSid);
+        await waitForConferenceBySid(confSid);
+      } else {
+        const conf = await waitForConferenceByName(taskSid);
+        confSid = conf.sid;
+        targetCallSid = (who === 'agent') ? agentCallSid : customerCallSid;
+      }
+    } else {
+      const conf = await ensureConferenceReadyByName({
+        confName: `xfer-${customerCallSid}`,
+        customerCallSid,
+        agentCallSid
+      });
+      confSid = conf.sid;
+      targetCallSid = (who === 'agent') ? agentCallSid : customerCallSid;
+    }
+    await waitForParticipantByCallSid(confSid, targetCallSid);
+    await waitUntilParticipantConnected(confSid, targetCallSid);
+    await updateHold(confSid, targetCallSid, true, env.holdMusicUrl);
+    holdMap.set(targetCallSid, Date.now());
+    pushEvent('HOLD_START', { confSid, target: who });
+    res.json({ ok: true, confSid, who });
+  } catch (e) {
+    console.error('[HOLD/START] error', e);
+    res.status(500).json({ error: 'cannot hold', details: e?.message });
+  }
+}
+
+export async function holdStop(req, res) {
+  try {
+    const { taskSid, customerCallSid, agentCallSid, who = 'customer' } = req.body || {};
+    if (!customerCallSid || !agentCallSid) {
+      return res.status(400).json({ error: 'missing callSids', need: ['customerCallSid','agentCallSid'] });
+    }
+    let confSid, targetCallSid;
+    if (taskSid) {
+      const info = await getConferenceFromTask(taskSid);
+      if (info?.confSid) {
+        confSid = info.confSid;
+        targetCallSid = (who === 'agent')
+          ? (info.workerCallSid || agentCallSid)
+          : (info.customerCallSid || customerCallSid);
+        await waitForConferenceBySid(confSid);
+      } else {
+        const conf = await waitForConferenceByName(taskSid);
+        confSid = conf.sid;
+        targetCallSid = (who === 'agent') ? agentCallSid : customerCallSid;
+      }
+    } else {
+      const conf = await waitForConferenceByName(`xfer-${customerCallSid}`);
+      confSid = conf.sid;
+      targetCallSid = (who === 'agent') ? agentCallSid : customerCallSid;
+    }
+    await waitForParticipantByCallSid(confSid, targetCallSid);
+    await waitUntilParticipantConnected(confSid, targetCallSid);
+    await updateHold(confSid, targetCallSid, false, undefined);
+    const holdStart = holdMap.get(targetCallSid);
+    if (holdStart) {
+      const duration = Math.floor((Date.now() - holdStart) / 1000);
+      holdMap.delete(targetCallSid);
+      console.log(`Hold duration for ${targetCallSid}: ${duration}s`);
+    }
+    pushEvent('HOLD_STOP', { confSid, target: who });
+    res.json({ ok: true, confSid, who });
+  } catch (e) {
+    console.error('[HOLD/STOP] error', e);
+    res.status(500).json({ error: 'cannot unhold', details: e?.message });
+  }
+}
+
+export async function hangupCall(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    await rest.calls(callSid).update({ status: 'completed' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[HANGUP] error', e);
+    res.status(500).json({ error: 'cannot hangup call', details: e?.message });
+  }
+}
+
+export async function recordingStatus(req, res) {
+  try {
+    const { callSid } = req.query || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    const rec = await latestRecordingForCall(callSid);
+    const status = rec ? rec.status : 'inactive';
+    res.json({ status });
+  } catch (e) {
+    console.error('[REC/STATUS] error', e);
+    res.status(500).json({ error: 'cannot get recording status', details: e?.message });
+  }
+}
+
+export async function recordingStart(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    const rec = await createRecording(callSid);
+    pushEvent('REC_START', { callSid, recordingSid: rec.sid });
+    res.json({ ok: true, recordingSid: rec.sid });
+  } catch (e) {
+    console.error('[REC/START] error', e);
+    res.status(500).json({ error: 'cannot start recording', details: e?.message });
+  }
+}
+
+export async function recordingPause(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    const rec = await latestRecordingForCall(callSid);
+    if (!rec) return res.status(404).json({ error: 'no recording found' });
+    await updateRecording(callSid, rec.sid, { status: 'paused', pauseBehavior: 'silence' });
+    pushEvent('REC_PAUSE', { callSid, recordingSid: rec.sid });
+    res.json({ ok: true, recordingSid: rec.sid });
+  } catch (e) {
+    console.error('[REC/PAUSE] error', e);
+    res.status(500).json({ error: 'cannot pause recording', details: e?.message });
+  }
+}
+
+export async function recordingResume(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    const rec = await latestRecordingForCall(callSid);
+    if (!rec) return res.status(404).json({ error: 'no recording found' });
+    await updateRecording(callSid, rec.sid, { status: 'in-progress' });
+    pushEvent('REC_RESUME', { callSid, recordingSid: rec.sid });
+    res.json({ ok: true, recordingSid: rec.sid });
+  } catch (e) {
+    console.error('[REC/RESUME] error', e);
+    res.status(500).json({ error: 'cannot resume recording', details: e?.message });
+  }
+}
+
+export async function recordingStop(req, res) {
+  try {
+    const { callSid } = req.body || {};
+    if (!callSid) return res.status(400).json({ error: 'missing callSid' });
+    const rec = await latestRecordingForCall(callSid);
+    if (!rec) return res.status(404).json({ error: 'no recording found' });
+    await updateRecording(callSid, rec.sid, { status: 'stopped' });
+    pushEvent('REC_STOP', { callSid, recordingSid: rec.sid });
+    res.json({ ok: true, recordingSid: rec.sid });
+  } catch (e) {
+    console.error('[REC/STOP] error', e);
+    res.status(500).json({ error: 'cannot stop recording', details: e?.message });
+  }
+}
+
+export async function superviseWhisper(req, res) {
+  try {
+    const { conferenceName, supervisorIdentity, coachCallSid } = req.body || {};
+    if (!conferenceName || !supervisorIdentity || !coachCallSid) {
+      return res.status(400).json({ error: 'missing fields' });
+    }
+    const conf = await waitForConferenceByName(conferenceName);
+    const to = supervisorIdentity.startsWith('client:') ? supervisorIdentity : `client:${supervisorIdentity}`;
+    const participant = await createParticipant(conf.sid, {
+      to,
+      from: env.callerId,
+      earlyMedia: true,
+      coaching: true,
+      callSidToCoach: coachCallSid
+    });
+    pushEvent('SUPERVISE_WHISPER', { conferenceSid: conf.sid, supervisorIdentity, coachCallSid });
+    res.json({ ok: true, participantSid: participant.callSid });
+  } catch (e) {
+    console.error('[SUPERVISE/WHISPER] error', e);
+    res.status(500).json({ error: 'cannot create whisper participant', details: e?.message });
+  }
+}
+
+export async function superviseBarge(req, res) {
+  try {
+    const { conferenceName, supervisorIdentity } = req.body || {};
+    if (!conferenceName || !supervisorIdentity) {
+      return res.status(400).json({ error: 'missing fields' });
+    }
+    const conf = await waitForConferenceByName(conferenceName);
+    const to = supervisorIdentity.startsWith('client:') ? supervisorIdentity : `client:${supervisorIdentity}`;
+    const participant = await createParticipant(conf.sid, {
+      to,
+      from: env.callerId,
+      earlyMedia: true,
+      coaching: false
+    });
+    pushEvent('SUPERVISE_BARGE', { conferenceSid: conf.sid, supervisorIdentity });
+    res.json({ ok: true, participantSid: participant.callSid });
+  } catch (e) {
+    console.error('[SUPERVISE/BARGE] error', e);
+    res.status(500).json({ error: 'cannot create barge participant', details: e?.message });
+  }
+}
+
+==== /src\controllers\voiceControl.js ====
+
+==== src\conversations\client.js ====
+import twilio from 'twilio';
+
+
+const {
+TWILIO_ACCOUNT_SID,
+TWILIO_AUTH_TOKEN,
+TWILIO_REGION, // optional e.g. 'au1'
+TWILIO_EDGE, // optional e.g. 'sydney'
+} = process.env;
+
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+throw new Error('Missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN');
+}
+
+
+/**
+* Twilio client with sensible defaults
+*/
+export const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, {
+autoRetry: true,
+maxRetries: 3,
+keepAlive: true,
+region: TWILIO_REGION || undefined,
+edge: TWILIO_EDGE || undefined,
+});
+==== /src\conversations\client.js ====
+
+==== src\conversations\service.js ====
+import { twilioClient as client } from './client.js';
+
+
+const {
+  TWILIO_MESSAGING_SERVICE_SID, // optional MGxxxxxxxx for SMS/WhatsApp
+  TWILIO_SMS_NUMBER, // optional +E.164
+  TWILIO_WHATSAPP_NUMBER, // optional +E.164 (without whatsapp: prefix)
+  TWILIO_MESSENGER_PAGE_ID, // optional FB Page ID for Messenger
+  TWILIO_CONVERSATIONS_SERVICE_SID, // required ISxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+} = process.env;
+
+if (!TWILIO_CONVERSATIONS_SERVICE_SID) {
+  console.warn('[Conversations] TWILIO_CONVERSATIONS_SERVICE_SID is not configured');
+}
+
+const service = TWILIO_CONVERSATIONS_SERVICE_SID
+  ? client.conversations.v1.services(TWILIO_CONVERSATIONS_SERVICE_SID)
+  : null;
+
+function requireService() {
+  if (!service) {
+    throw new Error('TWILIO_CONVERSATIONS_SERVICE_SID is required to use Conversations APIs');
+  }
+}
+
+
+/**
+* Create or fetch a Conversation by uniqueName. Prefer uniqueName as a stable key per case/ticket.
+*/
+export async function getOrCreateConversation({ uniqueName, friendlyName, attributes = {} }) {
+  requireService();
+  if (!uniqueName) throw new Error('uniqueName required');
+  try {
+    // Twilio REST allows SID or uniqueName in the path for fetch — we attempt fetch first.
+    return await service.conversations(uniqueName).fetch();
+  } catch (err) {
+    if (err.status !== 404) throw err;
+    const convo = await service.conversations.create({
+      uniqueName,
+      friendlyName: friendlyName || uniqueName,
+      attributes: JSON.stringify({ ...attributes, taskSid: null }),
+      messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID || undefined,
+    });
+    return service.conversations(convo.sid).update({
+      'timers.inactive': 'PT15M',
+      'timers.closed': 'P1D'
+    });
+  }
+}
+
+
+/** Add a WebChat participant via Conversations SDK identity */
+export async function addChatParticipant(
+  conversationSid,
+  { identity, attributes } = {}
+) {
+  requireService();
+  if (!identity) throw new Error('identity required');
+  try {
+    return await service
+      .conversations(conversationSid)
+      .participants.create({
+        identity,
+        attributes: attributes ? JSON.stringify(attributes) : undefined,
+      });
+  } catch (err) {
+    if (err.status === 409 || err.code === 50433) {
+      try {
+        return await service
+          .conversations(conversationSid)
+          .participants(identity)
+          .fetch();
+      } catch (fetchErr) {
+        throw new Error(
+          `Participant already exists but could not be fetched: ${fetchErr.message}`
+        );
+      }
+    }
+    throw new Error(
+      `Failed to add participant ${identity} to conversation ${conversationSid}: ${err.message}`
+    );
+  }
+}
+
+
+/** Add an SMS participant using messagingBinding */
+export function addSmsParticipant(conversationSid, { to, from }) {
+  requireService();
+  const proxy = from || TWILIO_SMS_NUMBER;
+  if (!to || !proxy) throw new Error('to and from (or TWILIO_SMS_NUMBER) are required');
+  return service.conversations(conversationSid).participants.create({
+    'messagingBinding.address': to, // e.g. +15551234567
+    'messagingBinding.proxyAddress': proxy, // your Twilio SMS number
+  });
+}
+
+
+/** Add a WhatsApp participant using messagingBinding */
+export function addWhatsappParticipant(conversationSid, { to, from }) {
+  requireService();
+  const proxy = from || TWILIO_WHATSAPP_NUMBER;
+  if (!to || !proxy) throw new Error('to and from (or TWILIO_WHATSAPP_NUMBER) are required');
+  return service.conversations(conversationSid).participants.create({
+    'messagingBinding.address': `whatsapp:${to}`,
+    'messagingBinding.proxyAddress': `whatsapp:${proxy}`,
+  });
+}
+
+
+/** Add a Messenger participant (requires existing contact & Page) */
+export function addMessengerParticipant(conversationSid, { userId, pageId }) {
+  requireService();
+  const proxy = pageId || TWILIO_MESSENGER_PAGE_ID;
+  if (!userId || !proxy) throw new Error('userId and pageId (or TWILIO_MESSENGER_PAGE_ID) are required');
+  return service.conversations(conversationSid).participants.create({
+    'messagingBinding.address': `messenger:${userId}`,
+    'messagingBinding.proxyAddress': `messenger:${proxy}`,
+  });
+}
+
+
+/**
+ * Send a message (works for all channels).
+ *
+ * The `xTwilioWebhookEnabled` option instructs Twilio to fire any configured
+ * Conversation webhooks even though the message was sent via REST. Use this
+ * header only when a webhook callback is desired after a REST send.
+ */
+export function sendMessage(
+  conversationSid,
+  { author = 'system', body, mediaSid, attributes }
+) {
+  requireService();
+  const payload = { author };
+  if (body) payload.body = body;
+  if (mediaSid) payload.mediaSid = mediaSid;
+  if (attributes) payload.attributes = JSON.stringify(attributes);
+  return service
+    .conversations(conversationSid)
+    .messages.create(payload, { xTwilioWebhookEnabled: true });
+}
+
+
+/** Optional: attach a conversation‑scoped webhook (Studio/webhook/trigger) */
+export function attachWebhook(conversationSid, { target = 'webhook', url, method = 'post', filters = ['onMessageAdded'], flowSid }) {
+  requireService();
+  const cfg = {};
+  if (target === 'webhook') {
+    cfg['configuration.url'] = url;
+    cfg['configuration.method'] = method;
+    cfg['configuration.filters'] = filters;
+  } else if (target === 'studio') {
+    cfg['configuration.flowSid'] = flowSid;
+  }
+  return service.conversations(conversationSid).webhooks.create({ target, ...cfg });
+}
+
+export const fetchConversation = (sid) => {
+  requireService();
+  return service.conversations(sid).fetch();
+};
+
+export async function updateConversationAttributes(conversationSid, newAttributes = {}) {
+  requireService();
+  const convo = await fetchConversation(conversationSid);
+  const current = convo.attributes ? JSON.parse(convo.attributes) : {};
+  const merged = { ...current, ...newAttributes };
+  return service.conversations(conversationSid).update({
+    attributes: JSON.stringify(merged)
+  });
+}
+
+export function listMessageReceipts(conversationSid, messageSid) {
+  requireService();
+  if (!conversationSid || !messageSid) {
+    throw new Error('conversationSid and messageSid are required');
+  }
+  return service
+    .conversations(conversationSid)
+    .messages(messageSid)
+    .deliveryReceipts.list();
+}
+
+export function updateConversationTimers(conversationSid, { inactive, closed } = {}) {
+  requireService();
+  const payload = {};
+  if (inactive) payload['timers.inactive'] = inactive;
+  if (closed) payload['timers.closed'] = closed;
+  return service.conversations(conversationSid).update(payload);
+}
+
+export function configureServiceWebhooks({
+  preWebhookUrl,
+  postWebhookUrl,
+  method = 'POST',
+  filters = ['onMessageAdd', 'onConversationAdd'], // pre- & post-event names are allowed here
+} = {}) {
+  // Nothing to update? exit early.
+  if (!preWebhookUrl && !postWebhookUrl) return Promise.resolve();
+
+  return service
+    .configuration
+    .webhooks()
+    .update({
+      ...(preWebhookUrl && { preWebhookUrl }),
+      ...(postWebhookUrl && { postWebhookUrl }),
+      ...(filters && { filters }),
+      ...(method && { method }), // 'GET' or 'POST'
+    });
+}
+
+==== /src\conversations\service.js ====
+
+==== src\conversations\tokens.js ====
+import twilio from 'twilio';
+
+
+const { AccessToken } = twilio.jwt;
+const { ChatGrant } = AccessToken; // Conversations uses ChatGrant with serviceSid
+
+
+const {
+TWILIO_ACCOUNT_SID,
+TWILIO_API_KEY_SID,
+TWILIO_API_KEY_SECRET,
+TWILIO_CONVERSATIONS_SERVICE_SID, // ISxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+} = process.env;
+
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_API_KEY_SID || !TWILIO_API_KEY_SECRET || !TWILIO_CONVERSATIONS_SERVICE_SID) {
+console.warn('[Conversations] Missing token envs; /api/chat/token will fail without them');
+}
+
+
+export function createConversationsToken(identity, ttlSeconds = 3600) {
+if (!identity) throw new Error('identity is required');
+const token = new AccessToken(
+TWILIO_ACCOUNT_SID,
+TWILIO_API_KEY_SID,
+TWILIO_API_KEY_SECRET,
+{ identity, ttl: ttlSeconds }
+);
+token.addGrant(new ChatGrant({ serviceSid: TWILIO_CONVERSATIONS_SERVICE_SID }));
+return token.toJwt();
+}
+==== /src\conversations\tokens.js ====
+
+==== src\index.js ====
+﻿// contact-center/server/src/index.js
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { Server } from 'socket.io';
+import rateLimit from 'express-rate-limit';
+import { serverEnv as env } from 'shared/env';
+import { tokens } from './routes/tokens.js';
+import { health } from './routes/health.js';
+import { taskrouter } from './routes/taskrouter.js';
+import { voice } from './routes/voice.js';
+import { validateEnv } from './validateEnv.js';
+import { transfer } from './routes/transfer.js';
+import { voiceControl } from './routes/voiceControl.js';
+import { ivr } from './routes/ivr.js';
+import { crmProxy } from './routes/crm.js';
+import chatTokenRoute from './routes/chat-token.route.js';
+import conversationsRoute from './routes/conversations.route.js';
+import conversationsWebhooksRoute from './routes/conversations-webhooks.route.js';
+import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.route.js';
+import { configureServiceWebhooks } from './conversations/service.js';
+
+const app = express();
+validateEnv();
+app.set('trust proxy', true);
+
+// --- CORS config (HTTP & Socket.IO) ---
+const corsOrigins = (env.corsOrigin || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const origin =
+  env.corsOrigin === '*'
+    ? true
+    : corsOrigins.length
+      ? corsOrigins
+      : false; // false = bloquea si no hay match
+
+const corsOptions = {
+  origin,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true, // si no usas cookies, puedes dejarlo en false; con Authorization no hay problema
+  maxAge: 86400,     // cache preflight 24h
+};
+
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // preflight global
+
+// --- Rutas API ---
+app.use('/api', health);
+app.use('/api', tokens);
+app.use('/api', taskrouter);
+app.use('/api', voice);
+app.use('/api', transfer);
+app.use('/api', voiceControl);
+app.use('/api/ivr/finance', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }));
+app.use('/api', ivr);
+app.use('/api', crmProxy);
+app.use('/api/chat', chatTokenRoute);
+app.use('/api/conversations', conversationsRoute);
+app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
+app.use('/webhooks/conversations', conversationsWebhooksRoute);
+
+if (env.publicBaseUrl) {
+  configureServiceWebhooks({
+    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`
+  }).catch(e => console.error('Failed to configure Conversations pre-webhook', e));
+}
+// --- HTTP + Socket.IO con CORS ---
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+
+// comparte io con los routers para poder emitir eventos (p. ej. presence_update)
+app.set('io', io);
+
+server.listen(env.port, () => console.log(`server on :${env.port}`));
+
+
+==== /src\index.js ====
+
+==== src\lib\crmClient.js ====
+﻿// contact-center/server/src/lib/crmClient.js
+import jwt from 'jsonwebtoken';
+import { serverEnv as env } from 'shared/env';
+
+async function doFetch(path, { method = 'GET', body, qs } = {}) {
+  const url = new URL(env.crmOrchBaseUrl.replace(/\/+$/, '') + path);
+  if (qs) Object.entries(qs).forEach(([k, v]) => url.searchParams.set(k, v));
+
+  const token = jwt.sign(
+    { aud: env.crmOrchAudience, iss: env.crmOrchIssuer },
+    env.crmOrchKey,
+    { expiresIn: '60s' }
+  );
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`CRM ${res.status}: ${txt || res.statusText}`);
+  }
+  return res.json();
+}
+
+export const crm = {
+  // NEW
+  vehicleById: id => doFetch(`/v1/vehicles/${encodeURIComponent(id)}`),
+
+  customerByAni: ani => doFetch(`/v1/customers/by-ani/${encodeURIComponent(ani)}`),
+  customerById: id => doFetch(`/v1/customers/${encodeURIComponent(id)}`),
+  vehicleByVin: vin => doFetch(`/v1/vehicles/by-vin/${encodeURIComponent(vin)}`),
+  vehicleByPlate: plate => doFetch(`/v1/vehicles/by-plate/${encodeURIComponent(plate)}`),
+  appointments: vehicleId => doFetch(`/v1/appointments/${encodeURIComponent(vehicleId)}`),
+  createAppointment: payload => doFetch(`/v1/appointments`, { method: 'POST', body: payload }),
+  recallsByVin: vin => doFetch(`/v1/recalls/${encodeURIComponent(vin)}`),
+  finance: (customerId, otpVerified = false) =>
+    doFetch(`/v1/finance/${encodeURIComponent(customerId)}`, { qs: { otpVerified: String(otpVerified) } }),
+  payLink: customerId => doFetch(`/v1/paylink`, { method: 'POST', body: { customerId } }),
+  logInteraction: payload => doFetch(`/v1/interactions`, { method: 'POST', body: payload })
+};
+
+
+==== /src\lib\crmClient.js ====
+
+==== src\middleware\verifyTwilio.js ====
+import twilio from 'twilio';
+import { serverEnv as env } from 'shared/env';
+
+export function verifyTwilioSignature(req, res, next) {
+  if (env.skipTwilioValidation) return next();
+
+  try {
+    const signature = req.get('X-Twilio-Signature');
+    if (!signature) return res.status(403).send('Missing Twilio signature');
+
+    const base = env.publicBaseUrl || `${req.protocol}://${req.get('host')}`;
+    const url = base + req.originalUrl;
+    const params = req.body || {};
+
+    const valid = twilio.webhook.validateRequest(
+      env.authToken,
+      signature,
+      url,
+      params
+    );
+    if (!valid) return res.status(403).send('Invalid Twilio signature');
+
+    return next();
+  } catch {
+    return res.status(403).send('Twilio validation error');
+  }
+}
+
+
+==== /src\middleware\verifyTwilio.js ====
+
+==== src\routes\chat-token.route.js ====
+import express from 'express';
+import { createConversationsToken } from '../conversations/tokens.js';
+
+
+const router = express.Router();
+
+
+// Issue a short‑lived SDK token for WebChat clients
+router.get('/token', (req, res) => {
+// Your auth layer can set req.user; here we fall back to a random guest
+const identity = (req.user?.id && `agent:${req.user.id}`) || `guest:${crypto.randomUUID()}`;
+try {
+const token = createConversationsToken(identity, 3600); // 1 hour TTL
+res.json({ token, identity });
+} catch (e) {
+res.status(500).json({ error: e.message });
+}
+});
+
+// Refresh an SDK token before or after it expires
+router.get('/refresh', (req, res) => {
+  const { identity } = req.query;
+  if (!identity) {
+    res.status(400).json({ error: 'identity is required' });
+    return;
+  }
+  try {
+    const token = createConversationsToken(identity, 3600); // 1 hour TTL
+    res.json({ token });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+export default router;
+
+==== /src\routes\chat-token.route.js ====
+
+==== src\routes\conversations-prewebhooks.route.js ====
+import express from 'express';
+import { fetchConversation } from '../conversations/service.js';
+
+const router = express.Router();
+
+// Simple content moderation placeholder. In a real implementation
+// you might call an external service or a more sophisticated model.
+const MAX_MESSAGE_LENGTH = 1600;
+const bannedWords = ['banned', 'profanity'];
+
+// Allowed email domains for new conversations
+const allowedDomains = (process.env.ALLOWED_EMAIL_DOMAINS || '')
+  .split(',')
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
+
+function failsModeration(body = '') {
+  const lower = body.toLowerCase();
+  return bannedWords.some(w => lower.includes(w));
+}
+
+router.post('/', async (req, res) => {
+  const eventType = req.body.EventType || req.body.EventType?.toString();
+  console.log('[Conversations PreWebhook]', eventType, req.body?.MessageSid || req.body?.ConversationSid || '');
+
+  try {
+    if (eventType === 'onConversationAdd') {
+      let attrs = {};
+      try {
+        attrs = req.body.Attributes ? JSON.parse(req.body.Attributes) : {};
+      } catch (err) {
+        return res.status(422).send('Invalid attributes');
+      }
+
+      const email = attrs.email ? String(attrs.email).toLowerCase() : '';
+      if (!email) {
+        return res.status(422).send('email required');
+      }
+
+      const domain = email.split('@')[1];
+      if (allowedDomains.length && !allowedDomains.includes(domain)) {
+        return res.status(403).send('email domain not allowed');
+      }
+
+      // Ensure email/uniqueName is not already used
+      try {
+        await fetchConversation(email);
+        return res.status(409).send('conversation already exists');
+      } catch (err) {
+        if (err.status && err.status !== 404) {
+          console.error('[Conversations PreWebhook] uniqueness check failed', err);
+          return res.status(500).send('error');
+        }
+        // 404 => not found => ok
+      }
+    }
+
+    if (eventType === 'onMessageAdd') {
+      const body = req.body.Body || '';
+
+      if (body.length > MAX_MESSAGE_LENGTH) {
+        return res.status(413).send('Message too long');
+      }
+
+      if (failsModeration(body)) {
+        return res.status(422).send('Message failed moderation');
+      }
+    }
+
+    res.status(200).send('ok');
+  } catch (e) {
+    console.error('[Conversations PreWebhook] error:', e);
+    res.status(500).send('error');
+  }
+});
+
+export default router;
+
+
+==== /src\routes\conversations-prewebhooks.route.js ====
+
+==== src\routes\conversations-webhooks.route.js ====
+import express from 'express';
+import {
+  createTask,
+  completeTask,
+  fetchTask,
+  pushEvent,
+  updateTask
+} from '../services/taskrouter.js';
+import { fetchConversation, updateConversationAttributes } from '../conversations/service.js';
+import { logInteraction } from '../services/crm.js';
+
+const router = express.Router();
+
+// Twilio will POST events like onMessageAdded here if you attach a webhook per‑conversation.
+router.post('/', async (req, res) => {
+  // TODO: validate X-Twilio-Signature unless SKIP_TWILIO_VALIDATION=true (dev only)
+  const eventType = req.body.EventType || req.body.EventType?.toString();
+  console.log('[Conversations Webhook]', eventType, req.body?.MessageSid || '');
+  const io = req.app.get('io');
+  try {
+    if (eventType === 'onMessageAdded') {
+      const author = String(req.body.Author || '').toLowerCase();
+      let participantAttrs = {};
+      try {
+        participantAttrs = req.body.ParticipantAttributes
+          ? JSON.parse(req.body.ParticipantAttributes)
+          : {};
+      } catch {
+        participantAttrs = {};
+      }
+      if (author !== 'system' && participantAttrs.role !== 'agent') {
+        const conversationSid = req.body.ConversationSid;
+        const convo = await fetchConversation(conversationSid);
+        const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+        if (!convoAttrs.taskSid) {
+          const task = await createTask({
+            attributes: {
+              channel: 'chat',
+              conversationSid,
+              direction: 'inbound',
+              ...convoAttrs
+            },
+            taskChannel: 'chat'
+          });
+          await updateConversationAttributes(conversationSid, {
+            taskSid: task.sid
+          });
+          pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
+          io?.emit('task_created', { taskSid: task.sid, conversationSid });
+        }
+      }
+    } else if (eventType === 'onMessageUpdated') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const body = req.body.Body;
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const transcript = attrs.transcript || {};
+      const existing = transcript[messageSid] || {};
+      const previousBody = existing.body || req.body.PreviousBody || null;
+      transcript[messageSid] = { ...existing, body, updatedAt: new Date().toISOString() };
+      await updateConversationAttributes(conversationSid, { transcript });
+      pushEvent('MESSAGE_UPDATED', { conversationSid, messageSid, body });
+      io?.emit('message_updated', { conversationSid, messageSid, body });
+      if (previousBody && previousBody !== body) {
+        try {
+          await logInteraction({ conversationSid, messageSid, type: 'message_updated', previousBody });
+        } catch (err) {
+          console.warn('logInteraction failed (non-blocking)', err);
+        }
+      }
+    } else if (eventType === 'onMessageRemoved') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const transcript = attrs.transcript || {};
+      const removed = transcript[messageSid];
+      delete transcript[messageSid];
+      await updateConversationAttributes(conversationSid, { transcript });
+      pushEvent('MESSAGE_REMOVED', { conversationSid, messageSid });
+      io?.emit('message_removed', { conversationSid, messageSid });
+      const previousBody = req.body.PreviousBody || removed?.body;
+      if (previousBody) {
+        try {
+          await logInteraction({ conversationSid, messageSid, type: 'message_removed', previousBody });
+        } catch (err) {
+          console.warn('logInteraction failed (non-blocking)', err);
+        }
+      }
+    } else if (eventType === 'onParticipantAdded') {
+      const conversationSid = req.body.ConversationSid;
+      const participantSid = req.body.ParticipantSid;
+      const identity = req.body.Identity;
+      let participantAttrs = {};
+      try {
+        participantAttrs = req.body.ParticipantAttributes
+          ? JSON.parse(req.body.ParticipantAttributes)
+          : {};
+      } catch {
+        participantAttrs = {};
+      }
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const participants = attrs.participants || {};
+      participants[participantSid] = { identity, role: participantAttrs.role };
+      const updates = { participants };
+      const now = new Date().toISOString();
+      if (participantAttrs.role === 'agent' && !attrs.agentJoinedAt) {
+        updates.agentJoinedAt = now;
+        if (attrs.taskSid) {
+          try {
+            const task = await fetchTask(attrs.taskSid);
+            const tAttrs = task.attributes ? JSON.parse(task.attributes) : {};
+            await updateTask(attrs.taskSid, {
+              attributes: JSON.stringify({ ...tAttrs, agentJoinedAt: now })
+            });
+            pushEvent('TASK_UPDATED', {
+              taskSid: attrs.taskSid,
+              conversationSid
+            });
+            io?.emit('task_updated', {
+              taskSid: attrs.taskSid,
+              conversationSid
+            });
+          } catch (err) {
+            console.error('task update error', err);
+          }
+        }
+      }
+      await updateConversationAttributes(conversationSid, updates);
+      const payload = {
+        conversationSid,
+        participantSid,
+        identity,
+        role: participantAttrs.role
+      };
+      pushEvent('PARTICIPANT_ADDED', payload);
+      io?.emit('participant_added', payload);
+    } else if (eventType === 'onParticipantRemoved') {
+      const conversationSid = req.body.ConversationSid;
+      const participantSid = req.body.ParticipantSid;
+      let participantAttrs = {};
+      try {
+        participantAttrs = req.body.ParticipantAttributes
+          ? JSON.parse(req.body.ParticipantAttributes)
+          : {};
+      } catch {
+        participantAttrs = {};
+      }
+      const convo = await fetchConversation(conversationSid);
+      const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+      const participants = attrs.participants || {};
+      const removed = participants[participantSid];
+      delete participants[participantSid];
+      await updateConversationAttributes(conversationSid, { participants });
+      const payload = {
+        conversationSid,
+        participantSid,
+        identity: removed?.identity,
+        role: removed?.role
+      };
+      pushEvent('PARTICIPANT_REMOVED', payload);
+      io?.emit('participant_removed', payload);
+      const remainingAgents = Object.values(participants).some(
+        (p) => p.role === 'agent'
+      );
+      if (!remainingAgents && attrs.taskSid) {
+        try {
+          await updateTask(attrs.taskSid, {
+            assignmentStatus: 'wrapping',
+            reason: 'agent left'
+          });
+          pushEvent('CHAT_ORPHANED', {
+            conversationSid,
+            taskSid: attrs.taskSid
+          });
+          io?.emit('chat_orphaned', {
+            conversationSid,
+            taskSid: attrs.taskSid
+          });
+        } catch (err) {
+          console.error('task escalation error', err);
+        }
+      }
+    } else if (eventType === 'onConversationStateUpdated') {
+      const status = String(req.body.Status || '').toLowerCase();
+      if (status === 'closed') {
+        const conversationSid = req.body.ConversationSid;
+        const convo = await fetchConversation(conversationSid);
+        const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+        const taskSid = attrs.taskSid;
+        if (taskSid) {
+          await completeTask(taskSid, 'Conversation closed');
+          pushEvent('TASK_COMPLETED', { taskSid, conversationSid });
+          io?.emit('task_completed', { taskSid, conversationSid });
+        }
+      }
+    } else if (eventType === 'onConversationRemoved') {
+      const conversationSid = req.body.ConversationSid;
+      let attrs = {};
+      try {
+        attrs = req.body.Attributes ? JSON.parse(req.body.Attributes) : {};
+      } catch {
+        attrs = {};
+      }
+      const taskSid = attrs.taskSid;
+      if (taskSid) {
+        await completeTask(taskSid, 'Conversation removed');
+        pushEvent('TASK_COMPLETED', { taskSid, conversationSid });
+        io?.emit('task_completed', { taskSid, conversationSid });
+      }
+      try {
+        await logInteraction({ conversationSid, taskSid, type: 'conversation_removed' });
+      } catch (err) {
+        console.warn('CRM cleanup failed', err);
+      }
+      pushEvent('CONVERSATION_REMOVED', { conversationSid, taskSid: taskSid || null });
+      io?.emit('conversation_removed', { conversationSid, taskSid: taskSid || null });
+    } else if (eventType === 'onDeliveryUpdated') {
+      const conversationSid = req.body.ConversationSid;
+      const messageSid = req.body.MessageSid;
+      const deliveryStatus = req.body.DeliveryStatus;
+      if (conversationSid && messageSid && deliveryStatus) {
+        const convo = await fetchConversation(conversationSid);
+        const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
+        const receipts = attrs.deliveryReceipts || {};
+        receipts[messageSid] = deliveryStatus;
+        await updateConversationAttributes(conversationSid, { deliveryReceipts: receipts });
+        pushEvent('MESSAGE_DELIVERY_UPDATED', { conversationSid, messageSid, deliveryStatus });
+        io?.emit('message_delivery_updated', { conversationSid, messageSid, deliveryStatus });
+      }
+    }
+    res.status(200).send('ok');
+  } catch (e) {
+    console.error('[Conversations Webhook] error:', e);
+    res.status(500).send('error');
+  }
+});
+
+export default router;
+
+==== /src\routes\conversations-webhooks.route.js ====
+
+==== src\routes\conversations.route.js ====
+import express from 'express';
+import {
+getOrCreateConversation,
+addChatParticipant,
+addSmsParticipant,
+addWhatsappParticipant,
+addMessengerParticipant,
+sendMessage,
+attachWebhook,
+updateConversationTimers,
+listMessageReceipts,
+} from '../conversations/service.js';
+
+
+const router = express.Router();
+
+
+// Create or get a conversation by uniqueName
+router.post('/', async (req, res) => {
+const { uniqueName, friendlyName, attributes } = req.body;
+try {
+const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
+res.json(convo);
+} catch (e) {
+res.status(e.status || 500).json({ error: e.message });
+}
+});
+
+
+// Add a participant; body.type: chat|sms|whatsapp|messenger
+router.post('/:sid/participants', async (req, res) => {
+const { sid } = req.params;
+const { type } = req.body;
+try {
+let result;
+switch (type) {
+case 'chat': {
+const { identity, attributes } = req.body;
+result = await addChatParticipant(sid, { identity, attributes });
+break;
+}
+case 'sms': {
+const { to, from } = req.body;
+result = await addSmsParticipant(sid, { to, from });
+break;
+}
+case 'whatsapp': {
+const { to, from } = req.body;
+result = await addWhatsappParticipant(sid, { to, from });
+break;
+}
+case 'messenger': {
+const { userId, pageId } = req.body;
+result = await addMessengerParticipant(sid, { userId, pageId });
+break;
+}
+default:
+return res.status(400).json({ error: 'Unsupported type' });
+}
+res.json(result);
+} catch (e) {
+res.status(e.status || 500).json({ error: e.message });
+}
+});
+
+
+// Send a message
+router.post('/:sid/messages', async (req, res) => {
+const { sid } = req.params;
+try {
+const msg = await sendMessage(sid, req.body);
+res.json(msg);
+} catch (e) {
+res.status(e.status || 500).json({ error: e.message });
+}
+});
+
+// Retrieve delivery receipts for a message
+router.get('/:sid/messages/:messageSid/receipts', async (req, res) => {
+  const { sid, messageSid } = req.params;
+  try {
+    const receipts = await listMessageReceipts(sid, messageSid);
+    res.json(receipts);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+
+// Update conversation timers (e.g., to hang up)
+router.post('/:sid/timers', async (req, res) => {
+const { sid } = req.params;
+try {
+const convo = await updateConversationTimers(sid, req.body);
+res.json(convo);
+} catch (e) {
+res.status(e.status || 500).json({ error: e.message });
+}
+});
+
+
+// Attach a Conversation‑scoped webhook (optional)
+router.post('/:sid/webhooks', async (req, res) => {
+const { sid } = req.params;
+try {
+const wh = await attachWebhook(sid, req.body);
+res.json(wh);
+} catch (e) {
+res.status(e.status || 500).json({ error: e.message });
+}
+});
+
+
+export default router;
+
+==== /src\routes\conversations.route.js ====
+
+==== src\routes\crm.js ====
+﻿import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
+import {
+  getVehicleById,
+  getCustomerById,
+  getVehicleByPlate,
+  getVehicleByVin,
+  getAppointments,
+  postAppointment,
+  getFinance,
+  postPayLink,
+  postInteraction
+} from '../controllers/crm.js';
+
+export const crmProxy = Router();
+crmProxy.use('/crm', requireAuth);
+crmProxy.get('/crm/vehicles/by-id/:id', getVehicleById);
+crmProxy.get('/crm/customers/:id', getCustomerById);
+crmProxy.get('/crm/vehicles/by-plate/:plate', getVehicleByPlate);
+crmProxy.get('/crm/vehicles/:vin', getVehicleByVin);
+crmProxy.get('/crm/appointments/:vehicleId', getAppointments);
+crmProxy.post('/crm/appointments', postAppointment);
+crmProxy.get('/crm/finance/:customerId', getFinance);
+crmProxy.post('/crm/paylink', postPayLink);
+crmProxy.post('/crm/interactions', postInteraction);
+
+
+==== /src\routes\crm.js ====
+
+==== src\routes\health.js ====
+import { Router } from 'express';
+import { getHealth } from '../controllers/health.js';
+
+export const health = Router().get('/health', getHealth);
+
+==== /src\routes\health.js ====
+
+==== src\routes\ivr.js ====
+import { Router } from 'express';
+import {
+  lookup,
+  serviceStatus,
+  scheduleService,
+  checkRecalls,
+  financeBalance,
+  financePaylink
+} from '../controllers/ivr.js';
+
+export const ivr = Router();
+ivr.post('/ivr/lookup', lookup);
+ivr.post('/ivr/service/status', serviceStatus);
+ivr.post('/ivr/service/schedule', scheduleService);
+ivr.post('/ivr/recalls/check', checkRecalls);
+ivr.post('/ivr/finance/balance', financeBalance);
+ivr.post('/ivr/finance/paylink', financePaylink);
+
+==== /src\routes\ivr.js ====
+
+==== src\routes\taskrouter.js ====
+﻿import { Router } from 'express';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
+import { requireAuth } from 'shared/auth';
+import {
+  assignment,
+  events,
+  activities,
+  myTasks,
+  completeTask,
+  availableWorkers,
+  presence,
+  recent
+} from '../controllers/taskrouter.js';
+
+export const taskrouter = Router();
+taskrouter.post('/taskrouter/assignment', verifyTwilioSignature, assignment);
+taskrouter.post('/taskrouter/events', verifyTwilioSignature, events);
+taskrouter.get('/taskrouter/activities', activities);
+taskrouter.get('/taskrouter/my-tasks', requireAuth, myTasks);
+taskrouter.post('/taskrouter/tasks/:taskSid/complete', requireAuth, completeTask);
+taskrouter.get('/taskrouter/available-workers', requireAuth, availableWorkers);
+taskrouter.get('/taskrouter/presence', requireAuth, presence);
+taskrouter.get('/events/recent', requireAuth, recent);
+
+
+==== /src\routes\taskrouter.js ====
+
+==== src\routes\tokens.js ====
+﻿import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
+import { login, me, refresh, logout, voiceToken, workerToken } from '../controllers/tokens.js';
+
+export const tokens = Router();
+tokens.post('/auth/login', login);
+tokens.post('/auth/refresh', refresh);
+tokens.post('/auth/logout', logout);
+tokens.get('/auth/me', requireAuth, me);
+tokens.get('/token/voice', requireAuth, voiceToken);
+tokens.get('/token/tr-worker', requireAuth, workerToken);
+
+
+==== /src\routes\tokens.js ====
+
+==== src\routes\transfer.js ====
+﻿import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
+import { cold, warm, complete } from '../controllers/transfer.js';
+
+export const transfer = Router();
+transfer.post('/transfer/cold', requireAuth, cold);
+transfer.post('/transfer/warm', requireAuth, warm);
+transfer.post('/transfer/complete', requireAuth, complete);
+
+
+==== /src\routes\transfer.js ====
+
+==== src\routes\voice.js ====
+import { Router } from 'express';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
+import { outbound } from '../controllers/voice.js';
+
+export const voice = Router();
+voice.post('/voice/outbound', verifyTwilioSignature, outbound);
+
+==== /src\routes\voice.js ====
+
+==== src\routes\voiceControl.js ====
+﻿import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
+import {
+  holdStart,
+  holdStop,
+  hangupCall,
+  recordingStatus,
+  recordingStart,
+  recordingPause,
+  recordingResume,
+  recordingStop,
+  superviseWhisper,
+  superviseBarge
+} from '../controllers/voiceControl.js';
+
+export const voiceControl = Router();
+voiceControl.post('/voice/hold/start', requireAuth, holdStart);
+voiceControl.post('/voice/hold/stop', requireAuth, holdStop);
+voiceControl.post('/voice/hangup', requireAuth, hangupCall);
+voiceControl.get('/voice/recordings/status', requireAuth, recordingStatus);
+voiceControl.post('/voice/recordings/start', requireAuth, recordingStart);
+voiceControl.post('/voice/recordings/pause', requireAuth, recordingPause);
+voiceControl.post('/voice/recordings/resume', requireAuth, recordingResume);
+voiceControl.post('/voice/recordings/stop', requireAuth, recordingStop);
+voiceControl.post('/supervise/whisper', requireAuth, superviseWhisper);
+voiceControl.post('/supervise/barge', requireAuth, superviseBarge);
+
+
+==== /src\routes\voiceControl.js ====
+
+==== src\services\crm.js ====
+import { crm } from '../lib/crmClient.js';
+
+export const vehicleById = (id) => crm.vehicleById(id);
+export const customerById = (id) => crm.customerById(id);
+export const vehicleByPlate = (plate) => crm.vehicleByPlate(plate);
+export const vehicleByVin = (vin) => crm.vehicleByVin(vin);
+export const appointments = (vehicleId) => crm.appointments(vehicleId);
+export const createAppointment = (body) => crm.createAppointment(body);
+export const finance = (customerId, otpVerified) => crm.finance(customerId, otpVerified);
+export const payLink = (customerId) => crm.payLink(customerId);
+export const logInteraction = (body) => crm.logInteraction(body);
+
+==== /src\services\crm.js ====
+
+==== src\services\ivr.js ====
+import { crm } from '../lib/crmClient.js';
+
+export const findVehicleByVin = (vin) => crm.vehicleByVin(String(vin).toUpperCase());
+export const findVehicleByPlate = (plate) => crm.vehicleByPlate(String(plate).toUpperCase());
+export const findCustomerByAni = (ani) => crm.customerByAni(String(ani).replace(/\D/g, ''));
+export const findVehicleById = (id) => crm.vehicleById(id);
+export const findCustomerById = (id) => crm.customerById(id);
+export const getAppointments = (vehicleId) => crm.appointments(vehicleId);
+export const createAppointment = (data) => crm.createAppointment(data);
+export const getRecallsByVin = (vin) => crm.recallsByVin(String(vin).toUpperCase());
+export const getFinance = (customerId, otpVerified) => crm.finance(customerId, otpVerified);
+export const createPayLink = (customerId) => crm.payLink(customerId);
+
+==== /src\services\ivr.js ====
+
+==== src\services\taskrouter.js ====
+﻿import axios from 'axios';
+import { rest } from '../twilio.js';
+import { serverEnv as env } from 'shared/env';
+
+export const listActivities = () =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).activities.list({ limit: 50 });
+
+export const listWorkerReservations = (workerSid) =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).workers(workerSid).reservations.list({ limit: 50 });
+
+export const fetchTask = (taskSid) =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).fetch();
+
+export const updateTask = (taskSid, payload) =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).update(payload);
+
+export function createTask({ attributes = {}, taskChannel, ...opts } = {}) {
+  const attrsObj = typeof attributes === 'string' ? JSON.parse(attributes) : { ...attributes };
+  if (!('taskSid' in attrsObj)) attrsObj.taskSid = null;
+  const attrs = JSON.stringify(attrsObj);
+  const payload = { attributes: attrs, workflowSid: env.workflowSid, ...opts };
+  if (taskChannel) payload.taskChannel = taskChannel;
+  return rest.taskrouter.v1.workspaces(env.workspaceSid).tasks.create(payload);
+}
+
+export const completeTask = (taskSid, reason = 'Conversation closed') =>
+  updateTask(taskSid, { assignmentStatus: 'completed', reason });
+
+export const listWorkers = () =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).workers.list({ limit: 200 });
+
+export async function listWorkersWithRetry(retries = 2, delay = 300) {
+  let last;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await listWorkers();
+    } catch (e) {
+      last = e; if (i === retries) throw last; await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
+const _events = [];
+export function pushEvent(type, payload) {
+  _events.push({ type, payload, ts: new Date().toISOString() });
+  if (_events.length > 500) _events.shift();
+}
+export const recentEvents = () => _events.slice(-200);
+export { axios, env };
+
+
+==== /src\services\taskrouter.js ====
+
+==== src\services\tokens.js ====
+﻿import { buildVoiceToken, buildWorkerToken, rest } from '../twilio.js';
+import { serverEnv as env } from 'shared/env';
+
+export const fetchWorker = (workerSid) =>
+  rest.taskrouter.v1.workspaces(env.workspaceSid).workers(workerSid).fetch();
+
+export const createVoiceToken = (identity) => buildVoiceToken(identity);
+export const createWorkerToken = (workerSid) => buildWorkerToken(workerSid);
+
+
+==== /src\services\tokens.js ====
+
+==== src\services\transfer.js ====
+﻿import { rest } from '../twilio.js';
+import { serverEnv as env } from 'shared/env';
+
+export async function waitUntilInProgress(callSid, { tries = 8, delayMs = 250 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    const c = await rest.calls(callSid).fetch();
+    if (c.status === 'in-progress') return c;
+    if (['completed', 'canceled', 'failed', 'busy', 'no-answer'].includes(c.status)) {
+      const err = new Error(`Call ${callSid} is ${c.status}, cannot redirect`);
+      err.code = 'NOT_REDIRECTABLE';
+      err.twilioStatus = c.status;
+      throw err;
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  const c = await rest.calls(callSid).fetch();
+  const err = new Error(`Call ${callSid} still ${c.status}, not in-progress`);
+  err.code = 'NOT_IN_PROGRESS';
+  err.twilioStatus = c.status;
+  throw err;
+}
+
+export const updateCall = (sid, params) => rest.calls(sid).update(params);
+export const createCall = (params) => rest.calls.create(params);
+export { env };
+
+
+==== /src\services\transfer.js ====
+
+==== src\services\voice.js ====
+﻿import Twilio from 'twilio';
+import { serverEnv as env } from 'shared/env';
+
+export function buildOutboundTwiml(to) {
+  const twiml = new Twilio.twiml.VoiceResponse();
+  if (!to) {
+    twiml.say('Missing destination.');
+    return twiml.toString();
+  }
+  const dial = twiml.dial({ callerId: env.callerId });
+  if (to.startsWith('client:')) {
+    dial.client({}, to.replace('client:', ''));
+  } else {
+    dial.number({}, to);
+  }
+  return twiml.toString();
+}
+
+
+==== /src\services\voice.js ====
+
+==== src\services\voiceControl.js ====
+﻿import { rest } from '../twilio.js';
+import { serverEnv as env } from 'shared/env';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+export function conferenceTwiml(name, { endOnExit = false, beep = false } = {}) {
+  return `
+<Response>
+  <Dial callerId="${esc(env.callerId)}">
+    <Conference beep="${beep ? 'true' : 'false'}"
+                endConferenceOnExit="${endOnExit ? 'true' : 'false'}">${esc(name)}</Conference>
+  </Dial>
+</Response>`.trim();
+}
+
+export async function waitForConferenceByName(friendlyName, { tries = 60, delayMs = 300 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    const list = await rest.conferences.list({ friendlyName, status: 'in-progress', limit: 1 });
+    if (list && list.length) return list[0];
+    await sleep(delayMs);
+  }
+  throw new Error(`Conference "${friendlyName}" not in-progress`);
+}
+
+export async function waitForConferenceBySid(confSid, { tries = 60, delayMs = 300 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const c = await rest.conferences(confSid).fetch();
+      if (String(c.status).toLowerCase() === 'in-progress') return c;
+    } catch {}
+    await sleep(delayMs);
+  }
+  throw new Error(`Conference ${confSid} not in-progress`);
+}
+
+export async function waitForParticipantByCallSid(confSid, callSid, { tries = 60, delayMs = 300 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    const parts = await rest.conferences(confSid).participants.list({ limit: 50 });
+    const match = parts.find((p) => p.callSid === callSid);
+    if (match) return match;
+    await sleep(delayMs);
+  }
+  throw new Error(`Participant ${callSid} not found in conference ${confSid}`);
+}
+
+export async function waitUntilParticipantConnected(confSid, callSid, { tries = 60, delayMs = 300 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const p = await rest.conferences(confSid).participants(callSid).fetch();
+      if (String(p.status).toLowerCase() === 'connected') return p;
+    } catch {}
+    await sleep(delayMs);
+  }
+  throw new Error(`Participant ${callSid} not 'connected' in conference ${confSid}`);
+}
+
+export async function getConferenceFromTask(taskSid) {
+  const task = await rest.taskrouter.v1.workspaces(env.workspaceSid).tasks(taskSid).fetch();
+  let attrs = {};
+  try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+  const confSid =
+    attrs?.conference?.sid ||
+    attrs?.conference?.conference_sid ||
+    null;
+  const customerCallSid =
+    attrs?.conference?.participants?.customer ||
+    attrs?.customer?.callSid ||
+    attrs?.callSid ||
+    null;
+  const workerCallSid =
+    attrs?.conference?.participants?.worker ||
+    attrs?.conference?.participants?.agent ||
+    attrs?.worker?.callSid ||
+    null;
+  if (!confSid) return null;
+  return { confSid, customerCallSid, workerCallSid };
+}
+
+export async function ensureConferenceReadyByName({ confName, customerCallSid, agentCallSid }) {
+  const twimlCust = conferenceTwiml(confName, { endOnExit: true, beep: false });
+  const twimlAgnt = conferenceTwiml(confName, { endOnExit: false, beep: false });
+  try { await rest.calls(customerCallSid).update({ twiml: twimlCust }); } catch {}
+  try { await rest.calls(agentCallSid).update({ twiml: twimlAgnt }); } catch {}
+  return await waitForConferenceByName(confName);
+}
+
+export async function updateHold(confSid, callSidOrLabel, hold, holdUrl) {
+  const payload = hold ? { hold: true, holdUrl } : { hold: false };
+  let lastErr;
+  for (let i = 0; i < 10; i++) {
+    try {
+      return await rest.conferences(confSid).participants(callSidOrLabel).update(payload);
+    } catch (e) {
+      lastErr = e;
+      await sleep(250);
+    }
+  }
+  throw lastErr;
+}
+
+export async function latestRecordingForCall(callSid) {
+  const recs = await rest.calls(callSid).recordings.list({ limit: 20 });
+  if (!recs || !recs.length) return null;
+  return recs.find((r) => r.status === 'in-progress') || recs.find((r) => r.status === 'paused') || recs[0];
+}
+
+export { env };
+export const createRecording = (callSid) => rest.calls(callSid).recordings.create({});
+export const updateRecording = (callSid, recordingSid, params) => rest.calls(callSid).recordings(recordingSid).update(params);
+export const createParticipant = (conferenceSid, params) => rest.conferences(conferenceSid).participants.create(params);
+
+
+==== /src\services\voiceControl.js ====
+
+==== src\twilio.js ====
+﻿// contact-center/server/src/twilio.js
+import Twilio from 'twilio';
+import { serverEnv as env } from 'shared/env';
+
+/* ----------------------------- Helpers ENVs ----------------------------- */
+function assertEnv(names, context = 'twilio.js') {
+  const missing = names.filter((k) => !env[k]);
+  if (missing.length) {
+    const list = missing.join(', ');
+    throw new Error(`[Twilio] Missing required env(s) for ${context}: ${list}`);
+  }
+}
+
+/* ------------------------------- REST client ------------------------------- */
+/**
+ * Requeridos para REST:
+ * - TWILIO_ACCOUNT_SID
+ * - TWILIO_AUTH_TOKEN
+ */
+assertEnv(['accountSid', 'authToken'], 'REST client');
+export const rest = Twilio(env.accountSid, env.authToken);
+
+/* --------------------------- Voice AccessToken --------------------------- */
+const { AccessToken } = Twilio.jwt || {};
+if (!AccessToken) {
+  throw new Error('[Twilio] jwt.AccessToken not available (check twilio SDK version)');
+}
+const { VoiceGrant } = AccessToken;
+
+export function buildVoiceToken(identity) {
+  if (!identity) throw new Error('[VoiceToken] missing identity');
+
+  // ENVs crÃ­ticos para Voice token
+  assertEnv(['accountSid', 'apiKey', 'apiSecret'], 'Voice AccessToken');
+
+  // IMPORTANTE: Voice identity NO debe incluir "client:".
+  // Si llega "client:agent:42" en claims â†’ usar "agent:42".
+  const rawIdentity = String(identity);
+  const identityForVoice = rawIdentity.startsWith('client:')
+    ? rawIdentity.slice('client:'.length)
+    : rawIdentity;
+
+  const token = new AccessToken(
+    env.accountSid,
+    env.apiKey,
+    env.apiSecret,
+    { identity: identityForVoice, ttl: 3600 } // 1h
+  );
+
+  const grant = new VoiceGrant({
+    outgoingApplicationSid: env.twimlAppSid || undefined,
+    incomingAllow: true
+  });
+
+  token.addGrant(grant);
+  return token.toJwt();
+}
+
+/* --------------------- TaskRouter Worker Capability --------------------- */
+const TR = (Twilio.jwt && Twilio.jwt.taskrouter) || {};
+const TaskRouterCapability = TR.TaskRouterCapability || TR;
+const Policy = (TaskRouterCapability && TaskRouterCapability.Policy) || TR.Policy;
+
+if (!TaskRouterCapability) {
+  throw new Error('[Twilio] TaskRouterCapability not available (check twilio SDK version)');
+}
+if (!Policy) {
+  throw new Error('[Twilio] TaskRouter Policy class not available (check twilio SDK version)');
+}
+
+function buildPolicy({ url, method, allow }) {
+  return new Policy({
+    url,
+    method,
+    allow,
+    queryFilter: {},
+    postFilter: {}
+  });
+}
+
+export function buildWorkerToken(workerSid) {
+  if (!workerSid) throw new Error('[WorkerToken] missing workerSid');
+
+  // ENVs crÃ­ticos para Worker capability
+  assertEnv(['workspaceSid', 'accountSid', 'authToken'], 'TaskRouter Worker Capability');
+
+  const workspaceSid = env.workspaceSid;
+  const accountSid   = env.accountSid;
+  const authToken    = env.authToken;
+
+  const capability = new TaskRouterCapability({
+    accountSid,
+    authToken,
+    workspaceSid,
+    channelId: workerSid
+  });
+
+  // Base URLs
+  const TR_BASE = 'https://taskrouter.twilio.com/v1';
+  const EB_BASE = 'https://event-bridge.twilio.com/v1/wschannels';
+
+  // Worker resources
+  const workerUrl          = `${TR_BASE}/Workspaces/${workspaceSid}/Workers/${workerSid}`;
+  const workerSubresources = `${workerUrl}/**`;
+
+  // Tasks (SDK lee Task y Reservations de esa Task) â†’ evitar 403 Event Bridge
+  const tasksUrlAll        = `${TR_BASE}/Workspaces/${workspaceSid}/Tasks/**`;
+
+  // Activities (para UI / estados)
+  const activitiesUrl      = `${TR_BASE}/Workspaces/${workspaceSid}/Activities`;
+  const activitiesAllUrl   = `${activitiesUrl}/**`;
+
+  // Event Bridge (requerido para WebSocket de TR)
+  const ebChannelUrl  = `${EB_BASE}/${accountSid}/${workerSid}`;
+  const ebMessagesUrl = `${ebChannelUrl}/messages`;
+
+  const policies = [
+    // Worker & subresources
+    buildPolicy({ url: workerUrl,          method: 'GET',  allow: true }),
+    buildPolicy({ url: workerSubresources, method: 'GET',  allow: true }),
+    buildPolicy({ url: workerUrl,          method: 'POST', allow: true }),
+    buildPolicy({ url: workerSubresources, method: 'POST', allow: true }),
+
+    // Tasks (NECESARIO para que el SDK consulte Task/Reservations sin 403)
+    buildPolicy({ url: tasksUrlAll, method: 'GET',  allow: true }),
+    buildPolicy({ url: tasksUrlAll, method: 'POST', allow: true }),
+
+    // Activities (opcional pero Ãºtil para UI)
+    buildPolicy({ url: activitiesUrl,    method: 'GET', allow: true }),
+    buildPolicy({ url: activitiesAllUrl, method: 'GET', allow: true }),
+
+    // Event Bridge channel + messages (GET/POST)
+    buildPolicy({ url: ebChannelUrl,  method: 'GET',  allow: true }),
+    buildPolicy({ url: ebChannelUrl,  method: 'POST', allow: true }),
+    buildPolicy({ url: ebMessagesUrl, method: 'GET',  allow: true }),
+    buildPolicy({ url: ebMessagesUrl, method: 'POST', allow: true })
+  ];
+
+  policies.forEach((p) => capability.addPolicy(p));
+
+  // Generar JWT (SDKs antiguos usan generate(); modernos usan toJwt())
+  if (typeof capability.generate === 'function') return capability.generate(3600); // 1h
+  if (typeof capability.toJwt === 'function')     return capability.toJwt();
+
+  throw new Error('[TaskRouterCapability] neither generate() nor toJwt() available');
+}
+
+
+==== /src\twilio.js ====
+
+==== src\validateEnv.js ====
+﻿import { serverEnv as env } from 'shared/env';
+export function validateEnv() {
+  const required = [
+    'accountSid','authToken','apiKey','apiSecret',
+    'workspaceSid','workflowSid','wrapActivitySid',
+    'callerId','conversationsServiceSid'
+  ];
+  const missing = required.filter(k => !env[k]);
+  if (missing.length) {
+    console.warn('[ENV WARNING] Missing:', missing.join(', '));
+  }
+}
+
+
+==== /src\validateEnv.js ====
+
+==== test\auth.test.js ====
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import jwt from 'jsonwebtoken';
+
+import { signAgentToken, requireAuth } from 'shared/auth';
+import { serverEnv as env } from 'shared/env';
+
+function createRes() {
+  const res = {};
+  res.status = (code) => { res.statusCode = code; return res; };
+  res.json = (body) => { res.body = body; return res; };
+  return res;
+}
+
+test('accepts tokens signed with HS256', () => {
+  const token = signAgentToken('user', 'WS123', 'alice');
+  const req = { headers: { cookie: `${env.accessTokenName}=${token}` } };
+  const res = createRes();
+  let called = false;
+
+  requireAuth(req, res, () => { called = true; });
+
+  assert.equal(called, true);
+  assert.equal(res.statusCode, undefined);
+});
+
+test('rejects tokens signed with non-HS256 algorithms', () => {
+  const token = jwt.sign({ sub: 'user' }, env.jwtSecret, { algorithm: 'HS512' });
+  const req = { headers: { cookie: `${env.accessTokenName}=${token}` } };
+  const res = createRes();
+  let called = false;
+
+  requireAuth(req, res, () => { called = true; });
+
+  assert.equal(called, false);
+  assert.equal(res.statusCode, 401);
+  assert.deepEqual(res.body, { error: 'invalid token' });
+});
+
+==== /test\auth.test.js ====
+
