@@ -8,12 +8,12 @@ import {
 } from '../services/taskrouter.js';
 import { fetchConversation, updateConversationAttributes } from '../conversations/service.js';
 import { logInteraction } from '../services/crm.js';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 
 const router = express.Router();
 
 // Twilio will POST events like onMessageAdded here if you attach a webhook per‑conversation.
-router.post('/', async (req, res) => {
-  // TODO: validate X-Twilio-Signature unless SKIP_TWILIO_VALIDATION=true (dev only)
+router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
   console.log('[Conversations Webhook]', eventType, req.body?.MessageSid || '');
   const io = req.app.get('io');
