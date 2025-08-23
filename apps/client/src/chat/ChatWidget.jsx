@@ -73,7 +73,7 @@ export default function ChatWidget({
         c.on('tokenExpired', refresh);
 
         if (cancelled) {
-          try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}
+          try { c.removeAllListeners?.(); c.shutdown?.(); } catch { }
           return;
         }
 
@@ -121,7 +121,7 @@ export default function ChatWidget({
       cancelled = true;
       const old = clientRef.current;
       clientRef.current = null;
-      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch {}
+      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch { }
     };
     // Solo cuando cambia la conversación objetivo (no dependas de onMessageAdded/onLabel)
   }, [conversationIdOrUniqueName]);
@@ -149,14 +149,14 @@ export default function ChatWidget({
       setMessages((prev) => [...prev, m]);
       // notificar al panel con la ref (para no recrear listeners)
       if (m.author !== identityRef.current) {
-        try { onMessageAddedRef.current?.(conversation.sid, m); } catch {}
+        try { onMessageAddedRef.current?.(conversation.sid, m); } catch { }
       }
     };
     conversation.on('messageAdded', handler);
 
     return () => {
       cancelled = true;
-      try { conversation.off('messageAdded', handler); } catch {}
+      try { conversation.off('messageAdded', handler); } catch { }
     };
   }, [conversation]);
 
@@ -183,8 +183,15 @@ export default function ChatWidget({
   // Marcar leído al activar tab / focus
   useEffect(() => {
     if (!conversation) return;
-    const markRead = () => {
-      try { conversation.setAllMessagesRead(); } catch {}
+    const markRead = async () => {
+      try {
+        // Evita 403 si aún no eres participante:
+        const me = await conversation.getParticipantByIdentity?.(identityRef.current).catch(() => null);
+        if (!me) return;
+        await conversation.setAllMessagesRead();
+      } catch (e) {
+        console.warn('[ChatWidget] markRead skipped:', e?.message || e);
+      }
     };
     if (isActive) markRead();
     const onFocus = () => { if (isActive) markRead(); };
@@ -223,7 +230,7 @@ export default function ChatWidget({
 
         if (mounted && label && label !== lastLabelRef.current) {
           lastLabelRef.current = label;
-          try { onLabelRef.current?.(label); } catch {}
+          try { onLabelRef.current?.(label); } catch { }
         }
       } catch (e) {
         console.error('conversation info error', e);

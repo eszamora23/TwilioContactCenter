@@ -216,11 +216,11 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
       if (!remainingAgents && attrs.taskSid) {
         try {
           await updateTask(attrs.taskSid, { assignmentStatus: 'wrapping', reason: 'agent left' });
-          pushEvent('CHAT_ORPHANED', { conversationSid, taskSid: attrs.taskSid });
-          io?.emit('chat_orphaned', { conversationSid, taskSid: attrs.taskSid });
         } catch (err) {
           console.error('task escalation error', err);
         }
+        pushEvent('CHAT_ORPHANED', { conversationSid, taskSid: attrs.taskSid });
+        io?.emit('chat_orphaned', { conversationSid, taskSid: attrs.taskSid });
       }
     } else if (eventType === 'onConversationStateUpdated') {
       const status = String(req.body.Status || '').toLowerCase();
@@ -230,9 +230,14 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
         const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
         const taskSid = attrs.taskSid;
         if (taskSid) {
-          await completeTask(taskSid, 'Conversation closed');
-          pushEvent('TASK_COMPLETED', { taskSid, conversationSid });
-          io?.emit('task_completed', { taskSid, conversationSid });
+          // Move task to WRAPPING instead of auto-completing
+          await updateTask(taskSid, {
+            assignmentStatus: 'wrapping',
+            reason: 'Conversation closed',
+            attributes: JSON.stringify({ ...attrs, wrapup_reason: 'Conversation closed' })
+          });
+          pushEvent('TASK_WRAPPING', { taskSid, conversationSid });
+          io?.emit('task_wrapping', { taskSid, conversationSid });
         }
       }
     } else if (eventType === 'onConversationRemoved') {

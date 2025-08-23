@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "provision": "node ./scripts/provision.mjs"
+    "provision": "node ./scripts/provision.mjs",
+    "cleanup:conversations": "node ./scripts/cleanup-conversations.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

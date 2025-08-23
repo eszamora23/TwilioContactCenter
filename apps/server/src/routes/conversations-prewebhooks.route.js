@@ -30,30 +30,35 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
       try {
         attrs = req.body.Attributes ? JSON.parse(req.body.Attributes) : {};
       } catch (err) {
-        return res.status(422).send('Invalid attributes');
+        // Be permissive: log and allow the conversation creation to proceed.
+        console.warn('[Conversations PreWebhook] Invalid attributes JSON; allowing conversation add');
+        return res.status(200).send('ok');
       }
 
       const email = attrs.email ? String(attrs.email).toLowerCase() : '';
-      if (!email) {
-        return res.status(422).send('email required');
-      }
 
-      const domain = email.split('@')[1];
-      if (allowedDomains.length && !allowedDomains.includes(domain)) {
-        return res.status(403).send('email domain not allowed');
-      }
-
-      // Ensure email/uniqueName is not already used
-      try {
-        await fetchConversation(email);
-        return res.status(409).send('conversation already exists');
-      } catch (err) {
-        if (err.status && err.status !== 404) {
-          console.error('[Conversations PreWebhook] uniqueness check failed', err);
-          return res.status(500).send('error');
+      // If you enforce domain policies, only do it when an email was actually provided.
+      if (email) {
+        const domain = email.split('@')[1];
+        if (allowedDomains.length && !allowedDomains.includes(domain)) {
+          return res.status(403).send('email domain not allowed');
         }
-        // 404 => not found => ok
+
+        // Optional uniqueness check only when using email as uniqueName
+        try {
+          await fetchConversation(email);
+          return res.status(409).send('conversation already exists');
+        } catch (err) {
+          if (err.status && err.status !== 404) {
+            console.error('[Conversations PreWebhook] uniqueness check failed', err);
+            return res.status(500).send('error');
+          }
+          // 404 => not found => ok (allow creation)
+        }
       }
+
+      // If no email is present, allow the conversation to be created so
+      // post-webhooks (onParticipantAdded) can create the Task immediately.
     }
 
     if (eventType === 'onMessageAdd') {
@@ -76,4 +81,3 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
 });
 
 export default router;
-

@@ -286,7 +286,7 @@ export default function ChatWidget({
         c.on('tokenExpired', refresh);
 
         if (cancelled) {
-          try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}
+          try { c.removeAllListeners?.(); c.shutdown?.(); } catch { }
           return;
         }
 
@@ -334,7 +334,7 @@ export default function ChatWidget({
       cancelled = true;
       const old = clientRef.current;
       clientRef.current = null;
-      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch {}
+      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch { }
     };
     // Solo cuando cambia la conversación objetivo (no dependas de onMessageAdded/onLabel)
   }, [conversationIdOrUniqueName]);
@@ -362,14 +362,14 @@ export default function ChatWidget({
       setMessages((prev) => [...prev, m]);
       // notificar al panel con la ref (para no recrear listeners)
       if (m.author !== identityRef.current) {
-        try { onMessageAddedRef.current?.(conversation.sid, m); } catch {}
+        try { onMessageAddedRef.current?.(conversation.sid, m); } catch { }
       }
     };
     conversation.on('messageAdded', handler);
 
     return () => {
       cancelled = true;
-      try { conversation.off('messageAdded', handler); } catch {}
+      try { conversation.off('messageAdded', handler); } catch { }
     };
   }, [conversation]);
 
@@ -396,8 +396,15 @@ export default function ChatWidget({
   // Marcar leído al activar tab / focus
   useEffect(() => {
     if (!conversation) return;
-    const markRead = () => {
-      try { conversation.setAllMessagesRead(); } catch {}
+    const markRead = async () => {
+      try {
+        // Evita 403 si aún no eres participante:
+        const me = await conversation.getParticipantByIdentity?.(identityRef.current).catch(() => null);
+        if (!me) return;
+        await conversation.setAllMessagesRead();
+      } catch (e) {
+        console.warn('[ChatWidget] markRead skipped:', e?.message || e);
+      }
     };
     if (isActive) markRead();
     const onFocus = () => { if (isActive) markRead(); };
@@ -436,7 +443,7 @@ export default function ChatWidget({
 
         if (mounted && label && label !== lastLabelRef.current) {
           lastLabelRef.current = label;
-          try { onLabelRef.current?.(label); } catch {}
+          try { onLabelRef.current?.(label); } catch { }
         }
       } catch (e) {
         console.error('conversation info error', e);
@@ -2352,7 +2359,7 @@ export default function ActivityQuickSwitch({ label, onChange }) {
 ==== /src\features\tasks\components\ActivityQuickSwitch.jsx ====
 
 ==== src\features\tasks\components\AgentApp.jsx ====
-// contact-center/client/src/components/AgentApp.jsx
+// contact-center/client/src/features/tasks/components/AgentApp.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 
@@ -2364,6 +2371,8 @@ import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs
 import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
+import { Badge } from '@twilio-paste/core/badge';
+import { Box as PBox } from '@twilio-paste/core/box';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
@@ -2398,7 +2407,12 @@ export default function AgentApp() {
   // Chat sessions (tabs)
   const [chatSessions, setChatSessions] = useState([]); // [{ sid, label, unread }]
   const chatJoinedRef = useRef(new Set());
+  const joinPendingRef = useRef(new Set()); // evita reintentos concurrentes
   const [chatPanelKey, setChatPanelKey] = useState(0);
+
+  // UI badge for CHAT tab
+  const [chatBadge, setChatBadge] = useState(0);
+  useEffect(() => { if (mode === 'chat') setChatBadge(0); }, [mode]);
 
   // Voice / popout state
   const [controlsOpen, setControlsOpen] = useState(false);
@@ -2406,6 +2420,10 @@ export default function AgentApp() {
   const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
   const softphoneWinRef = useRef(null);
   const prevCallStatusRef = useRef('Idle');
+
+  // Dedupe helpers
+  const notifiedConvosRef = useRef(new Set());       // evita toasts duplicados
+  const processedTaskCreatedRef = useRef(new Set()); // evita task_created duplicados
 
   /* --------------------------------
    * Helpers
@@ -2424,6 +2442,7 @@ export default function AgentApp() {
   const ensureChatSession = useCallback(async (conversationSid, labelHint) => {
     if (!conversationSid) return false;
 
+    // ya unido o ya en pantalla
     if (chatJoinedRef.current.has(conversationSid)) {
       setChatSessions((prev) => {
         if (prev.some((s) => s.sid === conversationSid)) return prev;
@@ -2431,6 +2450,10 @@ export default function AgentApp() {
       });
       return true;
     }
+
+    // evita que diferentes fuentes (socket/TR/poll) se solapen
+    if (joinPendingRef.current.has(conversationSid)) return true;
+    joinPendingRef.current.add(conversationSid);
 
     try {
       // 1) identity (cookie session)
@@ -2463,6 +2486,8 @@ export default function AgentApp() {
     } catch (e) {
       console.error('[ensureChatSession]', e);
       return false;
+    } finally {
+      joinPendingRef.current.delete(conversationSid);
     }
   }, []);
 
@@ -2485,6 +2510,65 @@ export default function AgentApp() {
     const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
     window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
   }, []);
+
+  /* --------------------------------
+   * Notify helpers (toast + OS Notification + chime)
+   * -------------------------------- */
+  const playChime = useCallback(() => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
+      o.stop(ctx.currentTime + 0.34);
+    } catch {}
+  }, []);
+
+  const notifyChatAssigned = useCallback((convoSid, label) => {
+    if (!convoSid) return;
+    // evita notificaciones repetidas del mismo chat
+    if (notifiedConvosRef.current.has(convoSid)) return;
+    notifiedConvosRef.current.add(convoSid);
+
+    const title = 'New chat assigned';
+    toaster.push({
+      message: label ? `${title}: ${label}` : title,
+      variant: 'warning',
+      dismissAfter: 6000
+    });
+
+    // System notification (click switches to chat)
+    try {
+      if ('Notification' in window) {
+        const openIt = () => {
+          window.focus();
+          selectChatFromTasks(convoSid);
+        };
+        if (Notification.permission === 'granted') {
+          const n = new Notification(title, { body: label || '' });
+          n.onclick = openIt;
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then((perm) => {
+            if (perm === 'granted') {
+              const n = new Notification(title, { body: label || '' });
+              n.onclick = openIt;
+            }
+          });
+        }
+      }
+    } catch {}
+
+    playChime();
+    setChatBadge((c) => c + 1);
+  }, [playChime, selectChatFromTasks, toaster]);
 
   /* --------------------------------
    * Voice state via BroadcastChannel
@@ -2523,26 +2607,59 @@ export default function AgentApp() {
   }, [setSoftphonePopout, toaster]);
 
   /* --------------------------------
-   * Worker signals → ensure chat joins
+   * Worker signals → ensure chat joins + notify when ASSIGNED
+   * (evita memory leak: depend only on worker; use refs for callbacks)
    * -------------------------------- */
+  const ensureChatSessionRef = useRef(ensureChatSession);
+  const notifyChatAssignedRef = useRef(notifyChatAssigned);
+  useEffect(() => { ensureChatSessionRef.current = ensureChatSession; }, [ensureChatSession]);
+  useEffect(() => { notifyChatAssignedRef.current = notifyChatAssigned; }, [notifyChatAssigned]);
+
   useEffect(() => {
     if (!worker) return;
-    const handleReservation = async (r) => {
-      const a = r.task?.attributes || {};
-      if (a.channel === 'chat') {
-        const sid = a.conversationSid || a.conversation_sid;
-        const label = a.customerName || a.from || a.name || sid;
-        await ensureChatSession(sid, label);
+
+    const onCreated = async (r) => {
+      try {
+        const a = r?.task?.attributes || {};
+        if (a.channel === 'chat') {
+          const sid = a.conversationSid || a.conversation_sid;
+          const label = a.customerName || a.from || a.name || sid;
+          if (sid) await ensureChatSessionRef.current?.(sid, label);
+        }
+      } catch (e) {
+        console.warn('[worker reservation.created handler]', e);
       }
     };
-    worker.on('reservation.created', handleReservation);
-    worker.on('reservation.accepted', handleReservation);
-    return () => {
-      try { worker.off('reservation.created', handleReservation); worker.off('reservation.accepted', handleReservation); } catch {}
-    };
-  }, [worker, ensureChatSession]);
 
-  // Poll chat tasks (safety net)
+    const onAccepted = async (r) => {
+      try {
+        const a = r?.task?.attributes || {};
+        if (a.channel !== 'chat') return;
+        const sid = a.conversationSid || a.conversation_sid;
+        const label = a.customerName || a.from || a.name || sid;
+        if (sid) {
+          await ensureChatSessionRef.current?.(sid, label);
+          notifyChatAssignedRef.current?.(sid, label);
+        }
+      } catch (e) {
+        console.warn('[worker reservation.accepted handler]', e);
+      }
+    };
+
+    // Limpia posibles escuchas previas con mismas referencias
+    try { worker.off('reservation.created', onCreated); } catch {}
+    try { worker.off('reservation.accepted', onAccepted); } catch {}
+
+    worker.on('reservation.created', onCreated);
+    worker.on('reservation.accepted', onAccepted);
+
+    return () => {
+      try { worker.off('reservation.created', onCreated); } catch {}
+      try { worker.off('reservation.accepted', onAccepted); } catch {}
+    };
+  }, [worker]);
+
+  // Safety-net polling to join sessions
   useEffect(() => {
     if (!worker) return;
     let cancelled = false;
@@ -2555,7 +2672,7 @@ export default function AgentApp() {
           if (a.channel === 'chat') {
             const sid = a.conversationSid || a.conversation_sid;
             const label = a.customerName || a.from || a.name || sid;
-            if (!cancelled) await ensureChatSession(sid, label);
+            if (!cancelled && sid) await ensureChatSessionRef.current?.(sid, label);
           }
         }
       } catch (e) { console.error('[task poll]', e); }
@@ -2564,9 +2681,9 @@ export default function AgentApp() {
     poll();
     const it = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(it); };
-  }, [worker, ensureChatSession]);
+  }, [worker]);
 
-  // Realtime (server emits task_created when first inbound msg arrives)
+  // Realtime “task_created” (first inbound message) — dedupe por SID
   useEffect(() => {
     const socket = io(socketBase, {
       transports: ['websocket', 'polling'],
@@ -2575,22 +2692,33 @@ export default function AgentApp() {
       reconnectionDelay: 1000,
       withCredentials: false,
     });
+
     socket.on('task_created', async ({ conversationSid }) => {
-      if (conversationSid) await ensureChatSession(conversationSid);
+      try {
+        if (!conversationSid) return;
+        if (processedTaskCreatedRef.current.has(conversationSid)) return;
+        processedTaskCreatedRef.current.add(conversationSid);
+        await ensureChatSessionRef.current?.(conversationSid);
+      } catch (e) {
+        console.warn('[socket task_created handler]', e);
+      }
     });
-    socket.on('connect_error', (err) => console.warn('[socket.io] connect_error', err?.message || err));
+
+    socket.on('connect_error', (err) =>
+      console.warn('[socket.io] connect_error', err?.message || err)
+    );
+
     return () => socket.disconnect();
-  }, [ensureChatSession]);
+  }, []);
 
   /* --------------------------------
    * Softphone popout
    * -------------------------------- */
-  useEffect(() => {
-    if (!isSoftphonePopout || softphoneWinRef.current) return;
-    const w = window.open(`${window.location.origin}?popup=softphone`, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
+  const openSoftphoneWindow = useCallback(() => {
+    const url = `${window.location.origin}?popup=softphone`;
+    const w = window.open(url, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
     if (w) softphoneWinRef.current = w;
-    else setSoftphonePopout(false);
-  }, [isSoftphonePopout, setSoftphonePopout]);
+  }, []);
 
   const toggleSoftphonePopout = useCallback(() => {
     if (isSoftphonePopout) {
@@ -2598,19 +2726,23 @@ export default function AgentApp() {
       softphoneWinRef.current = null;
       setSoftphonePopout(false);
     } else {
+      openSoftphoneWindow();
       setSoftphonePopout(true);
     }
-  }, [isSoftphonePopout, setSoftphonePopout]);
+  }, [isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
 
-  // Auto-open popup on Available
+  // Auto-open popout when becoming Available (optional behavior preserved)
   useEffect(() => {
-    if (/available/i.test(activity || '') && !isSoftphonePopout) setSoftphonePopout(true);
-  }, [activity, isSoftphonePopout, setSoftphonePopout]);
+    if (/available/i.test(activity || '') && !isSoftphonePopout) {
+      openSoftphoneWindow();
+      setSoftphonePopout(true);
+    }
+  }, [activity, isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
 
   const logout = useCallback(async () => {
     await Api.logout();
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace
-    await setAvailable(offlineSid);
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace with real Activity SID if needed
+    try { await setAvailable(offlineSid); } catch {}
     window.location.reload();
   }, [setAvailable]);
 
@@ -2648,7 +2780,6 @@ export default function AgentApp() {
     { id: 'customer360-chat', label: 'Customer 360' },
   ]), []);
 
-  // Context-aware quick actions for the Shell
   const shellQuickActions = useMemo(() => ({
     voice: [
       { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
@@ -2689,7 +2820,14 @@ export default function AgentApp() {
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
             <TabList aria-label="Workspace mode">
               <Tab id="voice">VOICE</Tab>
-              <Tab id="chat">CHAT</Tab>
+              <Tab id="chat">
+                <PBox display="inline-flex" alignItems="center" columnGap="space20">
+                  CHAT
+                  {chatBadge > 0 && (
+                    <Badge as="span" variant="new">{chatBadge}</Badge>
+                  )}
+                </PBox>
+              </Tab>
             </TabList>
 
             <TabPanels>
@@ -4290,8 +4428,7 @@ export default function StatusBar({ label, onChange }) {
 ==== /src\features\tasks\components\StatusBar.jsx ====
 
 ==== src\features\tasks\components\TasksPanel.jsx ====
-// contact-center/client/src/components/TasksPanel.jsx
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
@@ -4322,8 +4459,10 @@ import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
 
 /**
  * TasksPanel — app-like, no inner scrolls
- * - Voice: compact header + responsive card grid + simple transfer/wrap-up
- * - Chat : card list (no table/scroll), clear actions
+ * Responsive polish:
+ * - Static grid templates
+ * - Avoid long IDs blowing layout
+ * - Mobile buttons full-width where it helps
  */
 export default function TasksPanel({ onFinished, setAvailable, channel = 'voice', onOpenChat }) {
   const voiceMode = channel !== 'chat';
@@ -4350,20 +4489,79 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   );
   const items = voiceMode ? voiceTasks : chatTasks;
 
+  /* =========================================================
+   * Conversation state cache (sid -> { state, closed, participantsCount })
+   * ========================================================= */
+  const [convStates, setConvStates] = useState({}); // { [sid]: { state, closed, participantsCount } }
+
+  const fetchConvState = useCallback(async (sid) => {
+    try {
+      const r = await http.get(`/conversations/${sid}/state`);
+      return r.data;
+    } catch {
+      return { sid, state: 'unknown', closed: false, participantsCount: undefined };
+    }
+  }, []);
+
+  const refreshConvStates = useCallback(async (taskList) => {
+    const sids = [...new Set(
+      (taskList || [])
+        .map((t) => t?.attributes?.conversationSid || t?.attributes?.conversation_sid)
+        .filter(Boolean)
+    )];
+    if (!sids.length) return;
+
+    const results = await Promise.all(sids.map(fetchConvState));
+    setConvStates((prev) => {
+      const next = { ...prev };
+      for (const it of results) {
+        next[it.sid] = { state: it.state, closed: !!it.closed, participantsCount: it.participantsCount };
+      }
+      return next;
+    });
+  }, [fetchConvState]);
+
+  useEffect(() => { refreshConvStates(chatTasks); }, [chatTasks, refreshConvStates]);
+
+  // Poll cada 5s mientras haya chats
+  useEffect(() => {
+    if (!chatTasks.length) return;
+    const it = setInterval(() => refreshConvStates(chatTasks), 5000);
+    return () => clearInterval(it);
+  }, [chatTasks, refreshConvStates]);
+
   /* =========================
-   * Wrap-up (chat) — igual que voz, pero sin cerrar la conversación
+   * Wrap-up (chat)
    * ========================= */
   const [openChatWrap, setOpenChatWrap] = useState(false);
   const [chatWrapTask, setChatWrapTask] = useState(null);
   const [chatWrapDisposition, setChatWrapDisposition] = useState('Resolved');
   const [chatWrapNotes, setChatWrapNotes] = useState('');
 
-  function onChatFinishPress(t) {
+  // Si chat está abierto y se intenta completar → popup para cerrar primero
+  const [confirmCloseFirst, setConfirmCloseFirst] = useState(null); // { task, convoSid }
+
+  const attemptCompleteChat = (t) => {
+    const a = t?.attributes || {};
+    const convoSid = a.conversationSid || a.conversation_sid || '';
+    const cs = convStates[convoSid] || {};
+    const convState = String(cs.state || '').toLowerCase();
+    const ended = cs.closed === true || convState === 'closed' || convState === 'inactive';
+    const noParticipants = typeof cs.participantsCount === 'number' && cs.participantsCount === 0;
+    const isWrapping = String(t?.assignmentStatus || '').toLowerCase() === 'wrapping';
+    if (!convoSid) return;
+
+    // Si no está cerrado NI inactivo NI wrapping y aún hay participantes → pedir cerrar primero
+    if (!ended && !isWrapping && !noParticipants) {
+      setConfirmCloseFirst({ task: t, convoSid });
+      return;
+    }
+    // Condición suficiente para wrap: ended || wrapping || sin participantes
     setChatWrapTask(t);
     setChatWrapDisposition('Resolved');
-    setChatWrapNotes('Chat wrap-up'); // evita reason vacío
+    setChatWrapNotes('Chat wrap-up');
     setOpenChatWrap(true);
-  }
+  };
 
   async function doChatFinish() {
     if (!chatWrapTask) {
@@ -4376,7 +4574,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     const taskSid = chatWrapTask.sid;
 
     try {
-      // 1) Log CRM (best-effort)
+      // Log CRM (best-effort)
       try {
         await Api.crmLogInteraction?.({
           customerId: chatWrapTask.attributes?.customerId || null,
@@ -4394,7 +4592,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         console.warn('logInteraction (chat) failed', e?.message || e);
       }
 
-      // 2) Completar con autoWrap si venía en ASSIGNED
+      // autoWrap permite completar incluso si el Task aún estaba en assigned
       await Api.completeTask(taskSid, { reason, disposition, autoWrap: true });
 
       setOpenChatWrap(false);
@@ -4422,8 +4620,8 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const [agents, setAgents] = useState([]);
   const [transferMode, setTransferMode] = useState('Agent'); // 'Agent' | 'External'
   const [search, setSearch] = useState('');
-  const [target, setTarget] = useState('');          // for Agent
-  const [externalNumber, setExternalNumber] = useState(''); // for External
+  const [target, setTarget] = useState('');
+  const [externalNumber, setExternalNumber] = useState('');
 
   const filteredAgents = useMemo(
     () => agents.filter((a) => a.friendlyName.toLowerCase().includes(search.toLowerCase())),
@@ -4527,7 +4725,6 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   async function doFinish() {
     if (!wrapTask) return setOpenWrap(false);
     try {
-      // Optional CRM log (best-effort)
       try {
         await Api.crmLogInteraction?.({
           customerId: wrapTask.attributes?.customerId || null,
@@ -4558,16 +4755,16 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
    * ========================= */
   async function closeChat(conversationSid) {
     try {
-      // Cierre “duro”: timers a 0 y remover participantes
       await http.post(`/conversations/${conversationSid}/close`, { removeParticipants: true });
       toaster.push({ message: 'Chat closed', variant: 'success', dismissAfter: 2000 });
+      await refreshConvStates(chatTasks); // refrescar estado
       await load();
     } catch (e) {
       console.error('close chat error', e);
-      // Fallback: ajustar ambos timers si /close no existiese aún
       try {
         await http.post(`/conversations/${conversationSid}/timers`, { inactive: 'PT0S', closed: 'PT0S' });
         toaster.push({ message: 'Chat close requested', variant: 'success', dismissAfter: 2000 });
+        await refreshConvStates(chatTasks);
         await load();
       } catch (e2) {
         toaster.push({ message: 'Failed to close chat', variant: 'error' });
@@ -4575,8 +4772,20 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     }
   }
 
+  // ===== Grid templates (static strings) =====
+  const gridColsChat = 'repeat(auto-fit, minmax(320px, 1fr))';
+  const gridColsVoice = 'repeat(auto-fit, minmax(340px, 1fr))';
+
+  function statusToVariant(s) {
+    const v = String(s || '').toLowerCase();
+    if (v === 'wrapping') return 'warning';
+    if (v === 'assigned' || v === 'reserved') return 'new';
+    if (v === 'completed' || v === 'closed') return 'success';
+    return 'neutral';
+  }
+
   /* =========================
-   * Render — CHAT (cards, no table/scroll)
+   * Render — CHAT (cards)
    * ========================= */
   if (!voiceMode) {
     return (
@@ -4593,7 +4802,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       >
         <Toaster {...toaster} />
         <Stack
-          orientation={['vertical','horizontal']}
+          orientation={['vertical', 'horizontal']}
           spacing="space50"
           alignment="center"
           distribution="spaceBetween"
@@ -4615,39 +4824,62 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         ) : !chatTasks.length ? (
           <Box color="colorTextWeak">No chat tasks</Box>
         ) : (
-          <Box
-            // cards grid — no internal scroll, parent page scrolls
-            display="grid"
-            gridTemplateColumns="repeat(auto-fit, minmax(320px, 1fr))"
-            gap="space60"
-          >
+          <Box display="grid" gridTemplateColumns={gridColsChat} gap="space60">
             {chatTasks.map((t) => {
               const a = t.attributes || {};
               const convoSid = a.conversationSid || a.conversation_sid || '';
+              const cs = convStates[convoSid] || {};
+              const convState = String(cs.state || '').toLowerCase();
+              const ended = cs.closed === true || convState === 'closed' || convState === 'inactive';
+              const noParticipants = typeof cs.participantsCount === 'number' && cs.participantsCount === 0;
+              const isWrapping = String(t.assignmentStatus || '').toLowerCase() === 'wrapping';
+              const showComplete = ended || isWrapping || noParticipants;
+
               return (
                 <Card key={t.sid} padding="space70">
                   <Stack orientation="vertical" spacing="space50">
-                    <Stack orientation={['vertical','horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
-                      <Heading as="h4" variant="heading40" margin="space0">{t.sid}</Heading>
-                      <Badge as="span" variant="new">{t.assignmentStatus}</Badge>
+                    <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+                      <Box flexGrow={1} minWidth="0" width="100%">
+                        <Heading
+                          as="h4"
+                          variant="heading40"
+                          margin="space0"
+                          style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
+                          title={t.sid}
+                        >
+                          {t.sid}
+                        </Heading>
+                      </Box>
+                      <Badge as="span" variant={ended ? 'neutral' : statusToVariant(t.assignmentStatus)}>
+                        {ended ? 'closed' : (t.assignmentStatus || 'assigned')}
+                      </Badge>
                     </Stack>
-                    <Box color="colorTextWeak" fontSize="fontSize30">Conversation: <b>{convoSid || '—'}</b></Box>
-                    <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
-                      <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>
-                        Open chat
-                      </Button>
-                      {/* Botón pequeño para wrap-up del task de chat (NO cierra el chat) */}
-                      <Button
-                        variant="primary"
-                        size="small"
-                        onClick={() => onChatFinishPress(t)}
-                      >
+
+                    <Box color="colorTextWeak" fontSize="fontSize30">
+                      Conversation: <b style={{ wordBreak: 'break-all' }}>{convoSid || '—'}</b>
+                      {typeof cs.participantsCount === 'number' ? (
+                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                          · participants: {cs.participantsCount}
+                        </span>
+                      ) : null}
+                      {(!ended && isWrapping) ? (
+                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                          · task: wrapping
+                        </span>
+                      ) : null}
+                    </Box>
+
+                    {/* Smart buttons */}
+                    {!showComplete ? (
+                      <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+                        <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>Open chat</Button>
+                        <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>Close chat</Button>
+                      </Stack>
+                    ) : (
+                      <Button variant="primary" size="small" onClick={() => attemptCompleteChat(t)}>
                         {translate('completeTask') || 'Complete task'}
                       </Button>
-                      <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>
-                        Close chat
-                      </Button>
-                    </Stack>
+                    )}
                   </Stack>
                 </Card>
               );
@@ -4664,12 +4896,8 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
             <Stack orientation="vertical" spacing="space60">
               <Box>
                 <Label htmlFor="chat-dispo">{translate('disposition') || 'Disposition'}</Label>
-                <Select
-                  id="chat-dispo"
-                  value={chatWrapDisposition}
-                  onChange={(e) => setChatWrapDisposition(e.target.value)}
-                >
-                  {['Resolved','Escalated','Callback scheduled','Voicemail left','No answer','Wrong number']
+                <Select id="chat-dispo" value={chatWrapDisposition} onChange={(e) => setChatWrapDisposition(e.target.value)}>
+                  {['Resolved', 'Escalated', 'Callback scheduled', 'Voicemail left', 'No answer', 'Wrong number']
                     .map((d) => (
                       <Option key={`chat-${d}`} value={d}>{d}</Option>
                     ))}
@@ -4677,12 +4905,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
               </Box>
               <Box>
                 <Label htmlFor="chat-notes">{translate('notesReason') || 'Notes'}</Label>
-                <Input
-                  id="chat-notes"
-                  value={chatWrapNotes}
-                  onChange={(e) => setChatWrapNotes(e.target.value)}
-                  placeholder={translate('shortNotesPlaceholder') || 'Short wrap-up notes...'}
-                />
+                <Input id="chat-notes" value={chatWrapNotes} onChange={(e) => setChatWrapNotes(e.target.value)} placeholder={translate('shortNotesPlaceholder') || 'Short wrap-up notes...'} />
               </Box>
             </Stack>
           </ModalBody>
@@ -4693,12 +4916,43 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
             </Stack>
           </ModalFooter>
         </Modal>
+
+        {/* Modal: pedir cerrar primero si el chat sigue abierto */}
+        <Modal isOpen={!!confirmCloseFirst} onDismiss={() => setConfirmCloseFirst(null)} ariaLabel="close-chat-first" size="default">
+          <ModalHeader>
+            <ModalHeading>Close chat to wrap up</ModalHeading>
+          </ModalHeader>
+          <ModalBody>
+            You need to close the conversation before completing the task.
+          </ModalBody>
+          <ModalFooter>
+            <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+              <Button variant="secondary" onClick={() => setConfirmCloseFirst(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  const { convoSid, task } = confirmCloseFirst || {};
+                  setConfirmCloseFirst(null);
+                  if (convoSid) await closeChat(convoSid);
+                  if (task) {
+                    setChatWrapTask(task);
+                    setChatWrapDisposition('Resolved');
+                    setChatWrapNotes('Chat wrap-up');
+                    setOpenChatWrap(true);
+                  }
+                }}
+              >
+                Close chat now
+              </Button>
+            </Stack>
+          </ModalFooter>
+        </Modal>
       </Box>
     );
   }
 
   /* =========================
-   * Render — VOICE (cards, no inner scrolls)
+   * Render — VOICE
    * ========================= */
   const avgSLA = items.length > 0
     ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
@@ -4718,9 +4972,8 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     >
       <Toaster {...toaster} />
 
-      {/* Header */}
       <Stack
-        orientation={['vertical','horizontal']}
+        orientation={['vertical', 'horizontal']}
         spacing="space40"
         alignment="center"
         distribution="spaceBetween"
@@ -4734,36 +4987,51 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
           <Badge as="span">Avg SLA: {avgSLA}s</Badge>
         </Stack>
 
-        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
-          <Button aria-label={translate('refreshAria') || 'Refresh'} onClick={load} disabled={loading} variant="secondary">
-            {loading ? translate('loading') || 'Loading…' : translate('refresh') || 'Refresh'}
-          </Button>
-          <Button
-            aria-label={translate('completeTransferAria') || 'Complete transfer'}
-            variant="destructive"
-            onClick={doCompleteTransfer}
-            disabled={!getCallSid()}
-          >
-            {translate('completeTransfer') || 'Complete transfer'}
-          </Button>
+        <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap', width: '100%' }}>
+          <Box width={['100%', 'auto']}>
+            <Button aria-label={translate('refreshAria') || 'Refresh'} onClick={load} disabled={loading} variant="secondary" style={{ width: '100%' }}>
+              {loading ? translate('loading') || 'Loading…' : translate('refresh') || 'Refresh'}
+            </Button>
+          </Box>
+          <Box width={['100%', 'auto']}>
+            <Button
+              aria-label={translate('completeTransferAria') || 'Complete transfer'}
+              variant="destructive"
+              onClick={doCompleteTransfer}
+              disabled={!getCallSid()}
+              style={{ width: '100%' }}
+            >
+              {translate('completeTransfer') || 'Complete transfer'}
+            </Button>
+          </Box>
         </Stack>
       </Stack>
 
       <Separator orientation="horizontal" />
 
-      {/* Cards grid */}
       {loading ? (
         <SkeletonLoader />
       ) : !items.length ? (
-        <Box color="colorTextWeak">{translate('noTasks') || 'No tasks'}</Box>
+        <Card padding="space70">
+          <Stack orientation={['vertical', 'horizontal']} spacing="space60" alignment="center" distribution="spaceBetween">
+            <Box>
+              <Heading as="h4" variant="heading40" margin="space0">{translate('noTasks') || 'No tasks'}</Heading>
+              <Box color="colorTextWeak">{translate('noTasksHint') || 'When calls arrive they will appear here.'}</Box>
+            </Box>
+            <Box width={['100%', 'auto']}>
+              <Button variant="secondary" onClick={load} style={{ width: '100%' }}>{translate('refresh') || 'Refresh'}</Button>
+            </Box>
+          </Stack>
+        </Card>
       ) : (
-        <Box
-          display="grid"
-          gridTemplateColumns="repeat(auto-fit, minmax(340px, 1fr))"
-          gap="space60"
-        >
+        <Box display="grid" gridTemplateColumns={gridColsVoice} gap="space60">
           {items.map((t) => (
-            <VoiceTaskCard key={t.sid} t={t} onFinishPress={onFinishPress} onTransfer={onTransfer} />
+            <VoiceTaskCard key={t.sid} t={t} onFinishPress={(task) => {
+              setWrapTask(task);
+              setWrapDisposition('Resolved');
+              setWrapNotes(`Call duration: ${Math.max(0, task.age || 0)}s`);
+              setOpenWrap(true);
+            }} onTransfer={onTransfer} />
           ))}
         </Box>
       )}
@@ -4816,7 +5084,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         </ModalFooter>
       </Modal>
 
-      {/* Wrap-up modal */}
+      {/* Wrap-up modal (voice) */}
       <Modal isOpen={openWrap} onDismiss={() => setOpenWrap(false)} ariaLabel="wrapup-task" size="default">
         <ModalHeader>
           <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
@@ -4826,7 +5094,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
             <Box>
               <Label htmlFor="dispo">{translate('disposition') || 'Disposition'}</Label>
               <Select id="dispo" value={wrapDisposition} onChange={(e) => setWrapDisposition(e.target.value)}>
-                {['Resolved','Escalated','Callback scheduled','Voicemail left','No answer','Wrong number'].map((d) => (
+                {['Resolved', 'Escalated', 'Callback scheduled', 'Voicemail left', 'No answer', 'Wrong number'].map((d) => (
                   <Option key={d} value={d}>{d}</Option>
                 ))}
               </Select>
@@ -4854,19 +5122,38 @@ function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
   const canFinish = status === 'wrapping';
   const customerCallSid = t.attributes?.callSid || t.attributes?.call_sid || null;
 
+  const variant =
+    status === 'wrapping'
+      ? 'warning'
+      : (status === 'assigned' || status === 'reserved')
+      ? 'new'
+      : 'neutral';
+
   return (
     <Card padding="space70">
       <Stack orientation="vertical" spacing="space50">
-        <Stack orientation={['vertical','horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
-          <Heading as="h4" variant="heading40" margin="space0">{t.sid}</Heading>
-          <Badge as="span" variant={canFinish ? 'warning' : 'neutral'}>{t.assignmentStatus}</Badge>
+        <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+          <Box flexGrow={1} minWidth="0" width="100%">
+            <Heading
+              as="h4"
+              variant="heading40"
+              margin="space0"
+              style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
+              title={t.sid}
+            >
+              {t.sid}
+            </Heading>
+          </Box>
+          <Badge as="span" variant={variant}>{t.assignmentStatus}</Badge>
         </Stack>
 
         {customerCallSid ? (
-          <Box color="colorTextWeak" fontSize="fontSize30">CallSid: <b>{customerCallSid}</b></Box>
+          <Box color="colorTextWeak" fontSize="fontSize30">
+            CallSid: <b style={{ wordBreak: 'break-all' }}>{customerCallSid}</b>
+          </Box>
         ) : null}
 
-        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+        <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
           <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid}>Transfer</Button>
           <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish}>Finish</Button>
         </Stack>

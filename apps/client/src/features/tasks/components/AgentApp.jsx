@@ -1,4 +1,4 @@
-// contact-center/client/src/components/AgentApp.jsx
+// contact-center/client/src/features/tasks/components/AgentApp.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 
@@ -10,6 +10,8 @@ import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs
 import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
+import { Badge } from '@twilio-paste/core/badge';
+import { Box as PBox } from '@twilio-paste/core/box';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
@@ -44,7 +46,12 @@ export default function AgentApp() {
   // Chat sessions (tabs)
   const [chatSessions, setChatSessions] = useState([]); // [{ sid, label, unread }]
   const chatJoinedRef = useRef(new Set());
+  const joinPendingRef = useRef(new Set()); // evita reintentos concurrentes
   const [chatPanelKey, setChatPanelKey] = useState(0);
+
+  // UI badge for CHAT tab
+  const [chatBadge, setChatBadge] = useState(0);
+  useEffect(() => { if (mode === 'chat') setChatBadge(0); }, [mode]);
 
   // Voice / popout state
   const [controlsOpen, setControlsOpen] = useState(false);
@@ -52,6 +59,10 @@ export default function AgentApp() {
   const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
   const softphoneWinRef = useRef(null);
   const prevCallStatusRef = useRef('Idle');
+
+  // Dedupe helpers
+  const notifiedConvosRef = useRef(new Set());       // evita toasts duplicados
+  const processedTaskCreatedRef = useRef(new Set()); // evita task_created duplicados
 
   /* --------------------------------
    * Helpers
@@ -70,6 +81,7 @@ export default function AgentApp() {
   const ensureChatSession = useCallback(async (conversationSid, labelHint) => {
     if (!conversationSid) return false;
 
+    // ya unido o ya en pantalla
     if (chatJoinedRef.current.has(conversationSid)) {
       setChatSessions((prev) => {
         if (prev.some((s) => s.sid === conversationSid)) return prev;
@@ -77,6 +89,10 @@ export default function AgentApp() {
       });
       return true;
     }
+
+    // evita que diferentes fuentes (socket/TR/poll) se solapen
+    if (joinPendingRef.current.has(conversationSid)) return true;
+    joinPendingRef.current.add(conversationSid);
 
     try {
       // 1) identity (cookie session)
@@ -109,6 +125,8 @@ export default function AgentApp() {
     } catch (e) {
       console.error('[ensureChatSession]', e);
       return false;
+    } finally {
+      joinPendingRef.current.delete(conversationSid);
     }
   }, []);
 
@@ -131,6 +149,65 @@ export default function AgentApp() {
     const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
     window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
   }, []);
+
+  /* --------------------------------
+   * Notify helpers (toast + OS Notification + chime)
+   * -------------------------------- */
+  const playChime = useCallback(() => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
+      o.stop(ctx.currentTime + 0.34);
+    } catch {}
+  }, []);
+
+  const notifyChatAssigned = useCallback((convoSid, label) => {
+    if (!convoSid) return;
+    // evita notificaciones repetidas del mismo chat
+    if (notifiedConvosRef.current.has(convoSid)) return;
+    notifiedConvosRef.current.add(convoSid);
+
+    const title = 'New chat assigned';
+    toaster.push({
+      message: label ? `${title}: ${label}` : title,
+      variant: 'warning',
+      dismissAfter: 6000
+    });
+
+    // System notification (click switches to chat)
+    try {
+      if ('Notification' in window) {
+        const openIt = () => {
+          window.focus();
+          selectChatFromTasks(convoSid);
+        };
+        if (Notification.permission === 'granted') {
+          const n = new Notification(title, { body: label || '' });
+          n.onclick = openIt;
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then((perm) => {
+            if (perm === 'granted') {
+              const n = new Notification(title, { body: label || '' });
+              n.onclick = openIt;
+            }
+          });
+        }
+      }
+    } catch {}
+
+    playChime();
+    setChatBadge((c) => c + 1);
+  }, [playChime, selectChatFromTasks, toaster]);
 
   /* --------------------------------
    * Voice state via BroadcastChannel
@@ -169,26 +246,59 @@ export default function AgentApp() {
   }, [setSoftphonePopout, toaster]);
 
   /* --------------------------------
-   * Worker signals → ensure chat joins
+   * Worker signals → ensure chat joins + notify when ASSIGNED
+   * (evita memory leak: depend only on worker; use refs for callbacks)
    * -------------------------------- */
+  const ensureChatSessionRef = useRef(ensureChatSession);
+  const notifyChatAssignedRef = useRef(notifyChatAssigned);
+  useEffect(() => { ensureChatSessionRef.current = ensureChatSession; }, [ensureChatSession]);
+  useEffect(() => { notifyChatAssignedRef.current = notifyChatAssigned; }, [notifyChatAssigned]);
+
   useEffect(() => {
     if (!worker) return;
-    const handleReservation = async (r) => {
-      const a = r.task?.attributes || {};
-      if (a.channel === 'chat') {
-        const sid = a.conversationSid || a.conversation_sid;
-        const label = a.customerName || a.from || a.name || sid;
-        await ensureChatSession(sid, label);
+
+    const onCreated = async (r) => {
+      try {
+        const a = r?.task?.attributes || {};
+        if (a.channel === 'chat') {
+          const sid = a.conversationSid || a.conversation_sid;
+          const label = a.customerName || a.from || a.name || sid;
+          if (sid) await ensureChatSessionRef.current?.(sid, label);
+        }
+      } catch (e) {
+        console.warn('[worker reservation.created handler]', e);
       }
     };
-    worker.on('reservation.created', handleReservation);
-    worker.on('reservation.accepted', handleReservation);
-    return () => {
-      try { worker.off('reservation.created', handleReservation); worker.off('reservation.accepted', handleReservation); } catch {}
-    };
-  }, [worker, ensureChatSession]);
 
-  // Poll chat tasks (safety net)
+    const onAccepted = async (r) => {
+      try {
+        const a = r?.task?.attributes || {};
+        if (a.channel !== 'chat') return;
+        const sid = a.conversationSid || a.conversation_sid;
+        const label = a.customerName || a.from || a.name || sid;
+        if (sid) {
+          await ensureChatSessionRef.current?.(sid, label);
+          notifyChatAssignedRef.current?.(sid, label);
+        }
+      } catch (e) {
+        console.warn('[worker reservation.accepted handler]', e);
+      }
+    };
+
+    // Limpia posibles escuchas previas con mismas referencias
+    try { worker.off('reservation.created', onCreated); } catch {}
+    try { worker.off('reservation.accepted', onAccepted); } catch {}
+
+    worker.on('reservation.created', onCreated);
+    worker.on('reservation.accepted', onAccepted);
+
+    return () => {
+      try { worker.off('reservation.created', onCreated); } catch {}
+      try { worker.off('reservation.accepted', onAccepted); } catch {}
+    };
+  }, [worker]);
+
+  // Safety-net polling to join sessions
   useEffect(() => {
     if (!worker) return;
     let cancelled = false;
@@ -201,7 +311,7 @@ export default function AgentApp() {
           if (a.channel === 'chat') {
             const sid = a.conversationSid || a.conversation_sid;
             const label = a.customerName || a.from || a.name || sid;
-            if (!cancelled) await ensureChatSession(sid, label);
+            if (!cancelled && sid) await ensureChatSessionRef.current?.(sid, label);
           }
         }
       } catch (e) { console.error('[task poll]', e); }
@@ -210,9 +320,9 @@ export default function AgentApp() {
     poll();
     const it = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(it); };
-  }, [worker, ensureChatSession]);
+  }, [worker]);
 
-  // Realtime (server emits task_created when first inbound msg arrives)
+  // Realtime “task_created” (first inbound message) — dedupe por SID
   useEffect(() => {
     const socket = io(socketBase, {
       transports: ['websocket', 'polling'],
@@ -221,22 +331,33 @@ export default function AgentApp() {
       reconnectionDelay: 1000,
       withCredentials: false,
     });
+
     socket.on('task_created', async ({ conversationSid }) => {
-      if (conversationSid) await ensureChatSession(conversationSid);
+      try {
+        if (!conversationSid) return;
+        if (processedTaskCreatedRef.current.has(conversationSid)) return;
+        processedTaskCreatedRef.current.add(conversationSid);
+        await ensureChatSessionRef.current?.(conversationSid);
+      } catch (e) {
+        console.warn('[socket task_created handler]', e);
+      }
     });
-    socket.on('connect_error', (err) => console.warn('[socket.io] connect_error', err?.message || err));
+
+    socket.on('connect_error', (err) =>
+      console.warn('[socket.io] connect_error', err?.message || err)
+    );
+
     return () => socket.disconnect();
-  }, [ensureChatSession]);
+  }, []);
 
   /* --------------------------------
    * Softphone popout
    * -------------------------------- */
-  useEffect(() => {
-    if (!isSoftphonePopout || softphoneWinRef.current) return;
-    const w = window.open(`${window.location.origin}?popup=softphone`, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
+  const openSoftphoneWindow = useCallback(() => {
+    const url = `${window.location.origin}?popup=softphone`;
+    const w = window.open(url, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
     if (w) softphoneWinRef.current = w;
-    else setSoftphonePopout(false);
-  }, [isSoftphonePopout, setSoftphonePopout]);
+  }, []);
 
   const toggleSoftphonePopout = useCallback(() => {
     if (isSoftphonePopout) {
@@ -244,19 +365,23 @@ export default function AgentApp() {
       softphoneWinRef.current = null;
       setSoftphonePopout(false);
     } else {
+      openSoftphoneWindow();
       setSoftphonePopout(true);
     }
-  }, [isSoftphonePopout, setSoftphonePopout]);
+  }, [isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
 
-  // Auto-open popup on Available
+  // Auto-open popout when becoming Available (optional behavior preserved)
   useEffect(() => {
-    if (/available/i.test(activity || '') && !isSoftphonePopout) setSoftphonePopout(true);
-  }, [activity, isSoftphonePopout, setSoftphonePopout]);
+    if (/available/i.test(activity || '') && !isSoftphonePopout) {
+      openSoftphoneWindow();
+      setSoftphonePopout(true);
+    }
+  }, [activity, isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
 
   const logout = useCallback(async () => {
     await Api.logout();
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace
-    await setAvailable(offlineSid);
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace with real Activity SID if needed
+    try { await setAvailable(offlineSid); } catch {}
     window.location.reload();
   }, [setAvailable]);
 
@@ -294,7 +419,6 @@ export default function AgentApp() {
     { id: 'customer360-chat', label: 'Customer 360' },
   ]), []);
 
-  // Context-aware quick actions for the Shell
   const shellQuickActions = useMemo(() => ({
     voice: [
       { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
@@ -335,7 +459,14 @@ export default function AgentApp() {
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
             <TabList aria-label="Workspace mode">
               <Tab id="voice">VOICE</Tab>
-              <Tab id="chat">CHAT</Tab>
+              <Tab id="chat">
+                <PBox display="inline-flex" alignItems="center" columnGap="space20">
+                  CHAT
+                  {chatBadge > 0 && (
+                    <Badge as="span" variant="new">{chatBadge}</Badge>
+                  )}
+                </PBox>
+              </Tab>
             </TabList>
 
             <TabPanels>
