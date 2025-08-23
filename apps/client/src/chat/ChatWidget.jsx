@@ -14,6 +14,8 @@ import { Heading } from '@twilio-paste/core/heading';
 import { Text } from '@twilio-paste/core/text';
 import styles from './ChatWidget.module.css';
 
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+
 export default function ChatWidget({
   conversationIdOrUniqueName,
   onMessageAdded,
@@ -21,6 +23,7 @@ export default function ChatWidget({
   isActive,
 }) {
   const [client, setClient] = useState(null);
+  const clientRef = useRef(null);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -28,130 +31,220 @@ export default function ChatWidget({
   const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef(null);
 
+  // Mantener refs para callbacks inestables (no usarlas como deps de efectos con listeners)
+  const onMessageAddedRef = useRef(onMessageAdded);
+  const onLabelRef = useRef(onLabel);
+  useEffect(() => { onMessageAddedRef.current = onMessageAdded; }, [onMessageAdded]);
+  useEffect(() => { onLabelRef.current = onLabel; }, [onLabel]);
 
   const fetchToken = async () => {
     const url = identityRef.current
-      ? `/api/chat/refresh?identity=${encodeURIComponent(identityRef.current)}`
-      : '/api/chat/token';
-    const r = await fetch(url);
+      ? `${API_BASE}/chat/refresh?identity=${encodeURIComponent(identityRef.current)}`
+      : `${API_BASE}/chat/token`;
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(`chat token failed: ${r.status} ${txt}`);
+    }
     const data = await r.json();
     if (data.identity) identityRef.current = data.identity;
     return data.token;
   };
 
-  // bootstrap SDK
+  // Bootstrap SDK (un cliente por widget) y resolver conversación (con retry si aún no estamos unidos)
   useEffect(() => {
-    let mounted = true;
+    let cancelled = false;
+
     (async () => {
-      const token = await fetchToken();
-      const c = await ConversationsClient.create(token);
-      if (!mounted) return;
-      const refresh = async () => {
-        const newToken = await fetchToken();
-        await c.updateToken(newToken);
-      };
-      c.on('tokenAboutToExpire', refresh);
-      c.on('tokenExpired', refresh);
-      setClient(c);
       try {
-        let convo = await c.getConversationBySid(conversationIdOrUniqueName);
-        setConversation(convo);
-      } catch (e) {
-        try {
-          const convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
-          setConversation(convo);
-        } catch (err) {
-          console.error('Conversation not found; ensure server created it first');
+        const token = await fetchToken();
+        const c = new ConversationsClient(token);
+        clientRef.current = c;
+
+        const refresh = async () => {
+          try {
+            const newToken = await fetchToken();
+            await c.updateToken(newToken);
+          } catch (e) {
+            console.error('[ChatWidget] token refresh error', e);
+          }
+        };
+        c.on('tokenAboutToExpire', refresh);
+        c.on('tokenExpired', refresh);
+
+        if (cancelled) {
+          try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}
+          return;
         }
+
+        setClient(c);
+
+        // Resolver conversación por SID o uniqueName (reintenta si aún no somos participantes)
+        const maxTries = 6;
+        const delayMs = 1200;
+        let attempt = 0;
+        let convo = null;
+
+        while (!cancelled && attempt < maxTries) {
+          try {
+            try {
+              convo = await c.getConversationBySid(conversationIdOrUniqueName);
+            } catch {
+              convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
+            }
+            if (convo) break;
+          } catch (err) {
+            const msg = String(err?.message || '').toLowerCase();
+            const forbidden = msg.includes('forbidden') || msg.includes('401') || msg.includes('403');
+            if (!forbidden) {
+              console.error('Conversation lookup error', err);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, delayMs));
+            attempt++;
+          }
+        }
+
+        if (!cancelled) {
+          if (convo) {
+            setConversation(convo);
+          } else {
+            console.error('Conversation not found or not joined yet');
+          }
+        }
+      } catch (e) {
+        console.error('[ChatWidget] init error', e);
       }
     })();
-    return () => { mounted = false; client?.shutdown?.(); };
+
+    return () => {
+      cancelled = true;
+      const old = clientRef.current;
+      clientRef.current = null;
+      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch {}
+    };
+    // Solo cuando cambia la conversación objetivo (no dependas de onMessageAdded/onLabel)
   }, [conversationIdOrUniqueName]);
 
+  // Resetear mensajes al cambiar de conversación objetivo (evita reciclar estado)
+  useEffect(() => {
+    setMessages([]);
+  }, [conversationIdOrUniqueName]);
 
-// load history & subscribe to new messages
-useEffect(() => {
-if (!conversation) return;
-(async () => {
-const page = await conversation.getMessages();
-setMessages(page.items);
-const handler = (m) => {
-setMessages((prev) => [...prev, m]);
-if (m.author !== identityRef.current) onMessageAdded?.(conversation.sid, m);
-};
-conversation.on('messageAdded', handler);
-})();
-return () => {
-try { conversation.off('messageAdded', handler); } catch {}
-};
-}, [conversation, onMessageAdded]);
+  // Cargar historial + suscribirse a nuevos mensajes (1 solo listener por conversación)
+  useEffect(() => {
+    if (!conversation) return;
+    let cancelled = false;
 
-useEffect(() => {
-if (!client || !conversation) return;
-const handleStart = ({ conversationSid }) => {
-if (conversationSid === conversation.sid) setIsTyping(true);
-};
-const handleEnd = ({ conversationSid }) => {
-if (conversationSid === conversation.sid) setIsTyping(false);
-};
-client.on('typingStarted', handleStart);
-client.on('typingEnded', handleEnd);
-return () => {
-client.off('typingStarted', handleStart);
-client.off('typingEnded', handleEnd);
-};
-}, [client, conversation]);
+    (async () => {
+      try {
+        const page = await conversation.getMessages();
+        if (!cancelled) setMessages(page.items);
+      } catch (e) {
+        console.error('getMessages error', e);
+      }
+    })();
 
-useEffect(() => {
-if (!conversation) return;
-const markRead = () => {
-try { conversation.setAllMessagesRead(); } catch {}
-};
-if (isActive) markRead();
-const onFocus = () => {
-if (isActive) markRead();
-};
-window.addEventListener('focus', onFocus);
-return () => window.removeEventListener('focus', onFocus);
-}, [conversation, isActive]);
+    const handler = (m) => {
+      setMessages((prev) => [...prev, m]);
+      // notificar al panel con la ref (para no recrear listeners)
+      if (m.author !== identityRef.current) {
+        try { onMessageAddedRef.current?.(conversation.sid, m); } catch {}
+      }
+    };
+    conversation.on('messageAdded', handler);
 
-// update label from conversation attributes or participants
-useEffect(() => {
-if (!conversation) return;
-(async () => {
-try {
-let label =
-conversation?.attributes?.title ||
-conversation?.attributes?.friendlyName ||
-conversation?.friendlyName;
-if (!label) {
-const participants = await conversation.getParticipants();
-label = participants
-.map((p) => p.attributes?.friendlyName || p.identity)
-.filter(Boolean)
-.join(', ');
-}
-onLabel?.(label);
-} catch (e) {
-console.error('conversation info error', e);
-}
-})();
-}, [conversation, onLabel]);
+    return () => {
+      cancelled = true;
+      try { conversation.off('messageAdded', handler); } catch {}
+    };
+  }, [conversation]);
 
+  // Typing indicators (listeners sobre el client, limpios al cambiar client/conversation)
+  useEffect(() => {
+    if (!client || !conversation) return;
 
+    const handleStart = ({ conversationSid }) => {
+      if (conversationSid === conversation.sid) setIsTyping(true);
+    };
+    const handleEnd = ({ conversationSid }) => {
+      if (conversationSid === conversation.sid) setIsTyping(false);
+    };
+
+    client.on('typingStarted', handleStart);
+    client.on('typingEnded', handleEnd);
+
+    return () => {
+      client.off('typingStarted', handleStart);
+      client.off('typingEnded', handleEnd);
+    };
+  }, [client, conversation]);
+
+  // Marcar leído al activar tab / focus
+  useEffect(() => {
+    if (!conversation) return;
+    const markRead = () => {
+      try { conversation.setAllMessagesRead(); } catch {}
+    };
+    if (isActive) markRead();
+    const onFocus = () => { if (isActive) markRead(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [conversation, isActive]);
+
+  // Calcular y propagar "label" sin bucles de render
+  const lastLabelRef = useRef('');
+  useEffect(() => {
+    if (!conversation) return;
+    let mounted = true;
+
+    (async () => {
+      try {
+        const attrs =
+          typeof conversation.attributes === 'string'
+            ? (conversation.attributes ? JSON.parse(conversation.attributes) : {})
+            : (conversation.attributes || {});
+
+        let label = attrs.title || conversation.friendlyName || '';
+
+        if (!label) {
+          const participants = await conversation.getParticipants();
+          label = participants
+            .map((p) => {
+              const pa =
+                typeof p.attributes === 'string'
+                  ? (p.attributes ? JSON.parse(p.attributes) : {})
+                  : (p.attributes || {});
+              return pa.friendlyName || p.identity;
+            })
+            .filter(Boolean)
+            .join(', ');
+        }
+
+        if (mounted && label && label !== lastLabelRef.current) {
+          lastLabelRef.current = label;
+          try { onLabelRef.current?.(label); } catch {}
+        }
+      } catch (e) {
+        console.error('conversation info error', e);
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [conversation]);
+
+  // Autoscroll al final
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const send = async () => {
+    if (!conversation || !text.trim()) return;
+    await conversation.sendMessage(text.trim());
+    setText('');
+  };
 
-const send = async () => {
-if (!conversation || !text.trim()) return;
-await conversation.sendMessage(text.trim());
-setText('');
-};
-
-
-return (
+  return (
     <Box
       className={styles.container}
       borderStyle="solid"
@@ -210,5 +303,5 @@ return (
         </Button>
       </Box>
     </Box>
-);
+  );
 }

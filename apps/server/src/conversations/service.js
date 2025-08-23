@@ -1,11 +1,11 @@
 import { twilioClient as client } from './client.js';
 
 const {
-  TWILIO_MESSAGING_SERVICE_SID, // optional MGxxxxxxxx for SMS/WhatsApp
-  TWILIO_SMS_NUMBER,            // optional +E.164
-  TWILIO_WHATSAPP_NUMBER,       // optional +E.164 (without whatsapp: prefix)
-  TWILIO_MESSENGER_PAGE_ID,     // optional FB Page ID for Messenger
-  TWILIO_CONVERSATIONS_SERVICE_SID, // required ISxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  TWILIO_MESSAGING_SERVICE_SID,
+  TWILIO_SMS_NUMBER,
+  TWILIO_WHATSAPP_NUMBER,
+  TWILIO_MESSENGER_PAGE_ID,
+  TWILIO_CONVERSATIONS_SERVICE_SID,
 } = process.env;
 
 if (!TWILIO_CONVERSATIONS_SERVICE_SID) {
@@ -22,14 +22,10 @@ function requireService() {
   }
 }
 
-/**
- * Create or fetch a Conversation by uniqueName. Prefer uniqueName as a stable key per case/ticket.
- */
 export async function getOrCreateConversation({ uniqueName, friendlyName, attributes = {} }) {
   requireService();
   if (!uniqueName) throw new Error('uniqueName required');
   try {
-    // Twilio REST allows SID or uniqueName in the path for fetch — we attempt fetch first.
     return await service.conversations(uniqueName).fetch();
   } catch (err) {
     if (err.status !== 404) throw err;
@@ -46,11 +42,7 @@ export async function getOrCreateConversation({ uniqueName, friendlyName, attrib
   }
 }
 
-/** Add a WebChat participant via Conversations SDK identity */
-export async function addChatParticipant(
-  conversationSid,
-  { identity, attributes } = {}
-) {
+export async function addChatParticipant(conversationSid, { identity, attributes } = {}) {
   requireService();
   if (!identity) throw new Error('identity required');
   try {
@@ -61,10 +53,8 @@ export async function addChatParticipant(
         attributes: attributes ? JSON.stringify(attributes) : undefined,
       });
   } catch (err) {
-    // 409 / 50433 -> participant with that identity already exists in the conversation
     if (err.status === 409 || err.code === 50433) {
       try {
-        // No hay endpoint para fetch directo por identity; listamos y filtramos.
         const existing = await service
           .conversations(conversationSid)
           .participants
@@ -84,18 +74,16 @@ export async function addChatParticipant(
   }
 }
 
-/** Add an SMS participant using messagingBinding */
 export function addSmsParticipant(conversationSid, { to, from }) {
   requireService();
   const proxy = from || TWILIO_SMS_NUMBER;
   if (!to || !proxy) throw new Error('to and from (or TWILIO_SMS_NUMBER) are required');
   return service.conversations(conversationSid).participants.create({
-    'messagingBinding.address': to,        // e.g. +15551234567
-    'messagingBinding.proxyAddress': proxy // your Twilio SMS number
+    'messagingBinding.address': to,
+    'messagingBinding.proxyAddress': proxy
   });
 }
 
-/** Add a WhatsApp participant using messagingBinding */
 export function addWhatsappParticipant(conversationSid, { to, from }) {
   requireService();
   const proxy = from || TWILIO_WHATSAPP_NUMBER;
@@ -106,7 +94,6 @@ export function addWhatsappParticipant(conversationSid, { to, from }) {
   });
 }
 
-/** Add a Messenger participant (requires existing contact & Page) */
 export function addMessengerParticipant(conversationSid, { userId, pageId }) {
   requireService();
   const proxy = pageId || TWILIO_MESSENGER_PAGE_ID;
@@ -117,36 +104,17 @@ export function addMessengerParticipant(conversationSid, { userId, pageId }) {
   });
 }
 
-/**
- * Send a message (works for all channels).
- *
- * The `xTwilioWebhookEnabled` option instructs Twilio to fire any configured
- * Conversation webhooks even though the message was sent via REST. Use this
- * header only when a webhook callback is desired after a REST send.
- */
-export function sendMessage(
-  conversationSid,
-  { author = 'system', body, mediaSid, attributes }
-) {
+export function sendMessage(conversationSid, { author = 'system', body, mediaSid, attributes }) {
   requireService();
   const payload = { author };
   if (body) payload.body = body;
   if (mediaSid) payload.mediaSid = mediaSid;
   if (attributes) payload.attributes = JSON.stringify(attributes);
-
-  // Nota: algunos SDKs exigen 'true' como string.
   const webhookHeader = { xTwilioWebhookEnabled: 'true' };
-
-  return service
-    .conversations(conversationSid)
-    .messages.create(payload, webhookHeader);
+  return service.conversations(conversationSid).messages.create(payload, webhookHeader);
 }
 
-/** Optional: attach a conversation-scoped webhook (Studio/webhook/trigger) */
-export function attachWebhook(
-  conversationSid,
-  { target = 'webhook', url, method = 'post', filters = ['onMessageAdded'], flowSid }
-) {
+export function attachWebhook(conversationSid, { target = 'webhook', url, method = 'post', filters = ['onMessageAdded'], flowSid }) {
   requireService();
   const cfg = {};
   if (target === 'webhook') {
@@ -198,13 +166,45 @@ export function updateConversationTimers(conversationSid, { inactive, closed } =
   return service.conversations(conversationSid).update(payload);
 }
 
-/**
- * Configure per-Service (IS...) webhooks.
- * - preWebhookUrl: URL for pre-event webhook (optional)
- * - postWebhookUrl: URL for post-event webhook (optional)
- * - method: 'POST' | 'GET' (applies to both pre and post)
- * - filters: array of event names (applies to post events)
- */
+/* ===== NUEVO: helpers para cierre “duro” ===== */
+
+export function listParticipants(conversationSid) {
+  requireService();
+  return service.conversations(conversationSid).participants.list({ limit: 200 });
+}
+
+export async function removeAllParticipants(conversationSid) {
+  requireService();
+  const parts = await listParticipants(conversationSid);
+  let removed = 0;
+  for (const p of parts) {
+    try {
+      await service.conversations(conversationSid).participants(p.sid).remove();
+      removed++;
+    } catch (e) {
+      console.warn('[Conversations] remove participant failed', p.sid, e?.message || e);
+    }
+  }
+  return { removed, total: parts.length };
+}
+
+export async function closeConversation(conversationSid, { removeParticipants = true } = {}) {
+  requireService();
+  await service.conversations(conversationSid).update({
+    'timers.inactive': 'PT0S',
+    'timers.closed': 'PT0S',
+  });
+  if (removeParticipants) {
+    await removeAllParticipants(conversationSid);
+  }
+  try {
+    const convo = await fetchConversation(conversationSid);
+    return { ok: true, state: convo.state || convo.status || 'unknown' };
+  } catch {
+    return { ok: true };
+  }
+}
+
 export function configureServiceWebhooks({
   preWebhookUrl,
   postWebhookUrl,
@@ -224,6 +224,5 @@ export function configureServiceWebhooks({
 
   if (Object.keys(payload).length === 0) return Promise.resolve();
 
-  // ✅ Recurso correcto para webhooks a nivel de Service
   return service.configuration.webhooks().update(payload);
 }

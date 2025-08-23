@@ -24,10 +24,17 @@
 ==== /package.json ====
 
 ==== scripts\provision.mjs ====
+// scripts/provision.mjs
 import 'dotenv/config';
 import Twilio from 'twilio';
 
-const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  PUBLIC_BASE_URL,
+  TR_WORKSPACE_SID,
+  TR_WORKFLOW_SID,
+} = process.env;
 
 if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
   console.error('Missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN');
@@ -36,72 +43,151 @@ if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
 
 const client = Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-async function ensureTwiMLApp(name = 'ContactCenter Web Outbound', voiceUrl) {
+function trimBase(url) {
+  return (url || '').trim().replace(/\/+$/, '');
+}
+
+async function fetchWorkspace(wsSid) {
+  if (!wsSid) throw new Error('TR_WORKSPACE_SID is required to run provision');
+  return client.taskrouter.v1.workspaces(wsSid).fetch();
+}
+
+async function listWorkflows(wsSid) {
+  return client.taskrouter.v1.workspaces(wsSid).workflows.list({ limit: 50 });
+}
+
+async function fetchWorkflow(wsSid, wfSid) {
+  return client.taskrouter.v1.workspaces(wsSid).workflows(wfSid).fetch();
+}
+
+function parseConfig(cfg) {
+  try { return typeof cfg === 'string' ? JSON.parse(cfg) : (cfg || {}); }
+  catch { return {}; }
+}
+
+function stringifyConfig(cfg) {
+  return JSON.stringify(cfg);
+}
+
+async function resolveWorkflowToUpdate(wsSid) {
+  // 1) Si el .env trae TR_WORKFLOW_SID, usa ese
+  if (TR_WORKFLOW_SID) {
+    try {
+      const wf = await fetchWorkflow(wsSid, TR_WORKFLOW_SID);
+      return wf;
+    } catch (e) {
+      console.warn(`[provision] Cannot fetch TR_WORKFLOW_SID=${TR_WORKFLOW_SID}. Will try by name…`, e?.message || e);
+    }
+  }
+
+  // 2) Buscar por nombre común
+  const all = await listWorkflows(wsSid);
+  let wf = all.find(w => (w.friendlyName || '').toLowerCase() === 'default fifo workflow')
+         || all.find(w => (w.friendlyName || '').toLowerCase() === 'default workflow');
+
+  // 3) Último recurso: el primero de la lista
+  if (!wf && all.length) wf = all[0];
+
+  if (!wf) throw new Error('No Workflow found in this Workspace');
+  return wf;
+}
+
+async function ensureAssignmentCallback(wsSid, wfSid, url, config) {
+  const ws = client.taskrouter.v1.workspaces(wsSid);
+  return ws.workflows(wfSid).update({
+    assignmentCallbackUrl: url,
+    configuration: stringifyConfig(config),
+  });
+}
+
+function buildDirectRoutingConfig(currentConfig, queueSid) {
+  // Clona config actual y escribe filtro directo por selected_contact_uri
+  const cfg = parseConfig(currentConfig);
+  const filters = Array.isArray(cfg?.task_routing?.filters) ? [...cfg.task_routing.filters] : [];
+
+  // Sobrescribe/inyecta un filtro claro y de alta prioridad
+  const directFilter = {
+    filter_friendly_name: 'DirectToSelectedContact',
+    expression: 'task.selected_contact_uri != null',
+    targets: [{
+      queue: queueSid,
+      // Esta expresión se evalúa contra atributos del worker (no se antepone "worker.")
+      expression: 'contact_uri == task.selected_contact_uri',
+      priority: 100
+    }]
+  };
+
+  // Elimina versiones previas del mismo filtro si existieran
+  const nextFilters = filters.filter(f => (f.filter_friendly_name || '').toLowerCase() !== 'directtoselectedcontact');
+  nextFilters.unshift(directFilter);
+
+  const default_filter = cfg?.task_routing?.default_filter?.queue
+    ? cfg.task_routing.default_filter
+    : { queue: queueSid };
+
+  return {
+    task_routing: {
+      filters: nextFilters,
+      default_filter
+    }
+  };
+}
+
+async function ensureTaskChannel(wsSid, uniqueName = 'chat', friendlyName = 'Chat') {
+  const list = await client.taskrouter.v1.workspaces(wsSid).taskChannels.list({ limit: 50 });
+  const found = list.find(c => c.uniqueName === uniqueName);
+  if (found) return found;
+  return client.taskrouter.v1.workspaces(wsSid).taskChannels.create({
+    uniqueName,
+    friendlyName,
+    channelOptimizedRouting: true
+  });
+}
+
+async function ensureTwiMLApp(name, voiceUrl) {
   const apps = await client.applications.list({ limit: 50 });
   const found = apps.find(a => a.friendlyName === name);
   if (found) return found;
   return client.applications.create({ friendlyName: name, voiceUrl, voiceMethod: 'POST' });
 }
 
-async function ensureWorkspace(name = 'ContactCenter Workspace') {
-  const list = await client.taskrouter.v1.workspaces.list({ limit: 50 });
-  const found = list.find(w => w.friendlyName === name);
-  if (found) return found;
-  return client.taskrouter.v1.workspaces.create({ friendlyName: name });
-}
-
-async function ensureActivity(wsSid, friendlyName, available) {
-  const list = await client.taskrouter.v1.workspaces(wsSid).activities.list({ limit: 50 });
-  const found = list.find(a => a.friendlyName === friendlyName);
-  if (found) return found;
-  return client.taskrouter.v1.workspaces(wsSid).activities.create({ friendlyName, available });
-}
-
-async function ensureQueue(wsSid, name = 'Default Queue') {
-  const list = await client.taskrouter.v1.workspaces(wsSid).taskQueues.list({ limit: 50 });
-  const found = list.find(q => q.friendlyName === name);
-  if (found) return found;
-  return client.taskrouter.v1.workspaces(wsSid).taskQueues.create({
-    friendlyName: name,
-    targetWorkers: '1==1'
-  });
-}
-
-async function ensureWorkflow(wsSid, queueSid, name = 'Default Workflow', assignmentCallbackUrl) {
-  const list = await client.taskrouter.v1.workspaces(wsSid).workflows.list({ limit: 50 });
-  const found = list.find(w => w.friendlyName === name);
-  const config = {
-    task_routing: {
-      filters: [],
-      default_filter: { queue: queueSid }
-    }
-  };
-  if (found) {
-    return client.taskrouter.v1.workspaces(wsSid).workflows(found.sid)
-      .update({ assignmentCallbackUrl, configuration: JSON.stringify(config) });
-  }
-  return client.taskrouter.v1.workspaces(wsSid).workflows
-    .create({ friendlyName: name, assignmentCallbackUrl, configuration: JSON.stringify(config) });
-}
-
 async function main() {
-  const base = process.env.PUBLIC_BASE_URL || 'https://example.ngrok.app';
+  if (!TR_WORKSPACE_SID) throw new Error('TR_WORKSPACE_SID is required');
+  const base = trimBase(PUBLIC_BASE_URL || 'https://example.ngrok.app');
   const voiceUrl = `${base}/api/voice/outbound`;
   const assignmentCallbackUrl = `${base}/api/taskrouter/assignment`;
 
+  // (Opcional) Asegura TwiML App (solo para voz saliente)
   const app = await ensureTwiMLApp('ContactCenter Web Outbound', voiceUrl);
-  const ws = await ensureWorkspace('ContactCenter Workspace');
-  const actA = await ensureActivity(ws.sid, 'Available', true);
-  const actU = await ensureActivity(ws.sid, 'Unavailable', false);
-  const actW = await ensureActivity(ws.sid, 'Wrapping', false);
-  const queue = await ensureQueue(ws.sid, 'Default Queue');
-  const wf = await ensureWorkflow(ws.sid, queue.sid, 'Default Workflow', assignmentCallbackUrl);
 
-  console.log('\n=== Provisioned ===');
+  // Workspace & Workflow a actualizar (el que REALMENTE usas)
+  await fetchWorkspace(TR_WORKSPACE_SID);
+  const wf = await resolveWorkflowToUpdate(TR_WORKSPACE_SID);
+
+  // Descubre la cola que ya usa tu Workflow (para no romper ruteo)
+  const cfg = parseConfig(wf.configuration);
+  const queueSid =
+    cfg?.task_routing?.default_filter?.queue ||
+    cfg?.task_routing?.filters?.[0]?.targets?.[0]?.queue ||
+    null;
+
+  if (!queueSid) {
+    throw new Error('Cannot determine a TaskQueue SID from current Workflow configuration. Set a default_filter.queue first.');
+  }
+
+  // Inyecta filtro "DirectToSelectedContact" y actualiza AssignmentCallbackUrl
+  const newConfig = buildDirectRoutingConfig(cfg, queueSid);
+  const updated = await ensureAssignmentCallback(TR_WORKSPACE_SID, wf.sid, assignmentCallbackUrl, newConfig);
+
+  // (Opcional) Asegura el canal 'chat'
+  const chatCh = await ensureTaskChannel(TR_WORKSPACE_SID, 'chat', 'Chat');
+
+  console.log('\n=== Provisioned / Updated ===');
   console.log('TWIML_APP_SID=', app.sid);
-  console.log('TR_WORKSPACE_SID=', ws.sid);
-  console.log('TR_WORKFLOW_SID=', wf.sid);
-  console.log('TR_WRAP_ACTIVITY_SID=', actW.sid);
+  console.log('TR_WORKSPACE_SID=', TR_WORKSPACE_SID);
+  console.log('TR_WORKFLOW_SID=', updated.sid, `(name="${updated.friendlyName}")`);
+  console.log('ASSIGNMENT_CALLBACK_URL=', updated.assignmentCallbackUrl);
+  console.log('TR_CHAT_CHANNEL_SID=', chatCh.sid);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
@@ -299,7 +385,7 @@ export async function financePaylink(req, res) {
 ==== /src\controllers\ivr.js ====
 
 ==== src\controllers\taskrouter.js ====
-﻿import { requireAuth } from 'shared/auth';
+﻿﻿import { requireAuth } from 'shared/auth';
 import {
   listActivities,
   listWorkerReservations,
@@ -316,6 +402,24 @@ import {
 export function assignment(req, res) {
   try {
     const taskSid = String(req.body.TaskSid || '').trim();
+
+    const channelName = String(req.body.TaskChannelUniqueName || '').toLowerCase();
+    let attrs = {};
+    try {
+      attrs = req.body.TaskAttributes ? JSON.parse(req.body.TaskAttributes) : {};
+    } catch {
+      attrs = {};
+    }
+
+    const isChat =
+      channelName === 'chat' ||
+      String(attrs.channel || '').toLowerCase() === 'chat' ||
+      !!attrs.conversationSid;
+
+    if (isChat) {
+      return res.status(200).json({ instruction: 'accept' });
+    }
+
     if (!env.callerId) {
       return res.status(200).json({ instruction: 'reject', reason: 'missing callerId' });
     }
@@ -402,30 +506,96 @@ export async function myTasks(req, res) {
   }
 }
 
-export async function completeTask(req, res) {
+/**
+ * NUEVO: Forzar WRAPPING (pensado para chat).
+ */
+export async function wrapTask(req, res) {
   try {
     const { taskSid } = req.params;
-    const { reason, disposition } = req.body || {};
+    const { reason = 'Wrap from Agent UI', disposition } = req.body || {};
     if (!taskSid) return res.status(400).json({ error: 'missing taskSid' });
+
     const task = await fetchTask(taskSid);
-    if (String(task.assignmentStatus).toLowerCase() !== 'wrapping') {
-      return res.status(400).json({ error: 'task is not in wrapping', assignmentStatus: task.assignmentStatus });
-    }
+    const status = String(task.assignmentStatus).toLowerCase();
+
     let attrs = {};
     try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
     if (disposition) attrs.disposition = disposition;
     if (reason) attrs.wrapup_reason = reason;
+
+    if (status === 'wrapping') {
+      if (disposition || reason) {
+        await updateTask(taskSid, { attributes: JSON.stringify(attrs) });
+      }
+      pushEvent('TASK_WRAPPING', { taskSid, reason, disposition });
+      return res.json({ ok: true, taskSid, assignmentStatus: 'wrapping' });
+    }
+
+    if (status === 'assigned') {
+      const updated = await updateTask(taskSid, {
+        assignmentStatus: 'wrapping',
+        reason: String(reason || 'Wrap from Agent UI').slice(0, 200),
+        attributes: JSON.stringify(attrs),
+      });
+      pushEvent('TASK_WRAPPING', { taskSid: updated.sid, reason, disposition });
+      return res.json({ ok: true, taskSid: updated.sid, assignmentStatus: 'wrapping' });
+    }
+
+    return res.status(400).json({
+      error: `cannot wrap task in status ${task.assignmentStatus}`,
+      assignmentStatus: task.assignmentStatus
+    });
+  } catch (e) {
+    console.error('[WRAP_TASK] error:', e);
+    return res.status(500).json({ error: 'cannot wrap task' });
+  }
+}
+
+export async function completeTask(req, res) {
+  try {
+    const { taskSid } = req.params;
+    const { reason, disposition, autoWrap } = req.body || {};
+    if (!taskSid) return res.status(400).json({ error: 'missing taskSid' });
+
+    let task = await fetchTask(taskSid);
+    let status = String(task.assignmentStatus).toLowerCase();
+
+    if (autoWrap && status === 'assigned') {
+      let attrs = {};
+      try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+      if (disposition) attrs.disposition = disposition;
+      if (reason) attrs.wrapup_reason = reason;
+      await updateTask(taskSid, {
+        assignmentStatus: 'wrapping',
+        reason: String(reason || 'Wrap before complete').slice(0, 200),
+        attributes: JSON.stringify(attrs),
+      });
+      task = await fetchTask(taskSid);
+      status = String(task.assignmentStatus).toLowerCase();
+    }
+
+    if (status !== 'wrapping') {
+      return res.status(400).json({ error: 'task is not in wrapping', assignmentStatus: task.assignmentStatus });
+    }
+
+    let attrs = {};
+    try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+    if (disposition) attrs.disposition = disposition;
+    if (reason) attrs.wrapup_reason = reason;
+
     const updated = await updateTask(taskSid, {
       assignmentStatus: 'completed',
       reason: reason ? String(reason).slice(0, 200) : 'Finished from Agent UI',
       attributes: JSON.stringify(attrs)
     });
+
     pushEvent('TASK_COMPLETED', {
       taskSid: updated.sid,
       workerSid: req.claims?.workerSid || null,
       disposition: disposition || null,
       reason: reason || null
     });
+
     try {
       await axios.post('https://analytics.example.com/track', {
         disposition,
@@ -435,6 +605,7 @@ export async function completeTask(req, res) {
     } catch (analyticsError) {
       console.warn('Analytics post failed', analyticsError);
     }
+
     return res.json({
       sid: updated.sid,
       assignmentStatus: updated.assignmentStatus,
@@ -497,7 +668,6 @@ export function recent(req, res) {
 function safeParseJson(str) {
   try { return JSON.parse(str || '{}'); } catch { return {}; }
 }
-
 
 ==== /src\controllers\taskrouter.js ====
 
@@ -1037,13 +1207,12 @@ edge: TWILIO_EDGE || undefined,
 ==== src\conversations\service.js ====
 import { twilioClient as client } from './client.js';
 
-
 const {
-  TWILIO_MESSAGING_SERVICE_SID, // optional MGxxxxxxxx for SMS/WhatsApp
-  TWILIO_SMS_NUMBER, // optional +E.164
-  TWILIO_WHATSAPP_NUMBER, // optional +E.164 (without whatsapp: prefix)
-  TWILIO_MESSENGER_PAGE_ID, // optional FB Page ID for Messenger
-  TWILIO_CONVERSATIONS_SERVICE_SID, // required ISxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  TWILIO_MESSAGING_SERVICE_SID,
+  TWILIO_SMS_NUMBER,
+  TWILIO_WHATSAPP_NUMBER,
+  TWILIO_MESSENGER_PAGE_ID,
+  TWILIO_CONVERSATIONS_SERVICE_SID,
 } = process.env;
 
 if (!TWILIO_CONVERSATIONS_SERVICE_SID) {
@@ -1060,15 +1229,10 @@ function requireService() {
   }
 }
 
-
-/**
-* Create or fetch a Conversation by uniqueName. Prefer uniqueName as a stable key per case/ticket.
-*/
 export async function getOrCreateConversation({ uniqueName, friendlyName, attributes = {} }) {
   requireService();
   if (!uniqueName) throw new Error('uniqueName required');
   try {
-    // Twilio REST allows SID or uniqueName in the path for fetch — we attempt fetch first.
     return await service.conversations(uniqueName).fetch();
   } catch (err) {
     if (err.status !== 404) throw err;
@@ -1080,17 +1244,12 @@ export async function getOrCreateConversation({ uniqueName, friendlyName, attrib
     });
     return service.conversations(convo.sid).update({
       'timers.inactive': 'PT15M',
-      'timers.closed': 'P1D'
+      'timers.closed': 'P1D',
     });
   }
 }
 
-
-/** Add a WebChat participant via Conversations SDK identity */
-export async function addChatParticipant(
-  conversationSid,
-  { identity, attributes } = {}
-) {
+export async function addChatParticipant(conversationSid, { identity, attributes } = {}) {
   requireService();
   if (!identity) throw new Error('identity required');
   try {
@@ -1103,10 +1262,13 @@ export async function addChatParticipant(
   } catch (err) {
     if (err.status === 409 || err.code === 50433) {
       try {
-        return await service
+        const existing = await service
           .conversations(conversationSid)
-          .participants(identity)
-          .fetch();
+          .participants
+          .list({ limit: 50 });
+        const found = existing.find(p => p.identity === identity);
+        if (found) return found;
+        throw new Error('Participant already exists but could not be located via list()');
       } catch (fetchErr) {
         throw new Error(
           `Participant already exists but could not be fetched: ${fetchErr.message}`
@@ -1119,20 +1281,16 @@ export async function addChatParticipant(
   }
 }
 
-
-/** Add an SMS participant using messagingBinding */
 export function addSmsParticipant(conversationSid, { to, from }) {
   requireService();
   const proxy = from || TWILIO_SMS_NUMBER;
   if (!to || !proxy) throw new Error('to and from (or TWILIO_SMS_NUMBER) are required');
   return service.conversations(conversationSid).participants.create({
-    'messagingBinding.address': to, // e.g. +15551234567
-    'messagingBinding.proxyAddress': proxy, // your Twilio SMS number
+    'messagingBinding.address': to,
+    'messagingBinding.proxyAddress': proxy
   });
 }
 
-
-/** Add a WhatsApp participant using messagingBinding */
 export function addWhatsappParticipant(conversationSid, { to, from }) {
   requireService();
   const proxy = from || TWILIO_WHATSAPP_NUMBER;
@@ -1143,8 +1301,6 @@ export function addWhatsappParticipant(conversationSid, { to, from }) {
   });
 }
 
-
-/** Add a Messenger participant (requires existing contact & Page) */
 export function addMessengerParticipant(conversationSid, { userId, pageId }) {
   requireService();
   const proxy = pageId || TWILIO_MESSENGER_PAGE_ID;
@@ -1155,38 +1311,26 @@ export function addMessengerParticipant(conversationSid, { userId, pageId }) {
   });
 }
 
-
-/**
- * Send a message (works for all channels).
- *
- * The `xTwilioWebhookEnabled` option instructs Twilio to fire any configured
- * Conversation webhooks even though the message was sent via REST. Use this
- * header only when a webhook callback is desired after a REST send.
- */
-export function sendMessage(
-  conversationSid,
-  { author = 'system', body, mediaSid, attributes }
-) {
+export function sendMessage(conversationSid, { author = 'system', body, mediaSid, attributes }) {
   requireService();
   const payload = { author };
   if (body) payload.body = body;
   if (mediaSid) payload.mediaSid = mediaSid;
   if (attributes) payload.attributes = JSON.stringify(attributes);
-  return service
-    .conversations(conversationSid)
-    .messages.create(payload, { xTwilioWebhookEnabled: true });
+  const webhookHeader = { xTwilioWebhookEnabled: 'true' };
+  return service.conversations(conversationSid).messages.create(payload, webhookHeader);
 }
 
-
-/** Optional: attach a conversation‑scoped webhook (Studio/webhook/trigger) */
 export function attachWebhook(conversationSid, { target = 'webhook', url, method = 'post', filters = ['onMessageAdded'], flowSid }) {
   requireService();
   const cfg = {};
   if (target === 'webhook') {
+    if (!url) throw new Error('url is required when target=webhook');
     cfg['configuration.url'] = url;
     cfg['configuration.method'] = method;
     cfg['configuration.filters'] = filters;
   } else if (target === 'studio') {
+    if (!flowSid) throw new Error('flowSid is required when target=studio');
     cfg['configuration.flowSid'] = flowSid;
   }
   return service.conversations(conversationSid).webhooks.create({ target, ...cfg });
@@ -1200,10 +1344,13 @@ export const fetchConversation = (sid) => {
 export async function updateConversationAttributes(conversationSid, newAttributes = {}) {
   requireService();
   const convo = await fetchConversation(conversationSid);
-  const current = convo.attributes ? JSON.parse(convo.attributes) : {};
+  const current =
+    typeof convo.attributes === 'string'
+      ? (convo.attributes ? JSON.parse(convo.attributes) : {})
+      : (convo.attributes || {});
   const merged = { ...current, ...newAttributes };
   return service.conversations(conversationSid).update({
-    attributes: JSON.stringify(merged)
+    attributes: JSON.stringify(merged),
   });
 }
 
@@ -1226,24 +1373,65 @@ export function updateConversationTimers(conversationSid, { inactive, closed } =
   return service.conversations(conversationSid).update(payload);
 }
 
+/* ===== NUEVO: helpers para cierre “duro” ===== */
+
+export function listParticipants(conversationSid) {
+  requireService();
+  return service.conversations(conversationSid).participants.list({ limit: 200 });
+}
+
+export async function removeAllParticipants(conversationSid) {
+  requireService();
+  const parts = await listParticipants(conversationSid);
+  let removed = 0;
+  for (const p of parts) {
+    try {
+      await service.conversations(conversationSid).participants(p.sid).remove();
+      removed++;
+    } catch (e) {
+      console.warn('[Conversations] remove participant failed', p.sid, e?.message || e);
+    }
+  }
+  return { removed, total: parts.length };
+}
+
+export async function closeConversation(conversationSid, { removeParticipants = true } = {}) {
+  requireService();
+  await service.conversations(conversationSid).update({
+    'timers.inactive': 'PT0S',
+    'timers.closed': 'PT0S',
+  });
+  if (removeParticipants) {
+    await removeAllParticipants(conversationSid);
+  }
+  try {
+    const convo = await fetchConversation(conversationSid);
+    return { ok: true, state: convo.state || convo.status || 'unknown' };
+  } catch {
+    return { ok: true };
+  }
+}
+
 export function configureServiceWebhooks({
   preWebhookUrl,
   postWebhookUrl,
   method = 'POST',
-  filters = ['onMessageAdd', 'onConversationAdd'], // pre- & post-event names are allowed here
+  filters = ['onMessageAdd', 'onConversationAdd'],
 } = {}) {
-  // Nothing to update? exit early.
-  if (!preWebhookUrl && !postWebhookUrl) return Promise.resolve();
+  if (!service) {
+    console.warn('[Conversations] Skipping service webhook configuration: TWILIO_CONVERSATIONS_SERVICE_SID is not set');
+    return Promise.resolve();
+  }
 
-  return service
-    .configuration
-    .webhooks()
-    .update({
-      ...(preWebhookUrl && { preWebhookUrl }),
-      ...(postWebhookUrl && { postWebhookUrl }),
-      ...(filters && { filters }),
-      ...(method && { method }), // 'GET' or 'POST'
-    });
+  const payload = {};
+  if (preWebhookUrl) payload.preWebhookUrl = preWebhookUrl;
+  if (postWebhookUrl) payload.postWebhookUrl = postWebhookUrl;
+  if (filters) payload.filters = filters;
+  if (method) payload.method = method;
+
+  if (Object.keys(payload).length === 0) return Promise.resolve();
+
+  return service.configuration.webhooks().update(payload);
 }
 
 ==== /src\conversations\service.js ====
@@ -1353,8 +1541,17 @@ app.use('/webhooks/conversations', conversationsWebhooksRoute);
 
 if (env.publicBaseUrl) {
   configureServiceWebhooks({
-    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`
-  }).catch(e => console.error('Failed to configure Conversations pre-webhook', e));
+    preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`,
+    postWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations`,
+    // Un solo "filters" sirve para pre y post; incluye eventos pre y post.
+    filters: [
+      'onConversationAdd', 'onMessageAdd',                    // PRE
+      'onMessageAdded', 'onMessageUpdated', 'onMessageRemoved',// POST
+      'onParticipantAdded', 'onParticipantRemoved',
+      'onDeliveryUpdated', 'onConversationStateUpdated'
+    ],
+    method: 'POST'
+  }).catch(e => console.error('Failed to configure Conversations webhooks', e));
 }
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
@@ -1459,39 +1656,85 @@ export function verifyTwilioSignature(req, res, next) {
 
 ==== src\routes\chat-token.route.js ====
 import express from 'express';
+import crypto from 'crypto';
+import { requireAuth } from 'shared/auth';
 import { createConversationsToken } from '../conversations/tokens.js';
-
 
 const router = express.Router();
 
-
-// Issue a short‑lived SDK token for WebChat clients
-router.get('/token', (req, res) => {
-// Your auth layer can set req.user; here we fall back to a random guest
-const identity = (req.user?.id && `agent:${req.user.id}`) || `guest:${crypto.randomUUID()}`;
-try {
-const token = createConversationsToken(identity, 3600); // 1 hour TTL
-res.json({ token, identity });
-} catch (e) {
-res.status(500).json({ error: e.message });
+/** Normaliza identidad para Conversations (sin prefijo "client:"). */
+function normalizeIdentity(raw) {
+  if (!raw) return '';
+  return raw.startsWith('client:') ? raw.slice('client:'.length) : raw;
 }
+
+/**
+ * ===============================
+ *   TOKENS PARA AGENTE (AUTH)
+ * ===============================
+ * Estos endpoints requieren sesión (cookies/JWT) y devuelven un token con
+ * identidad del agente (p.ej. "agent:42"). Úsalos desde el Agent Desktop.
+ */
+
+/** Token para agente (1h). Requiere haber hecho login /auth/login. */
+router.get('/token', requireAuth, (req, res) => {
+  try {
+    const raw = req.claims?.identity || '';
+    const identity = normalizeIdentity(raw);
+    if (!identity) return res.status(400).json({ error: 'invalid identity' });
+    const token = createConversationsToken(identity, 3600);
+    return res.json({ token, identity });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
 });
 
-// Refresh an SDK token before or after it expires
-router.get('/refresh', (req, res) => {
-  const { identity } = req.query;
-  if (!identity) {
-    res.status(400).json({ error: 'identity is required' });
-    return;
+/** Refresh del token del agente. Acepta ?identity= opcional; por defecto usa la del JWT. */
+router.get('/refresh', requireAuth, (req, res) => {
+  try {
+    const raw = String(req.query.identity || req.claims?.identity || '').trim();
+    const identity = normalizeIdentity(raw);
+    if (!identity) return res.status(400).json({ error: 'identity is required' });
+    const token = createConversationsToken(identity, 3600);
+    return res.json({ token });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * =================================
+ *   TOKENS PARA INVITADO (PÚBLICO)
+ * =================================
+ * Úsalos ÚNICAMENTE desde tu “webchat” público/embebido (no autenticado).
+ * El cliente DEBE persistir la identidad devuelta para hacer refresh luego.
+ */
+
+/** Token guest (1h). */
+router.get('/token/guest', (_req, res) => {
+  try {
+    const identity = `guest:${crypto.randomUUID()}`;
+    const token = createConversationsToken(identity, 3600);
+    return res.json({ token, identity });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/** Refresh guest. Requiere ?identity=guest:... */
+router.get('/refresh/guest', (req, res) => {
+  const identity = String(req.query.identity || '').trim();
+  if (!identity) return res.status(400).json({ error: 'identity is required' });
+  if (identity.startsWith('client:')) {
+    return res.status(400).json({ error: 'pass identity without "client:" prefix' });
   }
   try {
-    const token = createConversationsToken(identity, 3600); // 1 hour TTL
-    res.json({ token });
+    const token = createConversationsToken(identity, 3600);
+    return res.json({ token });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.message });
   }
 });
-
 
 export default router;
 
@@ -1500,6 +1743,7 @@ export default router;
 ==== src\routes\conversations-prewebhooks.route.js ====
 import express from 'express';
 import { fetchConversation } from '../conversations/service.js';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 
 const router = express.Router();
 
@@ -1519,7 +1763,7 @@ function failsModeration(body = '') {
   return bannedWords.some(w => lower.includes(w));
 }
 
-router.post('/', async (req, res) => {
+router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
   console.log('[Conversations PreWebhook]', eventType, req.body?.MessageSid || req.body?.ConversationSid || '');
 
@@ -1586,16 +1830,27 @@ import {
   completeTask,
   fetchTask,
   pushEvent,
-  updateTask
+  updateTask,
+  listWorkers,
+  listWorkerReservations,
+  acceptReservation
 } from '../services/taskrouter.js';
 import { fetchConversation, updateConversationAttributes } from '../conversations/service.js';
 import { logInteraction } from '../services/crm.js';
+import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 
 const router = express.Router();
 
-// Twilio will POST events like onMessageAdded here if you attach a webhook per‑conversation.
-router.post('/', async (req, res) => {
-  // TODO: validate X-Twilio-Signature unless SKIP_TWILIO_VALIDATION=true (dev only)
+function toContactUri(identity) {
+  const raw = String(identity || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('client:')) return raw;
+  if (raw.startsWith('agent:')) return `client:${raw}`;
+  return `client:agent:${raw}`;
+}
+
+// Twilio will POST events like onMessageAdded here if you attach a webhook per-conversation.
+router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
   console.log('[Conversations Webhook]', eventType, req.body?.MessageSid || '');
   const io = req.app.get('io');
@@ -1682,43 +1937,87 @@ router.post('/', async (req, res) => {
       } catch {
         participantAttrs = {};
       }
+
       const convo = await fetchConversation(conversationSid);
       const attrs = convo.attributes ? JSON.parse(convo.attributes) : {};
       const participants = attrs.participants || {};
       participants[participantSid] = { identity, role: participantAttrs.role };
+
       const updates = { participants };
       const now = new Date().toISOString();
+
+      // 🚀 NUEVO: Si se une un cliente (no agente), crea el Task inmediatamente (sin esperar primer mensaje)
+      if (participantAttrs.role !== 'agent' && !attrs.taskSid) {
+        const task = await createTask({
+          attributes: {
+            channel: 'chat',
+            conversationSid,
+            direction: 'inbound',
+            ...attrs
+          },
+          taskChannel: 'chat'
+        });
+        updates.taskSid = task.sid;
+        pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
+        io?.emit('task_created', { taskSid: task.sid, conversationSid });
+      }
+
       if (participantAttrs.role === 'agent' && !attrs.agentJoinedAt) {
         updates.agentJoinedAt = now;
         if (attrs.taskSid) {
           try {
             const task = await fetchTask(attrs.taskSid);
             const tAttrs = task.attributes ? JSON.parse(task.attributes) : {};
+
+            const selectedContactUri = toContactUri(identity);
+            const mergedTaskAttrs = { ...tAttrs, selected_contact_uri: selectedContactUri };
             await updateTask(attrs.taskSid, {
-              attributes: JSON.stringify({ ...tAttrs, agentJoinedAt: now })
+              attributes: JSON.stringify(mergedTaskAttrs),
+              priority: Math.max(100, Number(task.priority || 0))
             });
-            pushEvent('TASK_UPDATED', {
-              taskSid: attrs.taskSid,
-              conversationSid
-            });
-            io?.emit('task_updated', {
-              taskSid: attrs.taskSid,
-              conversationSid
-            });
+            await updateConversationAttributes(conversationSid, { selected_contact_uri: selectedContactUri });
+
+            pushEvent('TASK_UPDATED', { taskSid: attrs.taskSid, conversationSid });
+            io?.emit('task_updated', { taskSid: attrs.taskSid, conversationSid });
+
+            try {
+              const workers = await listWorkers();
+              const myWorker = workers.find(w => {
+                try {
+                  const wAttrs = JSON.parse(w.attributes || '{}');
+                  return wAttrs.contact_uri === selectedContactUri;
+                } catch { return false; }
+              });
+
+              if (myWorker) {
+                let accepted = false;
+                for (let i = 0; i < 8 && !accepted; i++) {
+                  const resvs = await listWorkerReservations(myWorker.sid);
+                  const mine = resvs.find(r => r.taskSid === attrs.taskSid && String(r.reservationStatus).toLowerCase() === 'pending');
+                  if (mine) {
+                    await acceptReservation(myWorker.sid, mine.sid);
+                    pushEvent('RESERVATION_ACCEPTED', { taskSid: attrs.taskSid, workerSid: myWorker.sid, reservationSid: mine.sid });
+                    io?.emit('reservation_accepted', { taskSid: attrs.taskSid, workerSid: myWorker.sid, reservationSid: mine.sid });
+                    accepted = true;
+                    break;
+                  }
+                  await new Promise(r => setTimeout(r, 400));
+                }
+              }
+            } catch (autoErr) {
+              console.warn('[AUTO_ACCEPT] failed', autoErr?.message || autoErr);
+            }
           } catch (err) {
             console.error('task update error', err);
           }
         }
       }
+
       await updateConversationAttributes(conversationSid, updates);
-      const payload = {
-        conversationSid,
-        participantSid,
-        identity,
-        role: participantAttrs.role
-      };
+      const payload = { conversationSid, participantSid, identity, role: participantAttrs.role };
       pushEvent('PARTICIPANT_ADDED', payload);
       io?.emit('participant_added', payload);
+
     } else if (eventType === 'onParticipantRemoved') {
       const conversationSid = req.body.ConversationSid;
       const participantSid = req.body.ParticipantSid;
@@ -1736,31 +2035,15 @@ router.post('/', async (req, res) => {
       const removed = participants[participantSid];
       delete participants[participantSid];
       await updateConversationAttributes(conversationSid, { participants });
-      const payload = {
-        conversationSid,
-        participantSid,
-        identity: removed?.identity,
-        role: removed?.role
-      };
+      const payload = { conversationSid, participantSid, identity: removed?.identity, role: removed?.role };
       pushEvent('PARTICIPANT_REMOVED', payload);
       io?.emit('participant_removed', payload);
-      const remainingAgents = Object.values(participants).some(
-        (p) => p.role === 'agent'
-      );
+      const remainingAgents = Object.values(participants).some((p) => p.role === 'agent');
       if (!remainingAgents && attrs.taskSid) {
         try {
-          await updateTask(attrs.taskSid, {
-            assignmentStatus: 'wrapping',
-            reason: 'agent left'
-          });
-          pushEvent('CHAT_ORPHANED', {
-            conversationSid,
-            taskSid: attrs.taskSid
-          });
-          io?.emit('chat_orphaned', {
-            conversationSid,
-            taskSid: attrs.taskSid
-          });
+          await updateTask(attrs.taskSid, { assignmentStatus: 'wrapping', reason: 'agent left' });
+          pushEvent('CHAT_ORPHANED', { conversationSid, taskSid: attrs.taskSid });
+          io?.emit('chat_orphaned', { conversationSid, taskSid: attrs.taskSid });
         } catch (err) {
           console.error('task escalation error', err);
         }
@@ -1827,79 +2110,76 @@ export default router;
 ==== src\routes\conversations.route.js ====
 import express from 'express';
 import {
-getOrCreateConversation,
-addChatParticipant,
-addSmsParticipant,
-addWhatsappParticipant,
-addMessengerParticipant,
-sendMessage,
-attachWebhook,
-updateConversationTimers,
-listMessageReceipts,
+  getOrCreateConversation,
+  addChatParticipant,
+  addSmsParticipant,
+  addWhatsappParticipant,
+  addMessengerParticipant,
+  sendMessage,
+  attachWebhook,
+  updateConversationTimers,
+  listMessageReceipts,
+  closeConversation,            // NUEVO
 } from '../conversations/service.js';
-
 
 const router = express.Router();
 
-
 // Create or get a conversation by uniqueName
 router.post('/', async (req, res) => {
-const { uniqueName, friendlyName, attributes } = req.body;
-try {
-const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
-res.json(convo);
-} catch (e) {
-res.status(e.status || 500).json({ error: e.message });
-}
+  const { uniqueName, friendlyName, attributes } = req.body;
+  try {
+    const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
+    res.json(convo);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
-
 
 // Add a participant; body.type: chat|sms|whatsapp|messenger
 router.post('/:sid/participants', async (req, res) => {
-const { sid } = req.params;
-const { type } = req.body;
-try {
-let result;
-switch (type) {
-case 'chat': {
-const { identity, attributes } = req.body;
-result = await addChatParticipant(sid, { identity, attributes });
-break;
-}
-case 'sms': {
-const { to, from } = req.body;
-result = await addSmsParticipant(sid, { to, from });
-break;
-}
-case 'whatsapp': {
-const { to, from } = req.body;
-result = await addWhatsappParticipant(sid, { to, from });
-break;
-}
-case 'messenger': {
-const { userId, pageId } = req.body;
-result = await addMessengerParticipant(sid, { userId, pageId });
-break;
-}
-default:
-return res.status(400).json({ error: 'Unsupported type' });
-}
-res.json(result);
-} catch (e) {
-res.status(e.status || 500).json({ error: e.message });
-}
+  const { sid } = req.params;
+  const { type } = req.body;
+  try {
+    let result;
+    switch (type) {
+      case 'chat': {
+        const { identity, attributes } = req.body;
+        result = await addChatParticipant(sid, { identity, attributes });
+        break;
+      }
+      case 'sms': {
+        const { to, from } = req.body;
+        result = await addSmsParticipant(sid, { to, from });
+        break;
+      }
+      case 'whatsapp': {
+        const { to, from } = req.body;
+        result = await addWhatsappParticipant(sid, { to, from });
+        break;
+      }
+      case 'messenger': {
+        const { userId, pageId } = req.body;
+        result = await addMessengerParticipant(sid, { userId, pageId });
+        break;
+      }
+      default:
+        return res.status(400).json({ error: 'Unsupported type' });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
-
 
 // Send a message
 router.post('/:sid/messages', async (req, res) => {
-const { sid } = req.params;
-try {
-const msg = await sendMessage(sid, req.body);
-res.json(msg);
-} catch (e) {
-res.status(e.status || 500).json({ error: e.message });
-}
+  const { sid } = req.params;
+  try {
+    const msg = await sendMessage(sid, req.body);
+    res.json(msg);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // Retrieve delivery receipts for a message
@@ -1913,30 +2193,44 @@ router.get('/:sid/messages/:messageSid/receipts', async (req, res) => {
   }
 });
 
-
-// Update conversation timers (e.g., to hang up)
+// Update conversation timers (legacy/fallback)
 router.post('/:sid/timers', async (req, res) => {
-const { sid } = req.params;
-try {
-const convo = await updateConversationTimers(sid, req.body);
-res.json(convo);
-} catch (e) {
-res.status(e.status || 500).json({ error: e.message });
-}
+  const { sid } = req.params;
+  try {
+    const convo = await updateConversationTimers(sid, req.body);
+    res.json(convo);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
+/**
+ * NUEVO: Cierre “duro” del chat:
+ * - timers.inactive = PT0S
+ * - timers.closed   = PT0S
+ * - (opcional) removeAllParticipants
+ */
+router.post('/:sid/close', async (req, res) => {
+  const { sid } = req.params;
+  const { removeParticipants = true } = req.body || {};
+  try {
+    const out = await closeConversation(sid, { removeParticipants });
+    res.json(out);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
 
-// Attach a Conversation‑scoped webhook (optional)
+// Attach a Conversation-scoped webhook (optional)
 router.post('/:sid/webhooks', async (req, res) => {
-const { sid } = req.params;
-try {
-const wh = await attachWebhook(sid, req.body);
-res.json(wh);
-} catch (e) {
-res.status(e.status || 500).json({ error: e.message });
-}
+  const { sid } = req.params;
+  try {
+    const wh = await attachWebhook(sid, req.body);
+    res.json(wh);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
-
 
 export default router;
 
@@ -2002,7 +2296,7 @@ ivr.post('/ivr/finance/paylink', financePaylink);
 ==== /src\routes\ivr.js ====
 
 ==== src\routes\taskrouter.js ====
-﻿import { Router } from 'express';
+﻿﻿import { Router } from 'express';
 import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 import { requireAuth } from 'shared/auth';
 import {
@@ -2013,7 +2307,8 @@ import {
   completeTask,
   availableWorkers,
   presence,
-  recent
+  recent,
+  wrapTask,            // NUEVO
 } from '../controllers/taskrouter.js';
 
 export const taskrouter = Router();
@@ -2021,11 +2316,16 @@ taskrouter.post('/taskrouter/assignment', verifyTwilioSignature, assignment);
 taskrouter.post('/taskrouter/events', verifyTwilioSignature, events);
 taskrouter.get('/taskrouter/activities', activities);
 taskrouter.get('/taskrouter/my-tasks', requireAuth, myTasks);
+
+// NUEVO: Forzar WRAPPING (chat)
+taskrouter.post('/taskrouter/tasks/:taskSid/wrap', requireAuth, wrapTask);
+
+// Completar (acepta autoWrap)
 taskrouter.post('/taskrouter/tasks/:taskSid/complete', requireAuth, completeTask);
+
 taskrouter.get('/taskrouter/available-workers', requireAuth, availableWorkers);
 taskrouter.get('/taskrouter/presence', requireAuth, presence);
 taskrouter.get('/events/recent', requireAuth, recent);
-
 
 ==== /src\routes\taskrouter.js ====
 
@@ -2131,7 +2431,7 @@ export const createPayLink = (customerId) => crm.payLink(customerId);
 ==== /src\services\ivr.js ====
 
 ==== src\services\taskrouter.js ====
-﻿import axios from 'axios';
+﻿﻿import axios from 'axios';
 import { rest } from '../twilio.js';
 import { serverEnv as env } from 'shared/env';
 
@@ -2173,6 +2473,14 @@ export async function listWorkersWithRetry(retries = 2, delay = 300) {
   }
 }
 
+// 🔸 aceptar una reservación (para auto-asignar al agente)
+export const acceptReservation = (workerSid, reservationSid) =>
+  rest.taskrouter.v1
+    .workspaces(env.workspaceSid)
+    .workers(workerSid)
+    .reservations(reservationSid)
+    .update({ reservationStatus: 'accepted' });
+
 const _events = [];
 export function pushEvent(type, payload) {
   _events.push({ type, payload, ts: new Date().toISOString() });
@@ -2180,7 +2488,6 @@ export function pushEvent(type, payload) {
 }
 export const recentEvents = () => _events.slice(-200);
 export { axios, env };
-
 
 ==== /src\services\taskrouter.js ====
 

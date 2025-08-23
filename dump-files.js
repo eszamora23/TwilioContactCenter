@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * dump-files.js (ultra-silent)
+ * dump-files.js (ultra-silent con exclusiones por defecto)
+ * - Excluye SIEMPRE: node_modules/, package-lock.json, y .env*
  * - Acepta: --out=FILE o --out FILE, --ext=js,ts o --ext js,ts, etc.
  * - Siempre escribe a un archivo (default: repo_dump.txt o repo_dump.jsonl).
  * - En consola solo imprime file://<ruta-del-archivo> al final.
@@ -41,6 +42,7 @@ function parseArgs(argv) {
 
     else if (t === '--include-hidden') args.includeHidden = true;
     else if (t === '--jsonl') args.jsonl = true;
+
     else if (t === '--help') usageAndExit();
   }
   if (!args.dir) usageAndExit('Falta el directorio.');
@@ -89,24 +91,42 @@ async function listFiles(root, options, out = []) {
 
   for (const e of entries) {
     const name = e.name;
+    const lname = name.toLowerCase();
+
+    // EXCLUSIONES SIEMPRE ACTIVAS:
+    // 1) Bloquear node_modules a nivel de directorio
+    if (e.isDirectory() && lname === 'node_modules') continue;
+
+    // 2) Ignora ocultos si no se pidió incluirlos
     if (!options.includeHidden && isHidden(name)) continue;
+
+    // 3) Ignorados por default/usuario
     if (shouldIgnore(name, options.ignore)) continue;
 
     const full = path.join(root, name);
     if (full === options._outAbs) continue; // no incluir el archivo de salida
 
     if (e.isSymbolicLink()) continue;
+
     if (e.isDirectory()) {
       await listFiles(full, options, out);
     } else if (e.isFile()) {
+      // 4) Excluir package-lock.json y .env*
+      if (lname === 'package-lock.json') continue;
+      if (name === '.env' || name.startsWith('.env')) continue;
+
+      // Filtro por extensión (si se especifica)
       if (options.exts && options.exts.length) {
         const ext = path.extname(name).toLowerCase().replace(/^\./,'');
         if (!options.exts.includes(ext)) continue;
       }
+
+      // Tamaño máximo
       let stat;
       try { stat = await fs.promises.stat(full); } catch { continue; }
       if (stat.size > options.maxSize) continue;
 
+      // Heurística binario
       const sampleLen = Math.min(4096, Math.max(1, stat.size));
       try {
         const fd = await fs.promises.open(full, 'r');
@@ -135,7 +155,6 @@ async function run(){
   const files = await listFiles(root, args);
 
   const writer = fs.createWriteStream(outAbs, { encoding: 'utf8' });
-
   const write = (s) => new Promise((res, rej) => {
     if (writer.write(s)) res();
     else writer.once('drain', res).once('error', rej);

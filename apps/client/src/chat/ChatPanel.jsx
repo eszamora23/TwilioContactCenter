@@ -8,20 +8,30 @@ import ChatWidget from './ChatWidget.jsx';
 
 export default function ChatPanel({
   sessions = [],
+  selectedSid,          // NEW: controlled selected chat
+  onSelect,             // NEW: notify parent when user switches tab
   onClose,
   onIncrementUnread,
   onClearUnread,
   onLabel,
+  onPopout,             // optional popout
 }) {
-  const [activeTab, setActiveTab] = useState(sessions[0]?.sid);
+  const [activeTab, setActiveTab] = useState(selectedSid || sessions[0]?.sid);
 
+  // keep internal state in sync when parent changes selectedSid or sessions change
   useEffect(() => {
-    if (sessions.length === 0) {
+    if (!sessions.length) {
       setActiveTab(undefined);
-    } else if (!sessions.some((s) => s.sid === activeTab)) {
+      return;
+    }
+    if (selectedSid && sessions.some((s) => s.sid === selectedSid) && selectedSid !== activeTab) {
+      setActiveTab(selectedSid);
+      return;
+    }
+    if (!sessions.some((s) => s.sid === activeTab)) {
       setActiveTab(sessions[0].sid);
     }
-  }, [sessions, activeTab]);
+  }, [sessions, selectedSid, activeTab]);
 
   if (sessions.length === 0) return null;
 
@@ -31,6 +41,7 @@ export default function ChatPanel({
       onTabChange={(id) => {
         setActiveTab(id);
         onClearUnread?.(id);
+        onSelect?.(id);     // notify parent
       }}
     >
       <TabList aria-label="Active chats">
@@ -43,6 +54,22 @@ export default function ChatPanel({
                   {s.unread}
                 </Badge>
               )}
+
+              {typeof onPopout === 'function' && (
+                <Button
+                  size="reset"
+                  variant="link"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPopout?.(s.sid);
+                  }}
+                  title="Pop out"
+                  aria-label="Pop out"
+                >
+                  ↗
+                </Button>
+              )}
+
               <Button
                 size="reset"
                 variant="link"
@@ -50,6 +77,8 @@ export default function ChatPanel({
                   e.stopPropagation();
                   onClose?.(s.sid);
                 }}
+                title="Close"
+                aria-label="Close"
               >
                 <CloseIcon decorative />
               </Button>
@@ -57,6 +86,7 @@ export default function ChatPanel({
           </Tab>
         ))}
       </TabList>
+
       <TabPanels>
         {sessions.map((s) => (
           <TabPanel key={s.sid} id={s.sid}>

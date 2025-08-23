@@ -1,7 +1,7 @@
 // contact-center/client/src/components/AgentDesktopShell.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 import PropTypes from 'prop-types';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 import { Box } from '@twilio-paste/core/box';
 import { Button } from '@twilio-paste/core/button';
@@ -9,8 +9,6 @@ import { Input } from '@twilio-paste/core/input';
 import { Stack } from '@twilio-paste/core/stack';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
-import { Badge } from '@twilio-paste/core/badge';
-
 import {
   Sidebar,
   SidebarHeader,
@@ -21,22 +19,12 @@ import {
   SidebarCollapseButton,
 } from '@twilio-paste/core/sidebar';
 
-import {
-  Modal,
-  ModalHeader,
-  ModalHeading,
-  ModalBody,
-  ModalFooter,
-} from '@twilio-paste/core/modal';
-
 import { ArrowForwardIcon } from '@twilio-paste/icons/esm/ArrowForwardIcon';
 
-const SIDEBAR_W = 280;
-const SHELL_HEADER_H = 72; // altura aprox del header interno
+const SIDEBAR_W = 288;
+const SHELL_HEADER_H = 68;
 
-/* =========================
- *   Responsive detection
- * ========================= */
+/* Responsive */
 function useIsDesktop() {
   const mq = '(min-width: 1024px)';
   const [isDesktop, setIsDesktop] = useState(
@@ -54,25 +42,9 @@ function useIsDesktop() {
   return isDesktop;
 }
 
-/* ====================================================================
- *   AgentDesktopShell
- * ====================================================================
- * Props:
- * - sections: [{ id, label, icon?, badge?, hint?, content? }]
- *      content: Node o Function (lazy) que retorna el Node a renderizar en el modal.
- * - title: string
- * - actions?: node (botones a la derecha del header)
- * - footer?: node  (footer del sidebar)
- * - children: contenido (los nodos deben tener id === section.id si no se pasa content)
- * - topOffset?: number (px)    → separa el shell de un header global
- * - measureTopFrom?: string    → id de un elemento externo a medir; si está, usa su altura
- * 
- * Nuevo comportamiento:
- * - Si una sección del menú tiene `content`, al hacer click se abre un popup interno (Modal)
- *   mostrando SOLO ese componente en grande, con botón de cerrar (X + footer).
- *   TIP: si `content` es función, se evalúa on-demand (lazy).
- * - Si la sección NO tiene `content`, se hace scroll suave al elemento con id correspondiente.
- */
+/* =========================
+ *   AgentDesktopShell (compact & context-aware)
+ * ========================= */
 export default function AgentDesktopShell({
   sections,
   title = 'Agent Desktop',
@@ -81,17 +53,28 @@ export default function AgentDesktopShell({
   children,
   topOffset = 0,
   measureTopFrom,
+  mode = 'voice',                             // 'voice' | 'chat'
+  quickActions = { voice: [], chat: [] },    // { voice: [{label, targetId?, onClick?, disabled?, variant?}], chat: [...] }
 }) {
   const isDesktop = useIsDesktop();
+
+  // expose header height to the rest of the app (e.g., StatusBar)
+  useEffect(() => {
+    try {
+      document.documentElement.style.setProperty('--shell-header-h', `${SHELL_HEADER_H}px`);
+    } catch {}
+  }, []);
+
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeId, setActiveId] = useLocalStorage('shell_active', sections?.[0]?.id || '');
   const [filter, setFilter] = useState('');
   const scrollRootRef = useRef(null);
-  const navRefs = useRef({});
 
-  // --- offset superior para respetar header/statusbar externos ---
+  // dynamic offset under external sticky bars
   const [offset, setOffset] = useState(topOffset);
   useEffect(() => setOffset(topOffset), [topOffset]);
+
+  // track another sticky element height (optional)
   useEffect(() => {
     if (!measureTopFrom) return;
     const el = document.getElementById(measureTopFrom);
@@ -101,130 +84,89 @@ export default function AgentDesktopShell({
       setOffset(Math.round(h));
     });
     ro.observe(el);
-    const h0 = el.getBoundingClientRect().height || 0;
-    setOffset(Math.round(h0));
+    setOffset(Math.round(el.getBoundingClientRect().height || 0));
     return () => ro.disconnect();
   }, [measureTopFrom]);
 
-  // ensure stored active section exists
+  // ensure active exists
   useEffect(() => {
-    if (!sections.some((s) => s.id === activeId)) {
-      setActiveId(sections?.[0]?.id || '');
-    }
+    if (!sections?.length) return;
+    if (!sections.some((s) => s.id === activeId)) setActiveId(sections[0].id);
   }, [sections, activeId, setActiveId]);
 
-  // scrollspy para resaltar activo (cuando NO es modal)
+  // filter
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return sections || [];
+    return (sections || []).filter(
+      (s) =>
+        s.label.toLowerCase().includes(q) ||
+        (s.hint && String(s.hint).toLowerCase().includes(q)) ||
+        (s.id && s.id.toLowerCase().includes(q))
+    );
+  }, [sections, filter]);
+
+  // keep active within filtered
+  useEffect(() => {
+    if (!filtered?.length) return;
+    if (!filtered.some((s) => s.id === activeId)) setActiveId(filtered[0].id);
+  }, [filtered, activeId, setActiveId]);
+
+  // scrollspy → update activeId
   useEffect(() => {
     const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
     if (!root) return;
-    const ids = sections.map((s) => s.id);
+
+    const ids = (sections || []).map((s) => s.id);
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
     if (!els.length) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        const topMost = visible[0]?.target?.id;
+        const first = entries.find((e) => e.isIntersecting);
+        const topMost = first?.target?.id;
         if (topMost) {
           setActiveId(topMost);
-          if (history.replaceState) history.replaceState(null, '', `#${topMost}`);
+          if (history.replaceState) history.replaceState(null, '', `#${encodeURIComponent(topMost)}`);
         }
       },
-      {
-        root,
-        threshold: [0.3, 0.6, 0.9],
-        rootMargin: `-${offset + SHELL_HEADER_H}px 0px 0px 0px`,
-      }
+      { root, threshold: [0.25], rootMargin: `-${offset + SHELL_HEADER_H}px 0px 0px 0px` }
     );
 
     els.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [sections, children, offset]);
 
-  // scroll a sección (fallback)
-  const scrollTo = useCallback(
-    (id) => {
-      const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
-      const target = document.getElementById(id);
-      if (!root || !target) return;
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (!isDesktop) setDrawerOpen(false);
-    },
-    [isDesktop]
-  );
+  const scrollTo = useCallback((id) => {
+    const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
+    const target = document.getElementById(id);
+    if (!root || !target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!isDesktop) setDrawerOpen(false);
+  }, [isDesktop]);
 
-  // saltar a hash si existe
+  // hash navigation (first load & popstate)
   useEffect(() => {
-    const hash = decodeURIComponent((typeof window !== 'undefined' && window.location.hash) || '').replace('#', '');
-    if (hash && sections.some((s) => s.id === hash)) {
-      setTimeout(() => scrollTo(hash), 0);
-    }
+    const go = () => {
+      const hash = decodeURIComponent((typeof window !== 'undefined' && window.location.hash) || '').replace('#', '');
+      if (hash && sections?.some((s) => s.id === hash)) setTimeout(() => scrollTo(hash), 0);
+    };
+    go();
+    window.addEventListener('popstate', go);
+    return () => window.removeEventListener('popstate', go);
   }, [sections, scrollTo]);
 
-  // filtrar items
-  const filteredSections = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return sections;
-    return sections.filter(
-      (s) => s.label.toLowerCase().includes(q) || (s.hint && String(s.hint).toLowerCase().includes(q))
-    );
-  }, [sections, filter]);
-
-  // teclado en sidebar
-  const focusIndexById = (id) => filteredSections.findIndex((s) => s.id === id);
-  const handleKeyDown = (e) => {
-    if (!filteredSections.length) return;
-    const idx = Math.max(0, focusIndexById(activeId));
-    if (e.key === 'ArrowDown') {
+  // minimal keyboard support (Enter/Space)
+  const handleKeyDown = (e, id) => {
+    if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      const next = filteredSections[Math.min(idx + 1, filteredSections.length - 1)];
-      if (next) {
-        setActiveId(next.id);
-        navRefs.current[next.id]?.focus();
-        handleSectionInvoke(next);
-      }
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const prev = filteredSections[Math.max(idx - 1, 0)];
-      if (prev) {
-        setActiveId(prev.id);
-        navRefs.current[prev.id]?.focus();
-        handleSectionInvoke(prev);
-      }
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      const s = filteredSections[idx] || null;
-      if (s) handleSectionInvoke(s);
+      scrollTo(id);
     }
   };
 
-  /* =========================
-   *  POPUP INTERNO (Modal)
-   * ========================= */
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalSection, setModalSection] = useState(null);
+  // contextual quick actions
+  const modeList = (quickActions?.[mode] || []).filter(Boolean);
 
-  // abrir sección: si trae content → modal; si no → scroll
-  function handleSectionInvoke(section) {
-    if (section?.content) {
-      setModalSection(section);
-      setModalOpen(true);
-      if (!isDesktop) setDrawerOpen(false);
-    } else {
-      scrollTo(section.id);
-    }
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setModalSection(null);
-  }
-
-  /* =========================
-   *  Sidebar inner
-   * ========================= */
   const SidebarInner = (
     <>
       <SidebarHeader
@@ -234,9 +176,10 @@ export default function AgentDesktopShell({
           zIndex: 2,
           background: 'var(--paste-color-background-body)',
           borderBottom: '1px solid var(--paste-color-border-weak)',
+          backdropFilter: 'saturate(140%) blur(6px)',
         }}
       >
-        <SidebarHeaderLabel>Menu</SidebarHeaderLabel>
+        <SidebarHeaderLabel>Navigation</SidebarHeaderLabel>
         {!isDesktop && (
           <SidebarCollapseButton
             i18nCollapseLabel="Hide navigation"
@@ -246,48 +189,70 @@ export default function AgentDesktopShell({
         )}
       </SidebarHeader>
 
-      {/* Buscador */}
-      <Box padding="space60" paddingBottom="space20">
+      {/* Quick actions (VOICE / CHAT aware) */}
+      {modeList.length > 0 && (
+        <Box padding="space60" paddingBottom="space20">
+          <Stack orientation="vertical" spacing="space40">
+            <Heading as="h4" variant="heading40" margin="space0">Quick actions</Heading>
+            <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+              {modeList.map((a, i) => (
+                <Button
+                  key={`${mode}-qa-${i}`}
+                  size="small"
+                  variant={a.variant || 'secondary'}
+                  disabled={a.disabled}
+                  onClick={() => (a.targetId ? scrollTo(a.targetId) : a.onClick?.())}
+                >
+                  {a.label}
+                </Button>
+              ))}
+            </Stack>
+          </Stack>
+        </Box>
+      )}
+
+      {/* Finder */}
+      <Box padding="space60" paddingTop={modeList.length ? 'space20' : 'space60'} paddingBottom="space20">
         <Input
+          id="shell-filter-input"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter sections…"
           aria-label="Filter sections"
-          onKeyDown={handleKeyDown}
         />
       </Box>
 
       <SidebarBody>
-        <SidebarNavigation aria-label="Primary navigation">
-          {!filteredSections.length ? (
-            <Box color="colorTextWeak" padding="space60">
-              No matches
-            </Box>
+        <SidebarNavigation aria-label="Sections">
+          {!filtered.length ? (
+            <Box color="colorTextWeak" padding="space60">No matches</Box>
           ) : (
-            filteredSections.map((s) => (
+            filtered.map((s) => (
               <SidebarNavigationItem
                 key={s.id}
                 as="button"
                 selected={activeId === s.id}
                 aria-label={s.label}
                 aria-current={activeId === s.id ? 'page' : undefined}
-                onClick={() => handleSectionInvoke(s)}
-                onKeyDown={handleKeyDown}
-                style={{ outlineOffset: 2, justifyContent: 'space-between' }}
-                ref={(el) => (navRefs.current[s.id] = el)}
+                onClick={() => scrollTo(s.id)}
+                onKeyDown={(e) => handleKeyDown(e, s.id)}
+                style={{ outlineOffset: 2 }}
               >
-                <Stack orientation="horizontal" spacing="space30" alignment="center">
-                  {s.icon ? <span aria-hidden="true">{s.icon}</span> : null}
-                  <span>{s.label}</span>
+                <Stack
+                  orientation="horizontal"
+                  spacing="space30"
+                  alignment="center"
+                  style={{ justifyContent: 'space-between', width: '100%' }}
+                >
+                  <span style={{ fontWeight: activeId === s.id ? 600 : 500 }}>{s.label}</span>
+                  {s.badge ? <span style={{ opacity: 0.75 }}>{s.badge}</span> : null}
                 </Stack>
-                {s.badge ? <Badge as="span" variant="new">{s.badge}</Badge> : null}
               </SidebarNavigationItem>
             ))
           )}
         </SidebarNavigation>
       </SidebarBody>
 
-      {/* Footer opcional */}
       {footer ? (
         <>
           <Separator orientation="horizontal" verticalSpacing="space50" />
@@ -299,7 +264,7 @@ export default function AgentDesktopShell({
 
   return (
     <Box height="100vh" width="100%" overflow="hidden" position="relative">
-      {/* Sidebar fija desktop */}
+      {/* Desktop sidebar */}
       {isDesktop && (
         <Box
           as="aside"
@@ -317,7 +282,7 @@ export default function AgentDesktopShell({
         </Box>
       )}
 
-      {/* Área principal */}
+      {/* Main column */}
       <Box
         as="main"
         display="flex"
@@ -325,8 +290,9 @@ export default function AgentDesktopShell({
         height="100vh"
         overflow="hidden"
         paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
+        style={{ background: 'var(--paste-color-background-body)' }}
       >
-        {/* Header sticky */}
+        {/* Sticky header */}
         <Box
           as="header"
           paddingX="space70"
@@ -337,13 +303,16 @@ export default function AgentDesktopShell({
             position: 'sticky',
             top: `${offset}px`,
             zIndex: 6,
+            backdropFilter: 'saturate(140%) blur(6px)',
+            height: `${SHELL_HEADER_H}px`,
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
-          <Stack orientation="horizontal" spacing="space60" alignment="center" distribution="spaceBetween">
+          <Stack orientation="horizontal" spacing="space60" alignment="center" distribution="spaceBetween" width="100%">
             <Heading as="h3" variant="heading30" margin="space0">
               {title}
             </Heading>
-
             <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
               {actions || null}
               {!isDesktop && (
@@ -362,7 +331,7 @@ export default function AgentDesktopShell({
           </Stack>
         </Box>
 
-        {/* Contenedor scrollable (contenido normal) */}
+        {/* Scroll container */}
         <Box
           id="shell-scroll-root"
           ref={scrollRootRef}
@@ -371,11 +340,13 @@ export default function AgentDesktopShell({
           overflow="auto"
           backgroundColor="colorBackgroundBody"
         >
-          <Box padding="space70">{children}</Box>
+          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1400 }}>
+            {children}
+          </Box>
         </Box>
       </Box>
 
-      {/* Drawer móvil/tablet */}
+      {/* Mobile drawer */}
       {!isDesktop && drawerOpen && (
         <>
           <Box
@@ -387,7 +358,7 @@ export default function AgentDesktopShell({
             top={`${offset}px`}
             left={0}
             height={`calc(100vh - ${offset}px)`}
-            width="min(80vw, 320px)"
+            width="min(82vw, 340px)"
             zIndex={11}
             boxShadow="shadow"
             backgroundColor="colorBackgroundBody"
@@ -412,26 +383,6 @@ export default function AgentDesktopShell({
           />
         </>
       )}
-
-      {/* ============ POPUP INTERNO (MODAL) PARA SECCIONES ============ */}
-      <Modal isOpen={modalOpen} onDismiss={closeModal} size="wide">
-        <ModalHeader>
-          <ModalHeading>{modalSection?.label || 'Detail'}</ModalHeading>
-        </ModalHeader>
-        <ModalBody>
-          {/* Si la sección trajo content, lo renderizamos aquí (soporta lazy: función) */}
-          <Box>
-            {typeof modalSection?.content === 'function'
-              ? modalSection.content()
-              : (modalSection?.content || null)}
-          </Box>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="primary" onClick={closeModal}>
-            Close
-          </Button>
-        </ModalFooter>
-      </Modal>
     </Box>
   );
 }
@@ -441,11 +392,9 @@ AgentDesktopShell.propTypes = {
     PropTypes.shape({
       id: PropTypes.string.isRequired,
       label: PropTypes.string.isRequired,
-      icon: PropTypes.node,    // optional icon
       badge: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
-      hint: PropTypes.string,  // text used in filtering
-      // contenido para abrir en popup interno; acepta nodo o función (lazy)
-      content: PropTypes.oneOfType([PropTypes.node, PropTypes.func]),
+      hint: PropTypes.string,
+      icon: PropTypes.node,
     })
   ).isRequired,
   title: PropTypes.string,
@@ -454,4 +403,21 @@ AgentDesktopShell.propTypes = {
   children: PropTypes.node.isRequired,
   topOffset: PropTypes.number,
   measureTopFrom: PropTypes.string,
+  mode: PropTypes.oneOf(['voice', 'chat']),
+  quickActions: PropTypes.shape({
+    voice: PropTypes.arrayOf(PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      targetId: PropTypes.string,
+      onClick: PropTypes.func,
+      disabled: PropTypes.bool,
+      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
+    })),
+    chat: PropTypes.arrayOf(PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      targetId: PropTypes.string,
+      onClick: PropTypes.func,
+      disabled: PropTypes.bool,
+      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
+    })),
+  }),
 };

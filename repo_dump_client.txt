@@ -1,0 +1,5614 @@
+==== index.html ====
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Desktop</title>
+    <style>
+      /* Garantiza que el layout pueda usar 100vh real sin scrolls padres */
+      html, body, #root { height: 100%; margin: 0; }
+    </style>
+    <!-- TaskRouter JS SDK v1 -->
+    <script src="https://sdk.twilio.com/js/taskrouter/v1.21/taskrouter.min.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+==== /index.html ====
+
+==== package.json ====
+{
+  "name": "contact-center-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@tanstack/react-query": "^5.85.5",
+    "@twilio-paste/core": "^21.4.0",
+    "@twilio-paste/icons": "^13.1.0",
+    "@twilio-paste/theme": "^12.0.1",
+    "@twilio/conversations": "^2.6.3",
+    "@twilio/voice-sdk": "^2.8.0",
+    "axios": "^1.7.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^15.7.0",
+    "react-idle-timer": "^5.7.2",
+    "shared": "file:../../packages/shared",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.3.4"
+  }
+}
+
+==== /package.json ====
+
+==== src\App.jsx ====
+// contact-center/client/src/App.jsx
+import { useEffect, useState } from 'react';
+import { IdleTimerProvider } from 'react-idle-timer';
+import { I18nextProvider } from 'react-i18next';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+import i18n from './i18n.js';
+import Api from './features/index.js';
+import Login from './features/auth/components/Login.jsx';
+import AgentApp from './features/tasks/components/AgentApp.jsx';
+const queryClient = new QueryClient();
+
+export default function App() {
+  const [ctx, setCtx] = useState(null);
+  useEffect(() => {
+    Api.me()
+      .then(data => {
+        if (data?.agent) setCtx({ agent: data.agent });
+      })
+      .catch(() => {});
+  }, []);
+  if (!ctx) return <Login onReady={setCtx} />;
+
+  const onIdle = async () => {
+    await Api.logout();
+    window.location.reload();
+  };
+
+  return (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={queryClient}>
+        <IdleTimerProvider timeout={15 * 60 * 1000} onIdle={onIdle}>
+          <AgentApp />
+        </IdleTimerProvider>
+      </QueryClientProvider>
+    </I18nextProvider>
+  );
+}
+
+==== /src\App.jsx ====
+
+==== src\chat\ChatPanel.jsx ====
+import { useState, useEffect } from 'react';
+import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs';
+import { Box } from '@twilio-paste/core/box';
+import { Button } from '@twilio-paste/core/button';
+import { Badge } from '@twilio-paste/core/badge';
+import { CloseIcon } from '@twilio-paste/icons/esm/CloseIcon';
+import ChatWidget from './ChatWidget.jsx';
+
+export default function ChatPanel({
+  sessions = [],
+  selectedSid,          // NEW: controlled selected chat
+  onSelect,             // NEW: notify parent when user switches tab
+  onClose,
+  onIncrementUnread,
+  onClearUnread,
+  onLabel,
+  onPopout,             // optional popout
+}) {
+  const [activeTab, setActiveTab] = useState(selectedSid || sessions[0]?.sid);
+
+  // keep internal state in sync when parent changes selectedSid or sessions change
+  useEffect(() => {
+    if (!sessions.length) {
+      setActiveTab(undefined);
+      return;
+    }
+    if (selectedSid && sessions.some((s) => s.sid === selectedSid) && selectedSid !== activeTab) {
+      setActiveTab(selectedSid);
+      return;
+    }
+    if (!sessions.some((s) => s.sid === activeTab)) {
+      setActiveTab(sessions[0].sid);
+    }
+  }, [sessions, selectedSid, activeTab]);
+
+  if (sessions.length === 0) return null;
+
+  return (
+    <Tabs
+      selectedId={activeTab}
+      onTabChange={(id) => {
+        setActiveTab(id);
+        onClearUnread?.(id);
+        onSelect?.(id);     // notify parent
+      }}
+    >
+      <TabList aria-label="Active chats">
+        {sessions.map((s) => (
+          <Tab key={s.sid} id={s.sid}>
+            <Box display="flex" alignItems="center" columnGap="space20">
+              <Box as="span">{s.label}</Box>
+              {s.unread > 0 && (
+                <Badge as="span" variant="new">
+                  {s.unread}
+                </Badge>
+              )}
+
+              {typeof onPopout === 'function' && (
+                <Button
+                  size="reset"
+                  variant="link"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPopout?.(s.sid);
+                  }}
+                  title="Pop out"
+                  aria-label="Pop out"
+                >
+                  ↗
+                </Button>
+              )}
+
+              <Button
+                size="reset"
+                variant="link"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose?.(s.sid);
+                }}
+                title="Close"
+                aria-label="Close"
+              >
+                <CloseIcon decorative />
+              </Button>
+            </Box>
+          </Tab>
+        ))}
+      </TabList>
+
+      <TabPanels>
+        {sessions.map((s) => (
+          <TabPanel key={s.sid} id={s.sid}>
+            <ChatWidget
+              conversationIdOrUniqueName={s.sid}
+              isActive={activeTab === s.sid}
+              onMessageAdded={() =>
+                s.sid === activeTab
+                  ? onClearUnread?.(s.sid)
+                  : onIncrementUnread?.(s.sid)
+              }
+              onLabel={(label) => onLabel?.(s.sid, label)}
+            />
+          </TabPanel>
+        ))}
+      </TabPanels>
+    </Tabs>
+  );
+}
+
+==== /src\chat\ChatPanel.jsx ====
+
+==== src\chat\ChatWidget.jsx ====
+import { useEffect, useState, useRef } from 'react';
+import { Client as ConversationsClient } from '@twilio/conversations';
+import { Box } from '@twilio-paste/core/box';
+import {
+  ChatLog,
+  ChatMessage,
+  ChatBubble,
+  ChatMessageMeta,
+  ChatMessageMetaItem,
+} from '@twilio-paste/core/chat-log';
+import { Input } from '@twilio-paste/core/input';
+import { Button } from '@twilio-paste/core/button';
+import { Heading } from '@twilio-paste/core/heading';
+import { Text } from '@twilio-paste/core/text';
+import styles from './ChatWidget.module.css';
+
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+
+export default function ChatWidget({
+  conversationIdOrUniqueName,
+  onMessageAdded,
+  onLabel,
+  isActive,
+}) {
+  const [client, setClient] = useState(null);
+  const clientRef = useRef(null);
+  const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const identityRef = useRef();
+  const [isTyping, setIsTyping] = useState(false);
+  const bottomRef = useRef(null);
+
+  // Mantener refs para callbacks inestables (no usarlas como deps de efectos con listeners)
+  const onMessageAddedRef = useRef(onMessageAdded);
+  const onLabelRef = useRef(onLabel);
+  useEffect(() => { onMessageAddedRef.current = onMessageAdded; }, [onMessageAdded]);
+  useEffect(() => { onLabelRef.current = onLabel; }, [onLabel]);
+
+  const fetchToken = async () => {
+    const url = identityRef.current
+      ? `${API_BASE}/chat/refresh?identity=${encodeURIComponent(identityRef.current)}`
+      : `${API_BASE}/chat/token`;
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(`chat token failed: ${r.status} ${txt}`);
+    }
+    const data = await r.json();
+    if (data.identity) identityRef.current = data.identity;
+    return data.token;
+  };
+
+  // Bootstrap SDK (un cliente por widget) y resolver conversación (con retry si aún no estamos unidos)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const token = await fetchToken();
+        const c = new ConversationsClient(token);
+        clientRef.current = c;
+
+        const refresh = async () => {
+          try {
+            const newToken = await fetchToken();
+            await c.updateToken(newToken);
+          } catch (e) {
+            console.error('[ChatWidget] token refresh error', e);
+          }
+        };
+        c.on('tokenAboutToExpire', refresh);
+        c.on('tokenExpired', refresh);
+
+        if (cancelled) {
+          try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}
+          return;
+        }
+
+        setClient(c);
+
+        // Resolver conversación por SID o uniqueName (reintenta si aún no somos participantes)
+        const maxTries = 6;
+        const delayMs = 1200;
+        let attempt = 0;
+        let convo = null;
+
+        while (!cancelled && attempt < maxTries) {
+          try {
+            try {
+              convo = await c.getConversationBySid(conversationIdOrUniqueName);
+            } catch {
+              convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
+            }
+            if (convo) break;
+          } catch (err) {
+            const msg = String(err?.message || '').toLowerCase();
+            const forbidden = msg.includes('forbidden') || msg.includes('401') || msg.includes('403');
+            if (!forbidden) {
+              console.error('Conversation lookup error', err);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, delayMs));
+            attempt++;
+          }
+        }
+
+        if (!cancelled) {
+          if (convo) {
+            setConversation(convo);
+          } else {
+            console.error('Conversation not found or not joined yet');
+          }
+        }
+      } catch (e) {
+        console.error('[ChatWidget] init error', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      const old = clientRef.current;
+      clientRef.current = null;
+      try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch {}
+    };
+    // Solo cuando cambia la conversación objetivo (no dependas de onMessageAdded/onLabel)
+  }, [conversationIdOrUniqueName]);
+
+  // Resetear mensajes al cambiar de conversación objetivo (evita reciclar estado)
+  useEffect(() => {
+    setMessages([]);
+  }, [conversationIdOrUniqueName]);
+
+  // Cargar historial + suscribirse a nuevos mensajes (1 solo listener por conversación)
+  useEffect(() => {
+    if (!conversation) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const page = await conversation.getMessages();
+        if (!cancelled) setMessages(page.items);
+      } catch (e) {
+        console.error('getMessages error', e);
+      }
+    })();
+
+    const handler = (m) => {
+      setMessages((prev) => [...prev, m]);
+      // notificar al panel con la ref (para no recrear listeners)
+      if (m.author !== identityRef.current) {
+        try { onMessageAddedRef.current?.(conversation.sid, m); } catch {}
+      }
+    };
+    conversation.on('messageAdded', handler);
+
+    return () => {
+      cancelled = true;
+      try { conversation.off('messageAdded', handler); } catch {}
+    };
+  }, [conversation]);
+
+  // Typing indicators (listeners sobre el client, limpios al cambiar client/conversation)
+  useEffect(() => {
+    if (!client || !conversation) return;
+
+    const handleStart = ({ conversationSid }) => {
+      if (conversationSid === conversation.sid) setIsTyping(true);
+    };
+    const handleEnd = ({ conversationSid }) => {
+      if (conversationSid === conversation.sid) setIsTyping(false);
+    };
+
+    client.on('typingStarted', handleStart);
+    client.on('typingEnded', handleEnd);
+
+    return () => {
+      client.off('typingStarted', handleStart);
+      client.off('typingEnded', handleEnd);
+    };
+  }, [client, conversation]);
+
+  // Marcar leído al activar tab / focus
+  useEffect(() => {
+    if (!conversation) return;
+    const markRead = () => {
+      try { conversation.setAllMessagesRead(); } catch {}
+    };
+    if (isActive) markRead();
+    const onFocus = () => { if (isActive) markRead(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [conversation, isActive]);
+
+  // Calcular y propagar "label" sin bucles de render
+  const lastLabelRef = useRef('');
+  useEffect(() => {
+    if (!conversation) return;
+    let mounted = true;
+
+    (async () => {
+      try {
+        const attrs =
+          typeof conversation.attributes === 'string'
+            ? (conversation.attributes ? JSON.parse(conversation.attributes) : {})
+            : (conversation.attributes || {});
+
+        let label = attrs.title || conversation.friendlyName || '';
+
+        if (!label) {
+          const participants = await conversation.getParticipants();
+          label = participants
+            .map((p) => {
+              const pa =
+                typeof p.attributes === 'string'
+                  ? (p.attributes ? JSON.parse(p.attributes) : {})
+                  : (p.attributes || {});
+              return pa.friendlyName || p.identity;
+            })
+            .filter(Boolean)
+            .join(', ');
+        }
+
+        if (mounted && label && label !== lastLabelRef.current) {
+          lastLabelRef.current = label;
+          try { onLabelRef.current?.(label); } catch {}
+        }
+      } catch (e) {
+        console.error('conversation info error', e);
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [conversation]);
+
+  // Autoscroll al final
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const send = async () => {
+    if (!conversation || !text.trim()) return;
+    await conversation.sendMessage(text.trim());
+    setText('');
+  };
+
+  return (
+    <Box
+      className={styles.container}
+      borderStyle="solid"
+      borderColor="colorBorderWeaker"
+      borderWidth="borderWidth10"
+      borderRadius="borderRadius30"
+      padding="space60"
+    >
+      <Heading as="h3" variant="heading30" marginBottom="space50">
+        Support Chat
+      </Heading>
+      <Box
+        className={styles.log}
+        overflowY="auto"
+        backgroundColor="colorBackground"
+        padding="space50"
+        borderRadius="borderRadius20"
+        marginBottom="space50"
+      >
+        <ChatLog>
+          {messages.map((m) => (
+            <ChatMessage
+              key={m.sid}
+              variant={m.author === identityRef.current ? 'outbound' : 'inbound'}
+            >
+              <ChatBubble>
+                <Text as="p">{m.body}</Text>
+              </ChatBubble>
+              <ChatMessageMeta>
+                <ChatMessageMetaItem>
+                  <Text as="span" color="colorTextWeak" fontSize="fontSize20">
+                    {m.author || 'system'}
+                  </Text>
+                </ChatMessageMetaItem>
+              </ChatMessageMeta>
+            </ChatMessage>
+          ))}
+          <Box ref={bottomRef} />
+        </ChatLog>
+      </Box>
+      {isTyping && (
+        <Text as="p" color="colorTextWeak" fontSize="fontSize20" marginBottom="space50">
+          Typing...
+        </Text>
+      )}
+      <Box display="flex" columnGap="space50">
+        <Box flexGrow={1}>
+          <Input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Escribe..."
+          />
+        </Box>
+        <Button variant="primary" onClick={send}>
+          Enviar
+        </Button>
+      </Box>
+    </Box>
+  );
+}
+
+==== /src\chat\ChatWidget.jsx ====
+
+==== src\chat\ChatWidget.module.css ====
+.container {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.log {
+  height: 50vh;
+  min-height: 260px;
+}
+
+==== /src\chat\ChatWidget.module.css ====
+
+==== src\features\auth\components\Login.jsx ====
+// contact-center/client/src/components/Login.jsx
+import { useState } from 'react';
+import Api from '../../index.js';
+
+import { Box } from '@twilio-paste/core/box';
+import { Heading } from '@twilio-paste/core/heading';
+import { Input } from '@twilio-paste/core/input';
+import { Label } from '@twilio-paste/core/label';
+import { Button } from '@twilio-paste/core/button';
+import { Stack } from '@twilio-paste/core/stack';
+import { Card } from '@twilio-paste/core/card';
+import { Callout, CalloutHeading, CalloutText } from '@twilio-paste/core/callout';
+import { FormControl } from '@twilio-paste/core/form';
+import { HelpText } from '@twilio-paste/core/help-text';
+import { Spinner } from '@twilio-paste/core/spinner';
+export default function Login({ onReady }) {
+  const [agentId, setAgentId] = useState('');
+  const [workerSid, setWorkerSid] = useState('');
+  const [identity, setIdentity] = useState('');
+  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    const errors = {};
+    if (!agentId) errors.agentId = 'Agent ID is required';
+    if (!workerSid) errors.workerSid = 'Worker SID is required';
+    if (!identity) errors.identity = 'Identity is required';
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors);
+      return;
+    }
+    setFieldErrors({});
+    setLoading(true);
+    try {
+      const data = await Api.login(agentId, workerSid, identity);
+      onReady({ agent: data.agent });
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Box maxWidth="420px" marginX="auto">
+      {error ? (
+        <Callout variant="error" marginBottom="space60">
+          <CalloutHeading>Login error</CalloutHeading>
+          <CalloutText>{error}</CalloutText>
+        </Callout>
+      ) : null}
+
+      <Card padding="space70">
+        <Heading as="h3" variant="heading30" marginBottom="space70">Sign in</Heading>
+        <Box as="form" onSubmit={submit}>
+          <Stack orientation="vertical" spacing="space70">
+            <FormControl>
+              <Label htmlFor="agentId">Agent ID</Label>
+              <Input
+                id="agentId"
+                value={agentId}
+                onChange={e => {
+                  setAgentId(e.target.value);
+                  if (fieldErrors.agentId)
+                    setFieldErrors(prev => ({ ...prev, agentId: undefined }));
+                }}
+                required
+                autoFocus
+                hasError={Boolean(fieldErrors.agentId)}
+              />
+              {fieldErrors.agentId ? (
+                <HelpText variant="error">{fieldErrors.agentId}</HelpText>
+              ) : null}
+            </FormControl>
+            <FormControl>
+              <Label htmlFor="workerSid">Worker SID</Label>
+              <Input
+                id="workerSid"
+                value={workerSid}
+                onChange={e => {
+                  setWorkerSid(e.target.value);
+                  if (fieldErrors.workerSid)
+                    setFieldErrors(prev => ({ ...prev, workerSid: undefined }));
+                }}
+                required
+                hasError={Boolean(fieldErrors.workerSid)}
+              />
+              {fieldErrors.workerSid ? (
+                <HelpText variant="error">{fieldErrors.workerSid}</HelpText>
+              ) : null}
+            </FormControl>
+            <FormControl>
+              <Label htmlFor="identity">Identity (client:agent:42)</Label>
+              <Input
+                id="identity"
+                value={identity}
+                onChange={e => {
+                  setIdentity(e.target.value);
+                  if (fieldErrors.identity)
+                    setFieldErrors(prev => ({ ...prev, identity: undefined }));
+                }}
+                required
+                hasError={Boolean(fieldErrors.identity)}
+              />
+              {fieldErrors.identity ? (
+                <HelpText variant="error">{fieldErrors.identity}</HelpText>
+              ) : null}
+            </FormControl>
+            <Button variant="primary" type="submit" disabled={loading}>
+              {loading ? (
+                <>
+                  <Spinner decorative={false} title="Loading" size="sizeIcon20" />
+                  {' '}
+                  Logging in...
+                </>
+              ) : (
+                'Login'
+              )}
+            </Button>
+          </Stack>
+        </Box>
+      </Card>
+    </Box>
+  );
+}
+
+==== /src\features\auth\components\Login.jsx ====
+
+==== src\features\auth\services\auth.js ====
+import http from '../../../shared/services/http.js';
+
+export const login = (agentId, workerSid, identity) =>
+  http.post('/auth/login', { agentId, workerSid, identity }).then((r) => r.data);
+
+export const logout = () => http.post('/auth/logout');
+
+export const me = () => http.get('/auth/me').then(r => r.data);
+
+==== /src\features\auth\services\auth.js ====
+
+==== src\features\index.js ====
+import * as auth from './auth/services/auth.js';
+import * as voice from './softphone/services/voice.js';
+import * as taskRouter from './tasks/services/taskRouter.js';
+import * as crm from './tasks/services/crm.js';
+import * as reports from './tasks/services/reports.js';
+
+export const Api = {
+  ...auth,
+  ...voice,
+  ...taskRouter,
+  ...crm,
+  ...reports,
+};
+
+export default Api;
+
+export { auth, voice, taskRouter, crm, reports };
+
+==== /src\features\index.js ====
+
+==== src\features\softphone\components\CallControlBar.jsx ====
+import React from 'react';
+import { useTranslation } from 'react-i18next';
+import { ButtonGroup } from '@twilio-paste/core/button-group';
+import { Button } from '@twilio-paste/core/button';
+import { Tooltip } from '@twilio-paste/core/tooltip';
+import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
+
+import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
+import { DialpadIcon } from '@twilio-paste/icons/esm/DialpadIcon';
+import { CallHoldIcon } from '@twilio-paste/icons/esm/CallHoldIcon';
+import { MoreIcon } from '@twilio-paste/icons/esm/MoreIcon';
+import { MicrophoneOnIcon } from '@twilio-paste/icons/esm/MicrophoneOnIcon';
+import { MicrophoneOffIcon } from '@twilio-paste/icons/esm/MicrophoneOffIcon';
+
+export default function CallControlBar({
+  callStatus,
+  isMuted,
+  holding,
+  recStatus,
+  hangup,
+  toggleMute,
+  holdStart,
+  holdStop,
+  recStart,
+  recPause,
+  recResume,
+  recStop,
+  onOpenDtmf,
+}) {
+  const { t } = useTranslation();
+  const menu = useMenuState();
+
+  const inCall = callStatus === 'In Call';
+  const canHang = inCall || callStatus === 'Incoming';
+
+  return (
+    <>
+      <ButtonGroup>
+        <Tooltip text={isMuted ? t('unmute') : t('mute')}>
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => toggleMute(!isMuted)}
+            aria-label={isMuted ? t('unmuteAria') : t('muteAria')}
+            aria-pressed={isMuted}
+          >
+            {isMuted ? <MicrophoneOffIcon decorative /> : <MicrophoneOnIcon decorative />}
+          </Button>
+        </Tooltip>
+
+        <Tooltip text={t('hangup')}>
+          <Button
+            variant="destructive"
+            size="icon"
+            onClick={hangup}
+            aria-label={t('hangupAria')}
+            disabled={!canHang}
+          >
+            <CallIcon decorative />
+          </Button>
+        </Tooltip>
+
+        <Tooltip text={t('dtmf')}>
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={onOpenDtmf}
+            aria-label={t('dtmfAria')}
+            disabled={!inCall}
+          >
+            <DialpadIcon decorative />
+          </Button>
+        </Tooltip>
+
+        <Tooltip text={holding ? t('resume') : t('hold')}>
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={holding ? holdStop : holdStart}
+            aria-label={holding ? t('resumeAria') : t('holdAria')}
+            aria-pressed={holding}
+            disabled={!inCall}
+          >
+            <CallHoldIcon decorative />
+          </Button>
+        </Tooltip>
+
+        <Tooltip text={t('more')}>
+          <MenuButton {...menu} variant="secondary" aria-label={t('more')}>
+            <MoreIcon decorative />
+          </MenuButton>
+        </Tooltip>
+      </ButtonGroup>
+
+      <Menu {...menu} aria-label={t('more')}>
+        <MenuItem
+          onClick={recStart}
+          disabled={!inCall || (recStatus !== 'inactive' && recStatus !== 'stopped')}
+        >
+          {t('startRecTitle')}
+        </MenuItem>
+        <MenuItem onClick={recPause} disabled={recStatus !== 'in-progress'}>
+          {t('pauseRecTitle')}
+        </MenuItem>
+        <MenuItem onClick={recResume} disabled={recStatus !== 'paused'}>
+          {t('resumeRecTitle')}
+        </MenuItem>
+        <MenuItem onClick={recStop} disabled={recStatus === 'inactive'}>
+          {t('stopRecTitle')}
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+
+==== /src\features\softphone\components\CallControlBar.jsx ====
+
+==== src\features\softphone\components\CallControlsModal.jsx ====
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Box } from '@twilio-paste/core/box';
+import { Stack } from '@twilio-paste/core/stack';
+import { Badge } from '@twilio-paste/core/badge';
+import { Button } from '@twilio-paste/core/button';
+import { Separator } from '@twilio-paste/core/separator';
+import {
+  Modal,
+  ModalHeader,
+  ModalHeading,
+  ModalBody,
+  ModalFooter,
+} from '@twilio-paste/core/modal';
+import Api from '../../index.js';
+import { getCallSid } from '../services/callSidStore.js';
+import { SOFTPHONE_POPUP_FEATURES } from '../constants.js';
+import CallControlBar from './CallControlBar.jsx';
+import useCallControls from './useCallControls.js';
+
+export default function CallControlsModal({ isOpen, onDismiss }) {
+  const { t } = useTranslation();
+  const [agentCallSid, setAgentCallSid] = useState(null);
+  const [customerCallSid, setCustomerCallSid] = useState(null);
+
+  const {
+    callStatus,
+    isMuted,
+    holding,
+    recStatus,
+    hangup,
+    toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
+  } = useCallControls();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const sid = getCallSid();
+    setAgentCallSid(sid || null);
+
+    (async () => {
+      try {
+        const list = await Api.myTasks('assigned,reserved,wrapping');
+        const picked =
+          list.find((t) => t?.attributes?.callSid || t?.attributes?.call_sid) ||
+          list[0] ||
+          null;
+        setCustomerCallSid(
+          picked?.attributes?.callSid || picked?.attributes?.call_sid || null,
+        );
+      } catch (err) {
+        console.error(err);
+      }
+    })();
+  }, [isOpen]);
+
+  const openSoftphonePopout = () => {
+    window.open(
+      `${window.location.origin}?popup=softphone`,
+      'softphone_popup',
+      SOFTPHONE_POPUP_FEATURES,
+    );
+  };
+
+  return (
+    <Modal isOpen={isOpen} onDismiss={onDismiss} size="default">
+      <ModalHeader>
+        <ModalHeading>{t('callControls')}</ModalHeading>
+      </ModalHeader>
+      <ModalBody>
+        <Stack orientation="vertical" spacing="space70">
+          {/* Estado */}
+          <Box>
+            <Stack
+              orientation="horizontal"
+              spacing="space50"
+              alignment="center"
+              style={{ flexWrap: 'wrap' }}
+            >
+              <Badge
+                as="span"
+                variant={
+                  recStatus === 'in-progress'
+                    ? 'new'
+                    : recStatus === 'paused'
+                      ? 'warning'
+                      : 'neutral'
+                }
+              >
+                {t('recording')}: {recStatus}
+              </Badge>
+              {agentCallSid ? (
+                <Badge as="span" variant="success">
+                  {t('agentCall')}: {agentCallSid}
+                </Badge>
+              ) : (
+                <Badge as="span" variant="neutral">{t('noActiveCallTitle')}</Badge>
+              )}
+              {customerCallSid ? (
+                <Badge as="span" variant="neutral">
+                  {t('customerCall')}: {customerCallSid}
+                </Badge>
+              ) : null}
+            </Stack>
+          </Box>
+
+          <Separator orientation="horizontal" />
+
+          <CallControlBar
+            callStatus={callStatus}
+            isMuted={isMuted}
+            holding={holding}
+            recStatus={recStatus}
+            hangup={() => {
+              hangup();
+              onDismiss?.();
+            }}
+            toggleMute={toggleMute}
+            holdStart={holdStart}
+            holdStop={holdStop}
+            recStart={recStart}
+            recPause={recPause}
+            recResume={recResume}
+            recStop={recStop}
+            onOpenDtmf={() => {}}
+          />
+
+          <Separator orientation="horizontal" />
+
+          <Button variant="secondary" onClick={openSoftphonePopout}>
+            {t('openSoftphonePopout')}
+          </Button>
+        </Stack>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="primary" onClick={onDismiss}>{t('close')}</Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+==== /src\features\softphone\components\CallControlsModal.jsx ====
+
+==== src\features\softphone\components\DialPad.jsx ====
+import { Box } from '@twilio-paste/core/box';
+import { Button } from '@twilio-paste/core/button';
+import { useTranslation } from 'react-i18next';
+import styles from './Softphone.module.css';
+
+export default function DialPad({ onDigit, disabled }) {
+  const { t } = useTranslation();
+  const digits = ['1','2','3','4','5','6','7','8','9','*','0','#'];
+  return (
+    <Box className={styles.padGrid}>
+      {digits.map((d) => (
+        <Button
+          key={d}
+          variant="secondary"
+          className={styles.key}
+          aria-label={`${t('dial')} ${d}`}
+          title={`${t('dial')} ${d}`}
+          onClick={() => onDigit(d)}
+          disabled={disabled}
+        >
+          {d}
+        </Button>
+      ))}
+    </Box>
+  );
+}
+
+==== /src\features\softphone\components\DialPad.jsx ====
+
+==== src\features\softphone\components\DtmfModal.jsx ====
+import { Button } from '@twilio-paste/core/button';
+import { Modal, ModalHeader, ModalHeading, ModalBody, ModalFooter } from '@twilio-paste/core/modal';
+import { useTranslation } from 'react-i18next';
+import DialPad from './DialPad.jsx';
+
+export default function DtmfModal({ isOpen, onDismiss, onDigit, disabled }) {
+  const { t } = useTranslation();
+  return (
+    <Modal isOpen={isOpen} onDismiss={onDismiss} ariaLabel="dtmf-keypad" size="default">
+      <ModalHeader>
+        <ModalHeading>{t('dtmfKeypad')}</ModalHeading>
+      </ModalHeader>
+      <ModalBody>
+        <DialPad onDigit={onDigit} disabled={disabled} />
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="secondary" onClick={onDismiss} aria-label={t('close')} title={t('close')}>
+          {t('close')}
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+==== /src\features\softphone\components\DtmfModal.jsx ====
+
+==== src\features\softphone\components\IncomingModal.jsx ====
+import { Button } from '@twilio-paste/core/button';
+import { Stack } from '@twilio-paste/core/stack';
+import { Modal, ModalHeader, ModalHeading, ModalBody, ModalFooter } from '@twilio-paste/core/modal';
+import { useTranslation } from 'react-i18next';
+
+export default function IncomingModal({ isOpen, onAccept, onReject, onDismiss }) {
+  const { t } = useTranslation();
+  return (
+    <Modal isOpen={isOpen} onDismiss={onDismiss} ariaLabel="incoming-call" size="default">
+      <ModalHeader>
+        <ModalHeading>{t('incomingCall')}</ModalHeading>
+      </ModalHeader>
+      <ModalBody>{t('acceptIncomingPrompt')}</ModalBody>
+      <ModalFooter>
+        <Stack orientation="horizontal" spacing="space40">
+          <Button variant="secondary" onClick={onReject} aria-label={t('rejectAria')} title={t('rejectAria')}>
+            {t('reject')}
+          </Button>
+          <Button variant="primary" onClick={onAccept} aria-label={t('acceptAria')} title={t('acceptAria')}>
+            {t('accept')}
+          </Button>
+        </Stack>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+==== /src\features\softphone\components\IncomingModal.jsx ====
+
+==== src\features\softphone\components\PopoutButton.jsx ====
+import { Button } from '@twilio-paste/core/button';
+
+export default function PopoutButton({ onClick }) {
+  return (
+    <Button variant="secondary" onClick={onClick}>
+      Pop out
+    </Button>
+  );
+}
+
+==== /src\features\softphone\components\PopoutButton.jsx ====
+
+==== src\features\softphone\components\Softphone.jsx ====
+// contact-center/client/src/features/softphone/components/Softphone.jsx
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import useSoftphone from '../hooks/useSoftphone.js';
+import useCallControls from './useCallControls.js';
+import DialPad from './DialPad.jsx';
+import IncomingModal from './IncomingModal.jsx';
+import DtmfModal from './DtmfModal.jsx';
+import CallControlBar from './CallControlBar.jsx';
+import { Box } from '@twilio-paste/core/box';
+import { Stack } from '@twilio-paste/core/stack';
+import { Heading } from '@twilio-paste/core/heading';
+import { Input } from '@twilio-paste/core/input';
+import { Button } from '@twilio-paste/core/button';
+import { Badge } from '@twilio-paste/core/badge';
+import { Alert } from '@twilio-paste/core/alert';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+import { Separator } from '@twilio-paste/core/separator';
+import { HelpText } from '@twilio-paste/core/help-text';
+import { Flex } from '@twilio-paste/core/flex';
+import { SuccessIcon } from '@twilio-paste/icons/esm/SuccessIcon';
+import { WarningIcon } from '@twilio-paste/icons/esm/WarningIcon';
+import { ErrorIcon } from '@twilio-paste/icons/esm/ErrorIcon';
+import styles from './Softphone.module.css';
+
+export default function Softphone({ remoteOnly = false, popupOpen = false }) {
+  const isPopup = remoteOnly === true; // full-height only inside the popup
+  const { t } = useTranslation();
+  const softphone = useSoftphone(remoteOnly);
+  const {
+    ready,
+    to,
+    setTo,
+    isIncomingOpen,
+    setIncomingOpen,
+    elapsed,
+    error,
+    dial,
+    acceptIncoming,
+    rejectIncoming,
+    sendDtmf,
+  } = softphone;
+  const {
+    callStatus,
+    isMuted,
+    holding,
+    recStatus,
+    hangup,
+    toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
+  } = useCallControls(softphone);
+  const [isDtmfOpen, setIsDtmfOpen] = useState(false);
+
+  // Hide inline softphone if popup is pinned/open
+  if (!remoteOnly && popupOpen) return null;
+  if (!ready) return <SkeletonLoader />;
+
+  return (
+    <Box
+      backgroundColor="colorBackground"
+      borderRadius="borderRadius30"
+      boxShadow="shadow"
+      padding="space70"
+      className={styles.layout}
+      // in main app: let card size naturally; in popup: keep immersive height
+      minHeight={isPopup ? '100vh' : undefined}
+    >
+      {error ? (
+        <Box marginBottom="space50">
+          <Alert variant="error">{error}</Alert>
+        </Box>
+      ) : null}
+
+      {/* Header: Status Overview */}
+      <Box className={styles.header}>
+        <Flex
+          justifyContent="space-between"
+          alignItems="center"
+          columnGap="space50"
+          style={{ flexWrap: 'wrap' }}
+        >
+          <Heading as="h3" variant="heading30" margin="space0">
+            {t('softphone')}
+          </Heading>
+          <Flex alignItems="center" columnGap="space50" style={{ flexWrap: 'wrap' }}>
+            <Flex alignItems="center" columnGap="space40" style={{ flexWrap: 'wrap' }}>
+              <Badge as="span" variant="success">
+                <SuccessIcon decorative size="sizeIcon10" /> {t('registered')}
+              </Badge>
+              {callStatus === 'In Call' ? <Box className={styles.pill}>⏱ {elapsed}</Box> : null}
+            </Flex>
+            <Separator orientation="vertical" />
+            <Badge
+              as="span"
+              variant={
+                callStatus === 'In Call'
+                  ? 'success'
+                  : callStatus === 'Incoming'
+                  ? 'warning'
+                  : 'error'
+              }
+            >
+              {callStatus === 'In Call' ? (
+                <SuccessIcon decorative size="sizeIcon10" />
+              ) : callStatus === 'Incoming' ? (
+                <WarningIcon decorative size="sizeIcon10" />
+              ) : (
+                <ErrorIcon decorative size="sizeIcon10" />
+              )}{' '}
+              {t('call')}: {callStatus}
+            </Badge>
+          </Flex>
+        </Flex>
+        <Separator orientation="horizontal" verticalSpacing="space50" />
+      </Box>
+
+      {/* Controls Section */}
+      <Box className={styles.controls}>
+        <Stack orientation="vertical" spacing="space50">
+          <Flex alignItems="center" columnGap="space50" style={{ flexWrap: 'wrap' }}>
+            <Input
+              placeholder={t('dialPlaceholder')}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              size="default"
+              style={{ flexGrow: 1 }}
+            />
+            <Button
+              variant="primary"
+              onClick={() => dial()}
+              disabled={!to.trim() || callStatus === 'In Call'}
+              aria-label={t('callAria')}
+              title={t('callAria')}
+            >
+              {t('call')}
+            </Button>
+          </Flex>
+          <CallControlBar
+            callStatus={callStatus}
+            isMuted={isMuted}
+            holding={holding}
+            recStatus={recStatus}
+            hangup={hangup}
+            toggleMute={toggleMute}
+            holdStart={holdStart}
+            holdStop={holdStop}
+            recStart={recStart}
+            recPause={recPause}
+            recResume={recResume}
+            recStop={recStop}
+            onOpenDtmf={() => setIsDtmfOpen(true)}
+          />
+          <Stack orientation="vertical" spacing="space30">
+            <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
+            <HelpText variant="default">
+              {t('hold')}: {holding ? t('yes') : t('no')}
+            </HelpText>
+            <HelpText variant="default">
+              {t('recording')}: {recStatus}
+            </HelpText>
+          </Stack>
+        </Stack>
+      </Box>
+
+      {/* Dialpad Section */}
+      <Box className={styles.dialpad}>
+        <Heading as="h4" variant="heading40" marginBottom="space50">
+          {t('dtmfKeypad')}
+        </Heading>
+        <DialPad onDigit={sendDtmf} disabled={callStatus !== 'In Call'} />
+      </Box>
+
+      {/* Modals */}
+      <IncomingModal
+        isOpen={isIncomingOpen}
+        onAccept={acceptIncoming}
+        onReject={rejectIncoming}
+        onDismiss={() => setIncomingOpen(false)}
+      />
+      <DtmfModal
+        isOpen={isDtmfOpen}
+        onDismiss={() => setIsDtmfOpen(false)}
+        onDigit={sendDtmf}
+        disabled={callStatus !== 'In Call'}
+      />
+    </Box>
+  );
+}
+
+==== /src\features\softphone\components\Softphone.jsx ====
+
+==== src\features\softphone\components\Softphone.module.css ====
+.layout {
+  display: grid;
+  gap: var(--paste-space-70);
+  grid-template-areas:
+    'header'
+    'controls'
+    'dialpad';
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  grid-area: header;
+}
+
+.controls {
+  grid-area: controls;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--paste-space-60);
+}
+
+.dialpad {
+  grid-area: dialpad;
+}
+
+@media (min-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      'header header'
+      'controls dialpad';
+  }
+}
+
+@media (max-width: 767px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'header'
+      'controls'
+      'dialpad';
+  }
+}
+
+.key {
+  width: 100%;
+  height: 48px;
+}
+
+.padGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--paste-space-40);
+}
+
+.pill {
+  border-radius: 9999px;
+  padding: 2px 10px;
+  background: var(--paste-color-backgroundStrong);
+}
+
+==== /src\features\softphone\components\Softphone.module.css ====
+
+==== src\features\softphone\components\SoftphoneLayout.jsx ====
+import { Box } from '@twilio-paste/core/box';
+import styles from './Softphone.module.css';
+
+export default function SoftphoneLayout({ children }) {
+  return (
+    <Box
+      backgroundColor="colorBackground"
+      borderRadius="borderRadius30"
+      boxShadow="shadow"
+      padding="space70"
+      className={styles.layout}
+      minHeight="100vh"
+    >
+      {children}
+    </Box>
+  );
+}
+
+==== /src\features\softphone\components\SoftphoneLayout.jsx ====
+
+==== src\features\softphone\components\useCallControls.js ====
+import useSoftphone from '../hooks/useSoftphone.js';
+
+export default function useCallControls(softphone) {
+  const sp = softphone || useSoftphone(true);
+
+  const {
+    callStatus,
+    isMuted,
+    holding,
+    recStatus,
+    hangup,
+    toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
+  } = sp;
+
+  return {
+    callStatus,
+    isMuted,
+    holding,
+    recStatus,
+    hangup,
+    toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
+  };
+}
+
+==== /src\features\softphone\components\useCallControls.js ====
+
+==== src\features\softphone\constants.js ====
+export const SOFTPHONE_CHANNEL_KEY = 'softphone-control';
+export const SOFTPHONE_POPUP_FEATURES = 'width=420,height=640,menubar=no,toolbar=no,resizable=yes,status=no,scrollbars=yes,noopener,noreferrer';
+
+==== /src\features\softphone\constants.js ====
+
+==== src\features\softphone\hooks\useSoftphone.js ====
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+import { VoiceDevice } from '../services/VoiceDevice.js';
+import { getCallSid, setCallSid } from '../services/callSidStore.js';
+import Api from '../../index.js';
+import {
+  SOFTPHONE_CHANNEL_KEY,
+  SOFTPHONE_POPUP_FEATURES,
+} from '../constants.js';
+
+/**
+ * Hook encapsulating VoiceDevice lifecycle, BroadcastChannel sync and call controls
+ */
+export default function useSoftphone(remoteOnly = false) {
+  const { t } = useTranslation();
+  const isPopupRef = useRef(
+    remoteOnly ||
+      (typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('popup') === 'softphone')
+  );
+  const isPopup = isPopupRef.current;
+
+  const [dev] = useState(() => (isPopup ? null : new VoiceDevice()));
+  const [ready, setReady] = useState(false);
+  const [to, setTo] = useState('');
+  const [incoming, setIncoming] = useState(null);
+  const [isIncomingOpen, setIncomingOpen] = useState(false);
+  const [callStatus, setCallStatus] = useState('Idle');
+  const [isMuted, setIsMuted] = useLocalStorage('mute_state', false);
+  const [callStart, setCallStart] = useState(null);
+  const [holding, setHolding] = useState(false);
+  const [recStatus, setRecStatus] = useState('inactive');
+  const [error, setError] = useState('');
+  const [channelError, setChannelError] = useState(false);
+  const [useStorageFallback, setUseStorageFallback] = useState(false);
+
+  const tickRef = useRef(null);
+  const [, force] = useState(0);
+
+  const chanRef = useRef(null);
+  const pendingRef = useRef({});
+  const POPUP_NAME = 'softphone_popup';
+  const POPUP_URL = `${window.location.origin}?popup=softphone`;
+  const [popupOpen, setPopupOpen] = useState(false);
+  const popupWinRef = useRef(null);
+
+  useEffect(() => {
+    if (!dev) return undefined;
+    dev.onMuteSync = setIsMuted;
+    return () => {
+      dev.onMuteSync = null;
+    };
+  }, [dev, setIsMuted]);
+
+  const elapsed = useMemo(() => {
+    if (!callStart) return '00:00';
+    const sec = Math.floor((Date.now() - callStart) / 1000);
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }, [callStart, force]);
+
+  const publishState = useCallback(() => {
+    if (isPopup) return;
+    try {
+      const sid = getCallSid();
+      chanRef.current?.postMessage({
+        type: 'state',
+        payload: {
+          ready,
+          callStatus,
+          isMuted,
+          holding,
+          recStatus,
+          to,
+          elapsed,
+          hasIncoming: !!incoming,
+          callSid: sid,
+        },
+      });
+    } catch (e) {
+      console.warn('[softphone channel state error]', e);
+      setChannelError(true);
+      setUseStorageFallback(true);
+    }
+  }, [ready, callStatus, isMuted, holding, recStatus, to, elapsed, incoming, isPopup]);
+
+  const publishStateRef = useRef(publishState);
+  useEffect(() => {
+    publishStateRef.current = publishState;
+  }, [publishState]);
+
+  useEffect(() => {
+    if (isPopup) return;
+    const sid = getCallSid();
+    if (sid) {
+      setCallStatus('In Call');
+      setCallStart(Date.now());
+      clearInterval(tickRef.current);
+      tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+      Api.recStatus(sid)
+        .then((s) => setRecStatus(s || 'inactive'))
+        .catch(() => {
+          setCallStatus('Idle');
+          setCallStart(null);
+          clearInterval(tickRef.current);
+        });
+      setTimeout(() => publishStateRef.current(), 0);
+    }
+  }, [isPopup]);
+
+  const sendCmd = useCallback(
+    (action, extra = {}, waitForAck = false) => {
+      const id = waitForAck ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
+      return new Promise((resolve, reject) => {
+        try {
+          if (id) pendingRef.current[id] = { resolve, reject };
+          chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
+          if (!id) resolve();
+        } catch (e) {
+          console.warn('[softphone channel cmd error]', e);
+          setChannelError(true);
+          setUseStorageFallback(true);
+          if (id) delete pendingRef.current[id];
+          reject(e);
+        }
+      });
+    },
+    []
+  );
+
+  // Device lifecycle
+  useEffect(() => {
+    if (isPopup) return undefined;
+    const boot = async () => {
+      dev.onIncoming = (call) => {
+        setIncoming(call);
+        setIncomingOpen(true);
+        setCallStatus('Incoming');
+
+        if (
+          typeof window !== 'undefined' &&
+          typeof Notification === 'function' &&
+          (document.hidden || !document.hasFocus())
+        ) {
+          Notification.requestPermission().then((perm) => {
+            if (perm === 'granted') {
+              const n = new Notification(t('incomingCall'), {
+                body: t('acceptIncomingPrompt'),
+              });
+              n.onclick = () => window.focus();
+            }
+          });
+        }
+
+        setTimeout(() => publishStateRef.current(), 0);
+      };
+      dev.onStatusChange = (status) => {
+        setCallStatus(status);
+        if (status === 'In Call') {
+          setCallStart(Date.now());
+          clearInterval(tickRef.current);
+          tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+          const sid = getCallSid();
+          if (sid) Api.recStatus(sid).then((s) => setRecStatus(s || 'inactive')).catch(() => setRecStatus('inactive'));
+        }
+        if (status === 'Idle') {
+          setCallStart(null);
+          setIsMuted(false);
+          setHolding(false);
+          setRecStatus('inactive');
+          clearInterval(tickRef.current);
+        }
+        setTimeout(() => publishStateRef.current(), 0);
+      };
+
+      try {
+        await dev.register();
+        setReady(true);
+      } catch {
+        setError(t('registrationError'));
+      }
+    };
+
+    boot().catch(() => setError(t('generalError')));
+    return () => {
+      clearInterval(tickRef.current);
+      dev.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPopup]);
+
+  // BroadcastChannel or fallback channel setup
+  useEffect(() => {
+    let ch;
+    let usingStorage = useStorageFallback;
+
+    if (!usingStorage && typeof window !== 'undefined' && typeof BroadcastChannel === 'function') {
+      try {
+        ch = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
+      } catch (e) {
+        console.warn('[softphone channel init error]', e);
+        setChannelError(true);
+        usingStorage = true;
+        setUseStorageFallback(true);
+      }
+    } else if (!usingStorage) {
+      setChannelError(true);
+      usingStorage = true;
+      setUseStorageFallback(true);
+    }
+
+    if (usingStorage) {
+      const storageHandler = (e) => {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
+          try {
+            const data = JSON.parse(e.newValue);
+            chanRef.current?.onmessage?.({ data });
+          } catch (err) {
+            console.error('[softphone storage channel parse error]', err);
+          }
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      ch = {
+        postMessage: (msg) => {
+          try {
+            localStorage.setItem(
+              SOFTPHONE_CHANNEL_KEY,
+              JSON.stringify({ t: Date.now(), ...msg }),
+            );
+          } catch (err) {
+            console.error('[softphone storage channel post error]', err);
+            setChannelError(true);
+          }
+        },
+        close: () => window.removeEventListener('storage', storageHandler),
+        onmessage: null,
+      };
+    }
+
+    chanRef.current = ch;
+
+    ch.onmessage = async (evt) => {
+      const { type, payload, id, ok } = evt.data || {};
+      if (isPopup) {
+        if (type === 'state') {
+          setReady(!!payload.ready);
+          setCallStatus(payload.callStatus || 'Idle');
+          setIsMuted(!!payload.isMuted);
+          setHolding(!!payload.holding);
+          setRecStatus(payload.recStatus || 'inactive');
+          setTo(payload.to || '');
+          setIncoming(payload.hasIncoming ? {} : null);
+          setIncomingOpen(!!payload.hasIncoming);
+          if (payload.callStatus === 'Idle') {
+            setCallSid(null);
+          } else {
+            setCallSid(payload.callSid || null);
+          }
+          if (payload.elapsed) {
+            const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
+            const sec = m * 60 + s;
+            const startTime = payload.callStatus === 'In Call' ? Date.now() - sec * 1000 : null;
+            setCallStart(startTime);
+            if (payload.callStatus === 'In Call') {
+              if (!tickRef.current) {
+                tickRef.current = setInterval(() => force((x) => x + 1), 1000);
+              }
+            } else {
+              clearInterval(tickRef.current);
+              tickRef.current = null;
+            }
+          } else {
+            setCallStart(null);
+            clearInterval(tickRef.current);
+            tickRef.current = null;
+          }
+        } else if (type === 'resp' && id && pendingRef.current[id]) {
+          const { resolve, reject } = pendingRef.current[id];
+          delete pendingRef.current[id];
+          if (ok) resolve();
+          else reject(new Error('cmd failed'));
+        }
+        return;
+      }
+      if (type === 'popup-closed') {
+        setPopupOpen(false);
+        popupWinRef.current = null;
+        return;
+      }
+
+      if (type !== 'cmd') return;
+      let success = true;
+      try {
+        if (payload.action === 'ping') {
+          publishState();
+          return;
+        }
+        if (payload.action === 'dial') {
+          const num = String(payload.to || '').trim();
+          if (num) {
+            setTo(num);
+            await dial(num);
+          }
+        }
+        if (payload.action === 'hangup') await hangup();
+        if (payload.action === 'mute') await toggleMute(true);
+        if (payload.action === 'unmute') await toggleMute(false);
+        if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
+        if (payload.action === 'accept') success = await acceptIncoming();
+        if (payload.action === 'reject') success = await rejectIncoming();
+        if (payload.action === 'hold') await holdStart();
+        if (payload.action === 'unhold') await holdStop();
+        if (payload.action === 'recStart') await recStart();
+        if (payload.action === 'recPause') await recPause();
+        if (payload.action === 'recResume') await recResume();
+        if (payload.action === 'recStop') await recStop();
+      } catch (e) {
+        console.error('[softphone cmd error]', e);
+        success = false;
+      } finally {
+        publishState();
+        if (id) {
+          try {
+            ch.postMessage({ type: 'resp', id, ok: success });
+          } catch (e) {
+            console.warn('[softphone channel resp error]', e);
+          }
+        }
+      }
+    };
+
+    if (isPopup) {
+      try {
+        ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
+      } catch (e) {
+        console.warn('[softphone channel ping error]', e);
+        setChannelError(true);
+        setUseStorageFallback(true);
+      }
+    }
+
+    return () => {
+      try {
+        ch.close();
+      } catch (e) {
+        console.warn('[softphone channel close error]', e);
+      }
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    };
+  }, [publishState, isPopup, useStorageFallback]);
+
+  useEffect(() => { if (!isPopup) publishState(); }, [publishState, isPopup]);
+
+  useEffect(() => {
+    if (isPopup) return undefined;
+    const hangupOnUnload = () => {
+      try {
+        const sid = getCallSid();
+        if (sid) Api.hangup(sid);
+      } catch (e) {
+        console.warn('[softphone unload hangup error]', e);
+      }
+    };
+    window.addEventListener('beforeunload', hangupOnUnload);
+    window.addEventListener('unload', hangupOnUnload);
+    return () => {
+      window.removeEventListener('beforeunload', hangupOnUnload);
+      window.removeEventListener('unload', hangupOnUnload);
+    };
+  }, [isPopup]);
+
+  useEffect(() => {
+    if (!isPopup) return undefined;
+    const notifyClose = () => {
+      try {
+        chanRef.current?.postMessage({ type: 'popup-closed' });
+      } catch (e) {
+        console.warn('[softphone popup close notify error]', e);
+      }
+    };
+    window.addEventListener('beforeunload', notifyClose);
+    window.addEventListener('unload', notifyClose);
+    return () => {
+      window.removeEventListener('beforeunload', notifyClose);
+      window.removeEventListener('unload', notifyClose);
+    };
+  }, [isPopup]);
+
+  async function dial(num = to) {
+    if (isPopup) {
+      sendCmd('dial', { to: num });
+      return;
+    }
+    try {
+      setError('');
+      const call = await dev.dial(String(num).trim());
+      if (call) {
+        setIncomingOpen(false);
+        setCallStatus('In Call');
+      }
+    } catch {
+      setError(t('dialError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function hangup() {
+    if (isPopup) {
+      sendCmd('hangup');
+      setCallStatus('Idle');
+      setIsMuted(false);
+      setIncoming(null);
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (dev) await dev.disconnect();
+      if (sid) await Api.hangup(sid);
+    } catch {
+      setError(t('hangupError'));
+    }
+    setCallStatus('Idle');
+    setIsMuted(false);
+    setHolding(false);
+    setRecStatus('inactive');
+    setIncoming(null);
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function toggleMute(next) {
+    if (isPopup) {
+      sendCmd(next ? 'mute' : 'unmute');
+      setIsMuted(next);
+      return;
+    }
+    try {
+      setError('');
+      await dev.mute(next);
+      setIsMuted(next);
+    } catch {
+      setError(t('muteError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function holdStart() {
+    if (isPopup) {
+      sendCmd('hold');
+      setHolding(true);
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) {
+        await Api.holdStart({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      }
+      setHolding(true);
+    } catch {
+      setError(t('holdError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function holdStop() {
+    if (isPopup) {
+      sendCmd('unhold');
+      setHolding(false);
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) {
+        await Api.holdStop({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      }
+      setHolding(false);
+    } catch {
+      setError(t('unholdError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recStart() {
+    if (isPopup) {
+      sendCmd('recStart');
+      setRecStatus('in-progress');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recStart(sid);
+      setRecStatus('in-progress');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recPause() {
+    if (isPopup) {
+      sendCmd('recPause');
+      setRecStatus('paused');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recPause(sid);
+      setRecStatus('paused');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recResume() {
+    if (isPopup) {
+      sendCmd('recResume');
+      setRecStatus('in-progress');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recResume(sid);
+      setRecStatus('in-progress');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function recStop() {
+    if (isPopup) {
+      sendCmd('recStop');
+      setRecStatus('stopped');
+      return;
+    }
+    try {
+      setError('');
+      const sid = getCallSid();
+      if (sid) await Api.recStop(sid);
+      setRecStatus('stopped');
+    } catch {
+      setError(t('recControlError'));
+    }
+    setTimeout(() => publishStateRef.current(), 0);
+  }
+
+  async function acceptIncoming() {
+    if (isPopup) {
+      setError('');
+      try {
+        await sendCmd('accept', {}, true);
+        setIncomingOpen(false);
+        setIncoming(null);
+      } catch {
+        setError(t('acceptError'));
+      }
+      return;
+    }
+    try {
+      setError('');
+      await incoming?.accept();
+      setIncomingOpen(false);
+      setIncoming(null);
+      setCallStatus('In Call');
+      setTimeout(() => publishStateRef.current(), 0);
+      return true;
+    } catch {
+      setError(t('acceptError'));
+      setIncomingOpen(false);
+      setCallStatus('Idle');
+      setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return false;
+    }
+  }
+
+  async function rejectIncoming() {
+    if (isPopup) {
+      setError('');
+      try {
+        await sendCmd('reject', {}, true);
+        setIncomingOpen(false);
+        setIncoming(null);
+        setCallStatus('Idle');
+      } catch {
+        setError(t('rejectError'));
+      }
+      return;
+    }
+    try {
+      setError('');
+      await incoming?.reject();
+      setIncomingOpen(false);
+      setCallStatus('Idle');
+      setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return true;
+    } catch {
+      setError(t('rejectError'));
+      setIncomingOpen(false);
+      setCallStatus('Idle');
+      setIncoming(null);
+      setTimeout(() => publishStateRef.current(), 0);
+      return false;
+    }
+  }
+
+  function sendDtmf(digit) {
+    if (isPopup) {
+      sendCmd('dtmf', { digit });
+    } else {
+      try {
+        dev?.sendDigits(digit);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
+  function openPopOut() {
+    const w = window.open(POPUP_URL, POPUP_NAME, SOFTPHONE_POPUP_FEATURES);
+    if (w) {
+      popupWinRef.current = w;
+      setPopupOpen(true);
+      setTimeout(() => publishStateRef.current(), 150);
+    }
+  }
+
+  function closePopOut() {
+    try {
+      popupWinRef.current?.close();
+    } catch (err) {
+      console.error(err);
+    }
+    popupWinRef.current = null;
+    setPopupOpen(false);
+  }
+
+  return {
+    ready,
+    to,
+    setTo,
+    incoming,
+    isIncomingOpen,
+    setIncomingOpen,
+    callStatus,
+    isMuted,
+    holding,
+    recStatus,
+    elapsed,
+    error,
+    channelError,
+    dial,
+    hangup,
+    toggleMute,
+    holdStart,
+    holdStop,
+    recStart,
+    recPause,
+    recResume,
+    recStop,
+    acceptIncoming,
+    rejectIncoming,
+    sendDtmf,
+    openPopOut,
+    closePopOut,
+    popupOpen,
+    setError,
+    setChannelError,
+  };
+}
+
+==== /src\features\softphone\hooks\useSoftphone.js ====
+
+==== src\features\softphone\services\callSidStore.js ====
+// contact-center/client/src/softphone/callSidStore.js
+let _sid = null;
+const KEY = 'callSid';
+
+// Sync _sid when another tab updates the value
+try {
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY) {
+      _sid = e.newValue || null;
+    }
+  });
+} catch {}
+
+export const setCallSid = (v) => {
+  _sid = v || null;
+  try {
+    if (_sid) window.localStorage.setItem(KEY, _sid);
+    else window.localStorage.removeItem(KEY);
+  } catch {}
+};
+
+export const getCallSid = () => {
+  if (_sid) return _sid;
+  try {
+    _sid = window.localStorage.getItem(KEY) || null;
+  } catch {}
+  return _sid;
+};
+
+==== /src\features\softphone\services\callSidStore.js ====
+
+==== src\features\softphone\services\voice.js ====
+import http, { retry } from '../../../shared/services/http.js';
+
+export const voiceToken = () =>
+  retry(() => http.get('/token/voice').then((r) => r.data.token));
+
+export const transferCold = (payload) =>
+  http.post('/transfer/cold', payload).then((r) => r.data);
+
+export const transferWarm = (payload) =>
+  http.post('/transfer/warm', payload).then((r) => r.data);
+
+export const transferComplete = (agentCallSid) =>
+  http.post('/transfer/complete', { agentCallSid }).then((r) => r.data);
+
+export const holdStart = (payload) =>
+  http.post('/voice/hold/start', payload).then((r) => r.data);
+
+export const holdStop = (payload) =>
+  http.post('/voice/hold/stop', payload).then((r) => r.data);
+
+export const hangup = (callSid) =>
+  http.post('/voice/hangup', { callSid }).then((r) => r.data);
+
+export const recStart = (callSid) =>
+  http.post('/voice/recordings/start', { callSid }).then((r) => r.data);
+
+export const recPause = (callSid) =>
+  http.post('/voice/recordings/pause', { callSid }).then((r) => r.data);
+
+export const recResume = (callSid) =>
+  http.post('/voice/recordings/resume', { callSid }).then((r) => r.data);
+
+export const recStop = (callSid) =>
+  http.post('/voice/recordings/stop', { callSid }).then((r) => r.data);
+
+export const recStatus = (callSid) =>
+  http.get('/voice/recordings/status', { params: { callSid } }).then((r) => r.data.status);
+
+==== /src\features\softphone\services\voice.js ====
+
+==== src\features\softphone\services\VoiceDevice.js ====
+// contact-center/client/src/softphone/VoiceDevice.js
+import { Device } from '@twilio/voice-sdk';
+import Api from '../../index.js';
+import { setCallSid } from './callSidStore.js';
+
+export class VoiceDevice {
+  constructor() {
+    this.device = undefined;
+    this.current = undefined;
+    this._refreshTimer = undefined;
+    this.onIncoming = null;
+    this.onStatusChange = null;
+    this.onMuteSync = null; // Callback for mute sync
+  }
+
+  _status(s) {
+    try {
+      this.onStatusChange && this.onStatusChange(s);
+    } catch {}
+  }
+
+  async register() {
+    const token = await Api.voiceToken();
+    this.device = new Device(token, {
+      audio: { echoCancellation: true }
+    });
+
+    this.device.on('registered', () => {
+      console.log('Voice registered');
+      this._status('Idle');
+    });
+    this.device.on('unregistered', () => {
+      console.log('Voice unregistered');
+      this._status('Idle');
+    });
+    this.device.on('error', (e) => {
+      console.error('Voice error', e);
+      if (String(e.message || '').toLowerCase().includes('token')) {
+        this.refreshToken().catch(console.error);
+      }
+    });
+
+    this.device.on('incoming', (call) => {
+      this.current = call;
+      this._wireCall(call);
+      this._status('Incoming');
+      this.onIncoming?.(call);
+    });
+
+    this.device.on('tokenWillExpire', async () => {
+      await this.refreshToken();
+    });
+
+    await this.device.register();
+
+    this._refreshTimer = setInterval(
+      () => this.refreshToken().catch(() => {}),
+      55 * 60 * 1000
+    );
+  }
+
+  async refreshToken() {
+    const newToken = await Api.voiceToken();
+    if (this.device?.updateToken) {
+      await this.device.updateToken(newToken);
+      return;
+    }
+    await this.device?.unregister();
+    this.device = new Device(newToken, {
+      audio: { echoCancellation: true }
+    });
+    await this.device.register();
+  }
+
+  _wireCall(call) {
+    const fetchSid = () => {
+      try {
+        // SDK v2: a veces parameters es Map
+        return call?.parameters?.CallSid || call?.parameters?.get?.('CallSid') || null;
+      } catch { return null; }
+    };
+
+    call.on('accept', () => {
+      const sid = fetchSid();
+      if (sid) setCallSid(sid);
+      console.log('Call accepted', sid || '');
+      this._status('In Call');
+
+      // Sync mute state
+      const currentMute = call.isMuted();
+      if (this.onMuteSync) {
+        this.onMuteSync(currentMute);
+      }
+    });
+
+    call.on('disconnect', () => {
+      console.log('Call ended');
+      setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
+      if (this.current === call) this.current = undefined;
+      this._status('Idle');
+    });
+
+    call.on('cancel', () => {
+      console.log('Call cancelled');
+      setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
+      if (this.current === call) this.current = undefined;
+      this._status('Idle');
+      this.onIncoming?.(null);
+    });
+
+    call.on('error', (e) => {
+      console.error('Call error', e);
+      setCallSid(null);
+      try { window.localStorage.removeItem('callSid'); } catch {}
+      this._status('Idle');
+    });
+  }
+
+  async dial(to) {
+    if (!this.device) throw new Error('Device not ready');
+    const call = await this.device.connect({ params: { To: to } });
+    this.current = call;
+    this._wireCall(call);
+    // en outgoing, el CallSid llega un poco después; lo enganchamos en 'accept'
+    this._status('In Call');
+    return call;
+  }
+
+  async disconnect() {
+    clearInterval(this._refreshTimer);
+    try {
+      await this.current?.disconnect();
+    } catch {}
+    if (this.device) {
+      try {
+        await this.device.unregister();
+      } catch {}
+      this.device.destroy();
+      this.device = undefined;
+    }
+    this._status('Idle');
+  }
+}
+==== /src\features\softphone\services\VoiceDevice.js ====
+
+==== src\features\tasks\components\ActivityQuickSwitch.jsx ====
+import { useEffect, useState } from 'react';
+import http from '../../../shared/services/http.js';
+import { Stack } from '@twilio-paste/core/stack';
+import { Badge } from '@twilio-paste/core/badge';
+import { Select, Option } from '@twilio-paste/core/select';
+
+export default function ActivityQuickSwitch({ label, onChange }) {
+  const [acts, setActs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    http
+      .get('/taskrouter/activities')
+      .then((r) => {
+        if (mounted) setActs(r.data || []);
+      })
+      .finally(() => mounted && setLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const isAvailable = String(label || '').toLowerCase().includes('available');
+
+  return (
+    <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+      <Badge as="span" variant={isAvailable ? 'success' : 'neutral'}>
+        {label || '—'}
+      </Badge>
+      <Select
+        size="small"
+        disabled={loading || !acts.length}
+        onChange={(e) => onChange?.(e.target.value)}
+        defaultValue=""
+        style={{ minWidth: 180 }}
+      >
+        <Option value="" disabled>Change activity…</Option>
+        {acts.map((a) => (
+          <Option key={a.sid} value={a.sid}>{a.name}</Option>
+        ))}
+      </Select>
+    </Stack>
+  );
+}
+
+==== /src\features\tasks\components\ActivityQuickSwitch.jsx ====
+
+==== src\features\tasks\components\AgentApp.jsx ====
+// contact-center/client/src/components/AgentApp.jsx
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { io } from 'socket.io-client';
+
+import { Box } from '@twilio-paste/core/box';
+import { Stack } from '@twilio-paste/core/stack';
+import { Button } from '@twilio-paste/core/button';
+import { Toaster, useToaster } from '@twilio-paste/core/toast';
+import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs';
+import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
+import { Heading } from '@twilio-paste/core/heading';
+import { Separator } from '@twilio-paste/core/separator';
+
+import Api from '../../index.js';
+import { useWorker } from '../hooks/useWorker.js';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+import {
+  SOFTPHONE_CHANNEL_KEY,
+  SOFTPHONE_POPUP_FEATURES,
+} from '../../softphone/constants.js';
+
+import ChatPanel from '../../../chat/ChatPanel.jsx';
+import StatusBar from './StatusBar.jsx';
+import Softphone from '../../softphone/components/Softphone.jsx';
+import Presence from './Presence.jsx';
+import Customer360 from './Customer360.jsx';
+import TasksPanel from './TasksPanel.jsx';
+import Reservations from './Reservations.jsx';
+import AgentDesktopShell from './AgentDesktopShell.jsx';
+import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
+import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
+import CardSection from '../../../shared/components/CardSection.jsx';
+
+const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
+const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
+
+export default function AgentApp() {
+  const { worker, activity, reservations, setAvailable } = useWorker();
+  const toaster = useToaster();
+
+  // Mode: 'voice' | 'chat'
+  const [mode, setMode] = useLocalStorage('desktop_mode', 'voice');
+
+  // Chat sessions (tabs)
+  const [chatSessions, setChatSessions] = useState([]); // [{ sid, label, unread }]
+  const chatJoinedRef = useRef(new Set());
+  const [chatPanelKey, setChatPanelKey] = useState(0);
+
+  // Voice / popout state
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [hasCall, setHasCall] = useState(false);
+  const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
+  const softphoneWinRef = useRef(null);
+  const prevCallStatusRef = useRef('Idle');
+
+  /* --------------------------------
+   * Helpers
+   * -------------------------------- */
+  const prioritizeChat = useCallback((sid) => {
+    setChatSessions((prev) => {
+      const idx = prev.findIndex((s) => s.sid === sid);
+      if (idx <= 0) return prev;
+      const next = prev.slice();
+      const [item] = next.splice(idx, 1);
+      next.unshift(item);
+      return next;
+    });
+  }, []);
+
+  const ensureChatSession = useCallback(async (conversationSid, labelHint) => {
+    if (!conversationSid) return false;
+
+    if (chatJoinedRef.current.has(conversationSid)) {
+      setChatSessions((prev) => {
+        if (prev.some((s) => s.sid === conversationSid)) return prev;
+        return [...prev, { sid: conversationSid, label: labelHint || conversationSid, unread: 0 }];
+      });
+      return true;
+    }
+
+    try {
+      // 1) identity (cookie session)
+      const tokenResp = await fetch(`${baseURL}/api/chat/token`, { credentials: 'include' });
+      if (!tokenResp.ok) throw new Error(`chat token: ${tokenResp.status}`);
+      const { identity } = await tokenResp.json();
+
+      // 2) ensure participant
+      const joinResp = await fetch(`${baseURL}/api/conversations/${conversationSid}/participants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ type: 'chat', identity, attributes: { role: 'agent' } }),
+      });
+
+      let ok = joinResp.ok || joinResp.status === 409;
+      if (!ok) {
+        const err = await joinResp.json().catch(() => ({}));
+        if (err?.error?.code === 50433) ok = true; // already in
+      }
+      if (!ok) return false;
+
+      // 3) add to panel
+      setChatSessions((prev) => {
+        if (prev.some((s) => s.sid === conversationSid)) return prev;
+        return [...prev, { sid: conversationSid, label: labelHint || conversationSid, unread: 0 }];
+      });
+      chatJoinedRef.current.add(conversationSid);
+      return true;
+    } catch (e) {
+      console.error('[ensureChatSession]', e);
+      return false;
+    }
+  }, []);
+
+  const selectChatFromTasks = useCallback(
+    async (sid) => {
+      if (!sid) return;
+      const ok = await ensureChatSession(sid);
+      if (!ok) return;
+      prioritizeChat(sid);
+      setMode('chat');
+      setChatPanelKey((k) => k + 1);
+      requestAnimationFrame(() => {
+        document.getElementById('main-chat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    [ensureChatSession, prioritizeChat, setMode]
+  );
+
+  const popoutChat = useCallback((sid) => {
+    const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
+    window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
+  }, []);
+
+  /* --------------------------------
+   * Voice state via BroadcastChannel
+   * -------------------------------- */
+  useEffect(() => {
+    let channel;
+    const onMsg = (evt) => {
+      const { type, payload } = evt.data || {};
+      if (type === 'state') {
+        const status = payload?.callStatus || 'Idle';
+        setHasCall(status === 'In Call' || status === 'Incoming');
+        if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
+          toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
+        }
+        prevCallStatusRef.current = status;
+      } else if (type === 'popup-closed') {
+        setSoftphonePopout(false);
+        softphoneWinRef.current = null;
+      }
+    };
+
+    if (typeof BroadcastChannel === 'function') {
+      channel = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
+      channel.onmessage = onMsg;
+    } else {
+      const storageHandler = (e) => {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
+          try { onMsg({ data: JSON.parse(e.newValue) }); } catch {}
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      channel = { close: () => window.removeEventListener('storage', storageHandler) };
+    }
+
+    return () => { try { channel?.close?.(); } catch {} };
+  }, [setSoftphonePopout, toaster]);
+
+  /* --------------------------------
+   * Worker signals → ensure chat joins
+   * -------------------------------- */
+  useEffect(() => {
+    if (!worker) return;
+    const handleReservation = async (r) => {
+      const a = r.task?.attributes || {};
+      if (a.channel === 'chat') {
+        const sid = a.conversationSid || a.conversation_sid;
+        const label = a.customerName || a.from || a.name || sid;
+        await ensureChatSession(sid, label);
+      }
+    };
+    worker.on('reservation.created', handleReservation);
+    worker.on('reservation.accepted', handleReservation);
+    return () => {
+      try { worker.off('reservation.created', handleReservation); worker.off('reservation.accepted', handleReservation); } catch {}
+    };
+  }, [worker, ensureChatSession]);
+
+  // Poll chat tasks (safety net)
+  useEffect(() => {
+    if (!worker) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const tasks = await Api.myTasks('assigned,reserved');
+        for (const t of tasks) {
+          const a = t.attributes || {};
+          if (a.channel === 'chat') {
+            const sid = a.conversationSid || a.conversation_sid;
+            const label = a.customerName || a.from || a.name || sid;
+            if (!cancelled) await ensureChatSession(sid, label);
+          }
+        }
+      } catch (e) { console.error('[task poll]', e); }
+    };
+
+    poll();
+    const it = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(it); };
+  }, [worker, ensureChatSession]);
+
+  // Realtime (server emits task_created when first inbound msg arrives)
+  useEffect(() => {
+    const socket = io(socketBase, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      withCredentials: false,
+    });
+    socket.on('task_created', async ({ conversationSid }) => {
+      if (conversationSid) await ensureChatSession(conversationSid);
+    });
+    socket.on('connect_error', (err) => console.warn('[socket.io] connect_error', err?.message || err));
+    return () => socket.disconnect();
+  }, [ensureChatSession]);
+
+  /* --------------------------------
+   * Softphone popout
+   * -------------------------------- */
+  useEffect(() => {
+    if (!isSoftphonePopout || softphoneWinRef.current) return;
+    const w = window.open(`${window.location.origin}?popup=softphone`, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
+    if (w) softphoneWinRef.current = w;
+    else setSoftphonePopout(false);
+  }, [isSoftphonePopout, setSoftphonePopout]);
+
+  const toggleSoftphonePopout = useCallback(() => {
+    if (isSoftphonePopout) {
+      try { softphoneWinRef.current?.close(); } catch {}
+      softphoneWinRef.current = null;
+      setSoftphonePopout(false);
+    } else {
+      setSoftphonePopout(true);
+    }
+  }, [isSoftphonePopout, setSoftphonePopout]);
+
+  // Auto-open popup on Available
+  useEffect(() => {
+    if (/available/i.test(activity || '') && !isSoftphonePopout) setSoftphonePopout(true);
+  }, [activity, isSoftphonePopout, setSoftphonePopout]);
+
+  const logout = useCallback(async () => {
+    await Api.logout();
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace
+    await setAvailable(offlineSid);
+    window.location.reload();
+  }, [setAvailable]);
+
+  /* --------------------------------
+   * Header actions & quick actions
+   * -------------------------------- */
+  const headerActions = useMemo(() => (
+    <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+      <ActivityQuickSwitch label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+      <Button
+        variant={isSoftphonePopout ? 'primary' : 'secondary'}
+        onClick={toggleSoftphonePopout}
+        aria-pressed={isSoftphonePopout}
+        aria-label={isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'}
+        title={isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'}
+      >
+        <CallIcon decorative color={isSoftphonePopout ? 'colorTextInverse' : undefined} />
+      </Button>
+      {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
+      <Button variant="destructive" onClick={logout}>Logout</Button>
+    </Stack>
+  ), [activity, setAvailable, isSoftphonePopout, toggleSoftphonePopout, hasCall, logout]);
+
+  const voiceSections = useMemo(() => ([
+    { id: 'softphone', label: 'Softphone' },
+    { id: 'customer360', label: 'Customer 360' },
+    { id: 'reservations', label: 'Reservations' },
+    { id: 'voiceTasks', label: 'Voice Tasks' },
+    { id: 'presence', label: 'Presence' },
+  ]), []);
+
+  const chatSections = useMemo(() => ([
+    { id: 'mainChat', label: 'Main Chat' },
+    { id: 'chatTasks', label: 'Chat Tasks' },
+    { id: 'customer360-chat', label: 'Customer 360' },
+  ]), []);
+
+  // Context-aware quick actions for the Shell
+  const shellQuickActions = useMemo(() => ({
+    voice: [
+      { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
+      { label: isSoftphonePopout ? 'Close Popout' : 'Open Popout', onClick: toggleSoftphonePopout, variant: isSoftphonePopout ? 'destructive' : 'primary' },
+      ...(hasCall ? [{ label: 'Call controls', onClick: () => setControlsOpen(true), variant: 'primary' }] : []),
+      { label: 'Voice Tasks', targetId: 'voiceTasks' },
+      { label: 'Customer 360', targetId: 'customer360' },
+    ],
+    chat: [
+      { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
+      { label: 'Chat Tasks', targetId: 'chatTasks' },
+      { label: 'Customer 360', targetId: 'customer360-chat' },
+    ],
+  }), [isSoftphonePopout, toggleSoftphonePopout, hasCall]);
+
+  /* --------------------------------
+   * Render
+   * -------------------------------- */
+  return (
+    <Box minHeight="100vh" width="100%">
+      <Toaster {...toaster} />
+
+      {/* Sticky global bar */}
+      <Box marginBottom="space70">
+        <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
+      </Box>
+
+      <CallControlsModal isOpen={controlsOpen} onDismiss={() => setControlsOpen(false)} />
+
+      <AgentDesktopShell
+        sections={mode === 'voice' ? voiceSections : chatSections}
+        title="Agent Desktop"
+        actions={headerActions}
+        mode={mode}
+        quickActions={shellQuickActions}
+      >
+        <Box marginBottom="space70">
+          <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
+            <TabList aria-label="Workspace mode">
+              <Tab id="voice">VOICE</Tab>
+              <Tab id="chat">CHAT</Tab>
+            </TabList>
+
+            <TabPanels>
+              {/* VOICE */}
+              <TabPanel id="voice">
+                <Stack orientation="vertical" spacing="space70">
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Call Handling</Heading>
+                    <CardSection id="softphone" title="Softphone">
+                      <Softphone popupOpen={isSoftphonePopout} />
+                    </CardSection>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    <CardSection id="customer360" title="Customer 360">
+                      <Customer360 />
+                    </CardSection>
+                  </Box>
+
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Incoming</Heading>
+                    <CardSection id="reservations" title="Reservations">
+                      <Reservations items={reservations} standalone />
+                    </CardSection>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    <CardSection id="voiceTasks" title="Voice Tasks">
+                      <TasksPanel channel="voice" setAvailable={setAvailable} />
+                    </CardSection>
+                  </Box>
+
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Team Presence</Heading>
+                    <CardSection id="presence" title="Presence">
+                      <Presence />
+                    </CardSection>
+                  </Box>
+                </Stack>
+              </TabPanel>
+
+              {/* CHAT */}
+              <TabPanel id="chat">
+                <Stack orientation="vertical" spacing="space70">
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Conversations</Heading>
+                    <CardSection id="mainChat" title="Main Chat">
+                      <Box id="main-chat-panel" minHeight="60vh">
+                        {chatSessions.length ? (
+                          <ChatPanel
+                            key={chatPanelKey}
+                            sessions={chatSessions}
+                            onClose={(sid) => setChatSessions((prev) => prev.filter((s) => s.sid !== sid))}
+                            onIncrementUnread={(sid) =>
+                              setChatSessions((prev) =>
+                                prev.map((s) => (s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s))
+                              )
+                            }
+                            onClearUnread={(sid) =>
+                              setChatSessions((prev) =>
+                                prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
+                              )
+                            }
+                            onLabel={(sid, label) =>
+                              setChatSessions((prev) =>
+                                prev.map((s) => (s.sid === sid ? { ...s, label } : s))
+                              )
+                            }
+                            onPopout={popoutChat}
+                          />
+                        ) : (
+                          <Box color="colorTextWeak">No active chats</Box>
+                        )}
+                      </Box>
+                    </CardSection>
+                  </Box>
+
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Customer Info</Heading>
+                    <CardSection id="chatTasks" title="Chat Tasks">
+                      <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
+                    </CardSection>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    <CardSection id="customer360-chat" title="Customer 360">
+                      <Customer360 />
+                    </CardSection>
+                  </Box>
+                </Stack>
+              </TabPanel>
+            </TabPanels>
+          </Tabs>
+        </Box>
+      </AgentDesktopShell>
+    </Box>
+  );
+}
+
+==== /src\features\tasks\components\AgentApp.jsx ====
+
+==== src\features\tasks\components\AgentDesktopShell.jsx ====
+// contact-center/client/src/components/AgentDesktopShell.jsx
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import PropTypes from 'prop-types';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+
+import { Box } from '@twilio-paste/core/box';
+import { Button } from '@twilio-paste/core/button';
+import { Input } from '@twilio-paste/core/input';
+import { Stack } from '@twilio-paste/core/stack';
+import { Heading } from '@twilio-paste/core/heading';
+import { Separator } from '@twilio-paste/core/separator';
+import {
+  Sidebar,
+  SidebarHeader,
+  SidebarHeaderLabel,
+  SidebarBody,
+  SidebarNavigation,
+  SidebarNavigationItem,
+  SidebarCollapseButton,
+} from '@twilio-paste/core/sidebar';
+
+import { ArrowForwardIcon } from '@twilio-paste/icons/esm/ArrowForwardIcon';
+
+const SIDEBAR_W = 288;
+const SHELL_HEADER_H = 68;
+
+/* Responsive */
+function useIsDesktop() {
+  const mq = '(min-width: 1024px)';
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== 'undefined' ? window.matchMedia(mq).matches : true
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(mq);
+    const onChange = (e) => setIsDesktop(e.matches);
+    try { mql.addEventListener('change', onChange); } catch { mql.addListener(onChange); }
+    return () => {
+      try { mql.removeEventListener('change', onChange); } catch { mql.removeListener(onChange); }
+    };
+  }, []);
+  return isDesktop;
+}
+
+/* =========================
+ *   AgentDesktopShell (compact & context-aware)
+ * ========================= */
+export default function AgentDesktopShell({
+  sections,
+  title = 'Agent Desktop',
+  actions,
+  footer,
+  children,
+  topOffset = 0,
+  measureTopFrom,
+  mode = 'voice',                             // 'voice' | 'chat'
+  quickActions = { voice: [], chat: [] },    // { voice: [{label, targetId?, onClick?, disabled?, variant?}], chat: [...] }
+}) {
+  const isDesktop = useIsDesktop();
+
+  // expose header height to the rest of the app (e.g., StatusBar)
+  useEffect(() => {
+    try {
+      document.documentElement.style.setProperty('--shell-header-h', `${SHELL_HEADER_H}px`);
+    } catch {}
+  }, []);
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeId, setActiveId] = useLocalStorage('shell_active', sections?.[0]?.id || '');
+  const [filter, setFilter] = useState('');
+  const scrollRootRef = useRef(null);
+
+  // dynamic offset under external sticky bars
+  const [offset, setOffset] = useState(topOffset);
+  useEffect(() => setOffset(topOffset), [topOffset]);
+
+  // track another sticky element height (optional)
+  useEffect(() => {
+    if (!measureTopFrom) return;
+    const el = document.getElementById(measureTopFrom);
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const h = el.getBoundingClientRect().height || 0;
+      setOffset(Math.round(h));
+    });
+    ro.observe(el);
+    setOffset(Math.round(el.getBoundingClientRect().height || 0));
+    return () => ro.disconnect();
+  }, [measureTopFrom]);
+
+  // ensure active exists
+  useEffect(() => {
+    if (!sections?.length) return;
+    if (!sections.some((s) => s.id === activeId)) setActiveId(sections[0].id);
+  }, [sections, activeId, setActiveId]);
+
+  // filter
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return sections || [];
+    return (sections || []).filter(
+      (s) =>
+        s.label.toLowerCase().includes(q) ||
+        (s.hint && String(s.hint).toLowerCase().includes(q)) ||
+        (s.id && s.id.toLowerCase().includes(q))
+    );
+  }, [sections, filter]);
+
+  // keep active within filtered
+  useEffect(() => {
+    if (!filtered?.length) return;
+    if (!filtered.some((s) => s.id === activeId)) setActiveId(filtered[0].id);
+  }, [filtered, activeId, setActiveId]);
+
+  // scrollspy → update activeId
+  useEffect(() => {
+    const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
+    if (!root) return;
+
+    const ids = (sections || []).map((s) => s.id);
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
+    if (!els.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries.find((e) => e.isIntersecting);
+        const topMost = first?.target?.id;
+        if (topMost) {
+          setActiveId(topMost);
+          if (history.replaceState) history.replaceState(null, '', `#${encodeURIComponent(topMost)}`);
+        }
+      },
+      { root, threshold: [0.25], rootMargin: `-${offset + SHELL_HEADER_H}px 0px 0px 0px` }
+    );
+
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [sections, children, offset]);
+
+  const scrollTo = useCallback((id) => {
+    const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
+    const target = document.getElementById(id);
+    if (!root || !target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!isDesktop) setDrawerOpen(false);
+  }, [isDesktop]);
+
+  // hash navigation (first load & popstate)
+  useEffect(() => {
+    const go = () => {
+      const hash = decodeURIComponent((typeof window !== 'undefined' && window.location.hash) || '').replace('#', '');
+      if (hash && sections?.some((s) => s.id === hash)) setTimeout(() => scrollTo(hash), 0);
+    };
+    go();
+    window.addEventListener('popstate', go);
+    return () => window.removeEventListener('popstate', go);
+  }, [sections, scrollTo]);
+
+  // minimal keyboard support (Enter/Space)
+  const handleKeyDown = (e, id) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      scrollTo(id);
+    }
+  };
+
+  // contextual quick actions
+  const modeList = (quickActions?.[mode] || []).filter(Boolean);
+
+  const SidebarInner = (
+    <>
+      <SidebarHeader
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 2,
+          background: 'var(--paste-color-background-body)',
+          borderBottom: '1px solid var(--paste-color-border-weak)',
+          backdropFilter: 'saturate(140%) blur(6px)',
+        }}
+      >
+        <SidebarHeaderLabel>Navigation</SidebarHeaderLabel>
+        {!isDesktop && (
+          <SidebarCollapseButton
+            i18nCollapseLabel="Hide navigation"
+            i18nExpandLabel="Show navigation"
+            onClick={() => setDrawerOpen(false)}
+          />
+        )}
+      </SidebarHeader>
+
+      {/* Quick actions (VOICE / CHAT aware) */}
+      {modeList.length > 0 && (
+        <Box padding="space60" paddingBottom="space20">
+          <Stack orientation="vertical" spacing="space40">
+            <Heading as="h4" variant="heading40" margin="space0">Quick actions</Heading>
+            <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+              {modeList.map((a, i) => (
+                <Button
+                  key={`${mode}-qa-${i}`}
+                  size="small"
+                  variant={a.variant || 'secondary'}
+                  disabled={a.disabled}
+                  onClick={() => (a.targetId ? scrollTo(a.targetId) : a.onClick?.())}
+                >
+                  {a.label}
+                </Button>
+              ))}
+            </Stack>
+          </Stack>
+        </Box>
+      )}
+
+      {/* Finder */}
+      <Box padding="space60" paddingTop={modeList.length ? 'space20' : 'space60'} paddingBottom="space20">
+        <Input
+          id="shell-filter-input"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter sections…"
+          aria-label="Filter sections"
+        />
+      </Box>
+
+      <SidebarBody>
+        <SidebarNavigation aria-label="Sections">
+          {!filtered.length ? (
+            <Box color="colorTextWeak" padding="space60">No matches</Box>
+          ) : (
+            filtered.map((s) => (
+              <SidebarNavigationItem
+                key={s.id}
+                as="button"
+                selected={activeId === s.id}
+                aria-label={s.label}
+                aria-current={activeId === s.id ? 'page' : undefined}
+                onClick={() => scrollTo(s.id)}
+                onKeyDown={(e) => handleKeyDown(e, s.id)}
+                style={{ outlineOffset: 2 }}
+              >
+                <Stack
+                  orientation="horizontal"
+                  spacing="space30"
+                  alignment="center"
+                  style={{ justifyContent: 'space-between', width: '100%' }}
+                >
+                  <span style={{ fontWeight: activeId === s.id ? 600 : 500 }}>{s.label}</span>
+                  {s.badge ? <span style={{ opacity: 0.75 }}>{s.badge}</span> : null}
+                </Stack>
+              </SidebarNavigationItem>
+            ))
+          )}
+        </SidebarNavigation>
+      </SidebarBody>
+
+      {footer ? (
+        <>
+          <Separator orientation="horizontal" verticalSpacing="space50" />
+          <Box padding="space60">{footer}</Box>
+        </>
+      ) : null}
+    </>
+  );
+
+  return (
+    <Box height="100vh" width="100%" overflow="hidden" position="relative">
+      {/* Desktop sidebar */}
+      {isDesktop && (
+        <Box
+          as="aside"
+          position="fixed"
+          top={`${offset}px`}
+          left={0}
+          width={`${SIDEBAR_W}px`}
+          height={`calc(100vh - ${offset}px)`}
+          zIndex={5}
+          style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
+        >
+          <Sidebar variant="default" width="100%" maxHeight="100%" overflowY="auto" collapsed={false}>
+            {SidebarInner}
+          </Sidebar>
+        </Box>
+      )}
+
+      {/* Main column */}
+      <Box
+        as="main"
+        display="flex"
+        flexDirection="column"
+        height="100vh"
+        overflow="hidden"
+        paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
+        style={{ background: 'var(--paste-color-background-body)' }}
+      >
+        {/* Sticky header */}
+        <Box
+          as="header"
+          paddingX="space70"
+          paddingY="space60"
+          backgroundColor="colorBackgroundBody"
+          style={{
+            borderBottom: '1px solid var(--paste-color-border-weak)',
+            position: 'sticky',
+            top: `${offset}px`,
+            zIndex: 6,
+            backdropFilter: 'saturate(140%) blur(6px)',
+            height: `${SHELL_HEADER_H}px`,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <Stack orientation="horizontal" spacing="space60" alignment="center" distribution="spaceBetween" width="100%">
+            <Heading as="h3" variant="heading30" margin="space0">
+              {title}
+            </Heading>
+            <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+              {actions || null}
+              {!isDesktop && (
+                <Button
+                  aria-label="Show navigation"
+                  aria-controls="shell-drawer"
+                  aria-expanded={drawerOpen}
+                  variant="secondary"
+                  size="icon"
+                  onClick={() => setDrawerOpen(true)}
+                >
+                  <ArrowForwardIcon decorative />
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+        </Box>
+
+        {/* Scroll container */}
+        <Box
+          id="shell-scroll-root"
+          ref={scrollRootRef}
+          flexGrow={1}
+          minHeight="0"
+          overflow="auto"
+          backgroundColor="colorBackgroundBody"
+        >
+          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1400 }}>
+            {children}
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Mobile drawer */}
+      {!isDesktop && drawerOpen && (
+        <>
+          <Box
+            id="shell-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            position="fixed"
+            top={`${offset}px`}
+            left={0}
+            height={`calc(100vh - ${offset}px)`}
+            width="min(82vw, 340px)"
+            zIndex={11}
+            boxShadow="shadow"
+            backgroundColor="colorBackgroundBody"
+            style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
+          >
+            <Sidebar variant="default" width="100%" maxHeight="100%" overflowY="auto" collapsed={false}>
+              {SidebarInner}
+            </Sidebar>
+          </Box>
+
+          <Box
+            position="fixed"
+            top={`${offset}px`}
+            left={0}
+            width="100vw"
+            height={`calc(100vh - ${offset}px)`}
+            zIndex={10}
+            backgroundColor="colorBackground"
+            style={{ opacity: 0.35 }}
+            onClick={() => setDrawerOpen(false)}
+            aria-hidden="true"
+          />
+        </>
+      )}
+    </Box>
+  );
+}
+
+AgentDesktopShell.propTypes = {
+  sections: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      label: PropTypes.string.isRequired,
+      badge: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+      hint: PropTypes.string,
+      icon: PropTypes.node,
+    })
+  ).isRequired,
+  title: PropTypes.string,
+  actions: PropTypes.node,
+  footer: PropTypes.node,
+  children: PropTypes.node.isRequired,
+  topOffset: PropTypes.number,
+  measureTopFrom: PropTypes.string,
+  mode: PropTypes.oneOf(['voice', 'chat']),
+  quickActions: PropTypes.shape({
+    voice: PropTypes.arrayOf(PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      targetId: PropTypes.string,
+      onClick: PropTypes.func,
+      disabled: PropTypes.bool,
+      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
+    })),
+    chat: PropTypes.arrayOf(PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      targetId: PropTypes.string,
+      onClick: PropTypes.func,
+      disabled: PropTypes.bool,
+      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
+    })),
+  }),
+};
+
+==== /src\features\tasks\components\AgentDesktopShell.jsx ====
+
+==== src\features\tasks\components\Customer360.jsx ====
+// contact-center/client/src/components/Customer360.jsx
+import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Api from '../../index.js';
+
+import { Box } from '@twilio-paste/core/box';
+import { Card } from '@twilio-paste/core/card';
+import { Heading } from '@twilio-paste/core/heading';
+import { Stack } from '@twilio-paste/core/stack';
+import { Button } from '@twilio-paste/core/button';
+import { Badge } from '@twilio-paste/core/badge';
+import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs';
+import { Timeline, TimelineItem } from '@twilio-paste/core/timeline';
+import { Modal, ModalBody, ModalFooter, ModalHeader, ModalHeading } from '@twilio-paste/core/modal';
+import { Input } from '@twilio-paste/core/input';
+import { Label } from '@twilio-paste/core/label';
+import { Select, Option } from '@twilio-paste/core/select';
+import { Alert } from '@twilio-paste/core/alert';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+import { Spinner } from '@twilio-paste/core/spinner';
+import { Toaster, useToaster } from '@twilio-paste/core/toast';
+import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
+
+export default function Customer360({ selectedTask }) {
+  const { t } = useTranslation();
+  const [error, setError] = useState('');
+  const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleType, setScheduleType] = useState('');
+  const [paylinkStatus, setPaylinkStatus] = useState('idle');
+  const [scheduleStatus, setScheduleStatus] = useState('idle');
+
+  const toaster = useToaster();
+  const queryClient = useQueryClient();
+
+  /* ===================== Data ===================== */
+  const { data: task } = useQuery({
+    queryKey: ['myTask', selectedTask?.sid],
+    queryFn: async () => {
+      if (selectedTask) return selectedTask;
+      const list = await Api.myTasks('assigned,reserved,wrapping');
+      return (
+        list.find((x) =>
+          ['assigned', 'reserved'].includes(String(x.assignmentStatus).toLowerCase())
+        ) || list[0] || null
+      );
+    },
+    staleTime: 5000,
+    refetchInterval: 5000,
+    keepPreviousData: true,
+  });
+
+  const { data: customer } = useQuery({
+    queryKey: ['crmCustomer', task?.attributes?.customerId],
+    queryFn: () => Api.crmCustomer(task.attributes.customerId),
+    enabled: !!task?.attributes?.customerId,
+    staleTime: 30000,
+    keepPreviousData: true,
+  });
+
+  const { data: vehicle } = useQuery({
+    queryKey: ['crmVehicle', task?.attributes?.vehicleId || task?.attributes?.vin || task?.attributes?.plate],
+    queryFn: () => {
+      if (task.attributes.vehicleId) return Api.crmVehicleById(task.attributes.vehicleId);
+      if (task.attributes.vin) return Api.crmVehicleByVin(task.attributes.vin);
+      if (task.attributes.plate) return Api.crmVehicleByPlate(task.attributes.plate);
+      return null;
+    },
+    enabled: !!(task?.attributes?.vehicleId || task?.attributes?.vin || task?.attributes?.plate),
+    staleTime: 30000,
+    keepPreviousData: true,
+  });
+
+  const { data: appts = [] } = useQuery({
+    queryKey: ['crmAppointments', task?.attributes?.vehicleId],
+    queryFn: () => Api.crmAppointments(task.attributes.vehicleId),
+    enabled: !!task?.attributes?.vehicleId,
+    staleTime: 30000,
+    keepPreviousData: true,
+  });
+
+  const { data: finance } = useQuery({
+    queryKey: ['crmFinance', task?.attributes?.customerId, !!task?.attributes?.otpVerified],
+    queryFn: () => Api.crmFinance(task.attributes.customerId, !!task.attributes.otpVerified),
+    enabled: !!task?.attributes?.customerId,
+    staleTime: 30000,
+    keepPreviousData: true,
+  });
+
+  const { data: interactions = [] } = useQuery({
+    queryKey: ['crmInteractions', task?.attributes?.customerId],
+    queryFn: () => Api.crmInteractions(task.attributes.customerId),
+    enabled: !!task?.attributes?.customerId,
+    staleTime: 30000,
+    keepPreviousData: true,
+  });
+
+  const title = useMemo(() => {
+    if (!customer && !vehicle) return t('customer360');
+    return `${customer?.name || t('customer')} ${customer?.tier ? `· ${customer.tier}` : ''}`;
+  }, [customer, vehicle, t]);
+
+  /* ===================== Actions ===================== */
+  async function sendPaylink() {
+    if (!customer?._id) return;
+    try {
+      setPaylinkStatus('loading');
+      await Api.crmPaylink(customer._id);
+      setPaylinkStatus('success');
+      toaster.push({ message: t('payLinkSent'), variant: 'success' });
+    } catch (e) {
+      setPaylinkStatus('error');
+      setError(t('payLinkError'));
+    }
+  }
+
+  async function scheduleAppointment() {
+    if (!task?.attributes?.vehicleId || !scheduleDate || !scheduleType) {
+      setScheduleStatus('error');
+      setError(t('scheduleMissingFields'));
+      return;
+    }
+    try {
+      setError('');
+      setScheduleStatus('loading');
+      await Api.crmCreateAppointment({
+        vehicleId: task.attributes.vehicleId,
+        datetime: scheduleDate,
+        serviceType: scheduleType,
+      });
+      setIsScheduleOpen(false);
+      setScheduleStatus('success');
+      toaster.push({ message: t('scheduleSuccess'), variant: 'success' });
+      await queryClient.invalidateQueries(['crmAppointments', task.attributes.vehicleId]);
+    } catch (e) {
+      setScheduleStatus('error');
+      setError(t('scheduleError'));
+    }
+  }
+
+  /* ===================== Empty / Loading ===================== */
+  if (!task) {
+    return (
+      <Card padding="space70">
+        <Heading as="h3" variant="heading30">
+          {t('customer360')}
+        </Heading>
+        <Box color="colorTextWeak">{t('noActiveTask')}</Box>
+      </Card>
+    );
+  }
+
+  /* ===================== Layout (uniforme y claro) ===================== */
+  return (
+    <Card padding="space70" display="flex" flexDirection="column" height="100%" minHeight="0">
+      <Toaster {...toaster} />
+      {error ? (
+        <Box marginBottom="space60">
+          <Alert variant="error">{error}</Alert>
+        </Box>
+      ) : null}
+
+      {/* Header compacto y claro */}
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space50"
+        distribution="spaceBetween"
+        alignment="center"
+        style={{ flexWrap: 'wrap' }}
+      >
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h3" variant="heading30" margin="space0">
+            {title}
+          </Heading>
+          {customer?.tier ? <Badge as="span" variant="new">{customer.tier}</Badge> : null}
+        </Stack>
+
+        {/* Acciones principales */}
+        <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+          <Button
+            variant="secondary"
+            onClick={() => { setScheduleStatus('idle'); setIsScheduleOpen(true); }}
+            disabled={scheduleStatus === 'loading'}
+          >
+            {scheduleStatus === 'loading' ? (
+              <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+            ) : t('scheduleNewAppointment')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={sendPaylink}
+            disabled={paylinkStatus === 'loading'}
+          >
+            {paylinkStatus === 'loading' ? (
+              <Spinner size="sizeIcon20" decorative={false} title={t('loading')} />
+            ) : t('sendPayLink')}
+          </Button>
+        </Stack>
+      </Stack>
+
+      {/* Meta bar */}
+      <Box
+        marginTop="space50"
+        padding="space50"
+        backgroundColor="colorBackgroundBody"
+        borderRadius="borderRadius20"
+      >
+        <Stack
+          orientation={['vertical', 'horizontal']}
+          spacing="space60"
+          style={{ flexWrap: 'wrap' }}
+        >
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('intent')}</Box>
+            <Box fontWeight="fontWeightSemibold">{task.attributes?.intent || '—'}</Box>
+          </Box>
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('ivrPath')}</Box>
+            <Box fontWeight="fontWeightSemibold">{task.attributes?.ivr_path || '—'}</Box>
+          </Box>
+          <Box>
+            <Box color="colorTextWeak" fontSize="fontSize30">{t('vehicle')}</Box>
+            <Box fontWeight="fontWeightSemibold">
+              {vehicle ? `${vehicle?.year || ''} ${vehicle?.make || ''} ${vehicle?.model || ''}`.trim() : '—'}
+            </Box>
+          </Box>
+        </Stack>
+      </Box>
+
+      {/* Tabs: contenido con altura consistente */}
+      <Box marginTop="space70" flexGrow={1} minHeight="0" display="flex" flexDirection="column">
+        <Tabs baseId="customer-tabs">
+          <Box overflowX="auto">
+            <TabList aria-label={t('customerTabsAria')}>
+              <Tab>{t('vehicle')}</Tab>
+              <Tab>{t('appointments')}</Tab>
+              <Tab>{t('finance')}</Tab>
+              <Tab>{t('history')}</Tab>
+            </TabList>
+          </Box>
+
+          <Box flexGrow={1} minHeight="0" overflow="auto">
+            <TabPanels>
+              {/* ===== Vehicle ===== */}
+              <TabPanel>
+                {vehicle ? (
+                  <Stack orientation={['vertical', 'horizontal']} spacing="space80">
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('vehicle')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {vehicle.year || '—'} {vehicle.make || ''} {vehicle.model || ''}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('vin')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{vehicle.vin || '—'}</Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('plate')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{vehicle.plate || '—'}</Box>
+                    </Box>
+                  </Stack>
+                ) : (
+                  <Box color="colorTextWeak">{t('noVehicle')}</Box>
+                )}
+              </TabPanel>
+
+              {/* ===== Appointments ===== */}
+              <TabPanel>
+                {appts?.length ? (
+                  <Table scrollHorizontally>
+                    <THead>
+                      <Tr>
+                        <Th>{t('date')}</Th>
+                        <Th>{t('serviceType')}</Th>
+                        <Th>{t('status')}</Th>
+                      </Tr>
+                    </THead>
+                    <TBody>
+                      {appts.map((a) => (
+                        <Tr key={a._id}>
+                          <Td>{new Date(a.datetime).toLocaleString()}</Td>
+                          <Td>{a.serviceType || t('service')}</Td>
+                          <Td>{a.status}</Td>
+                        </Tr>
+                      ))}
+                    </TBody>
+                  </Table>
+                ) : (
+                  <Box color="colorTextWeak">{t('noAppointments')}</Box>
+                )}
+                {/* Feedback visual de acciones */}
+                <Box marginTop="space40">
+                  {scheduleStatus === 'success' ? (
+                    <Badge as="span" variant="success">{t('scheduleSuccess')}</Badge>
+                  ) : null}
+                  {scheduleStatus === 'error' ? (
+                    <Badge as="span" variant="error" marginLeft="space40">{error}</Badge>
+                  ) : null}
+                </Box>
+              </TabPanel>
+
+              {/* ===== Finance ===== */}
+              <TabPanel>
+                {finance ? (
+                  <Stack orientation={['vertical', 'horizontal']} spacing="space80">
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('balance')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {typeof finance.balance === 'number' ? finance.balance : t('masked')}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('payoffDate')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{finance.payoffDate || '—'}</Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('loyaltyCashback')}</Box>
+                      <Box fontWeight="fontWeightSemibold">
+                        {finance.loyaltyCashback ?? '—'}
+                      </Box>
+                    </Box>
+                    <Box>
+                      <Box color="colorTextWeak" fontSize="fontSize30">{t('lastPayment')}</Box>
+                      <Box fontWeight="fontWeightSemibold">{finance.lastPayment || '—'}</Box>
+                    </Box>
+                  </Stack>
+                ) : (
+                  <Box color="colorTextWeak">{t('noFinance')}</Box>
+                )}
+                <Box marginTop="space40">
+                  {paylinkStatus === 'success' ? (
+                    <Badge as="span" variant="success">{t('payLinkSent')}</Badge>
+                  ) : null}
+                  {paylinkStatus === 'error' ? (
+                    <Badge as="span" variant="error" marginLeft="space40">{t('payLinkError')}</Badge>
+                  ) : null}
+                </Box>
+              </TabPanel>
+
+              {/* ===== History ===== */}
+              <TabPanel>
+                {interactions?.length ? (
+                  <Timeline>
+                    {interactions.map((inter, idx) => (
+                      <TimelineItem key={idx}>
+                        {new Date(inter.createdAt).toLocaleString()}: {inter.intent} — {inter.disposition}
+                      </TimelineItem>
+                    ))}
+                  </Timeline>
+                ) : (
+                  <Box color="colorTextWeak">{t('noInteractions')}</Box>
+                )}
+              </TabPanel>
+            </TabPanels>
+          </Box>
+        </Tabs>
+      </Box>
+
+      {/* Modal: schedule */}
+      <Modal isOpen={isScheduleOpen} onDismiss={() => setIsScheduleOpen(false)} size="default">
+        <ModalHeader>
+          <ModalHeading>{t('scheduleAppointment')}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          <Stack orientation="vertical" spacing="space60">
+            <Box>
+              <Label htmlFor="date">{t('date')}</Label>
+              <Input
+                id="date"
+                type="datetime-local"
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+              />
+            </Box>
+            <Box>
+              <Label htmlFor="type">{t('serviceType')}</Label>
+              <Select
+                id="type"
+                value={scheduleType}
+                onChange={(e) => setScheduleType(e.target.value)}
+              >
+                <Option value="">{t('selectType')}</Option>
+                <Option value="maintenance">Maintenance</Option>
+                <Option value="recall">Recall</Option>
+              </Select>
+            </Box>
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setIsScheduleOpen(false)}>
+            {t('cancel')}
+          </Button>
+          <Button variant="primary" onClick={scheduleAppointment}>
+            {t('schedule')}
+          </Button>
+        </ModalFooter>
+      </Modal>
+    </Card>
+  );
+}
+
+==== /src\features\tasks\components\Customer360.jsx ====
+
+==== src\features\tasks\components\Presence.jsx ====
+// contact-center/client/src/components/Presence.jsx
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { io } from 'socket.io-client';
+import Api from '../../index.js';
+
+import { Box } from '@twilio-paste/core/box';
+import { Heading } from '@twilio-paste/core/heading';
+import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
+import { Badge } from '@twilio-paste/core/badge';
+import { Button } from '@twilio-paste/core/button';
+import { Stack } from '@twilio-paste/core/stack';
+import { Alert } from '@twilio-paste/core/alert';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+import { UserIcon } from '@twilio-paste/icons/esm/UserIcon';
+import { Input } from '@twilio-paste/core/input';
+import { Modal, ModalHeader, ModalHeading, ModalBody, ModalFooter } from '@twilio-paste/core/modal';
+
+const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
+const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
+
+/**
+ * Presence (Refined UI)
+ * - Card compacto que NO rompe el layout de la grilla.
+ * - Chips de agentes (hasta 8) para vista rápida.
+ * - Botón “Open roster” abre un modal con tabla completa (scrollable).
+ * - Mantiene toda la lógica original de datos / callbacks.
+ */
+export default function Presence({ onTransferClick, onWhisperClick }) {
+  const { t } = useTranslation();
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [sortKey, setSortKey] = useState(null);
+  const [sortAsc, setSortAsc] = useState(true);
+  const [open, setOpen] = useState(false);
+
+  const queryClient = useQueryClient();
+
+  const { data: rows = [], isLoading: loading } = useQuery({
+    queryKey: ['presence'],
+    queryFn: async () => {
+      try {
+        setError('');
+        return await Api.presence();
+      } catch (e) {
+        console.error(e);
+        setError(t('presenceLoadError'));
+        throw e;
+      }
+    },
+    staleTime: 10000,
+    refetchInterval: 5000,
+    keepPreviousData: true,
+  });
+
+  useEffect(() => {
+    const socket = io(socketBase, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      withCredentials: false,
+    });
+
+    socket.on('presence_update', ({ data }) => {
+      if (data) queryClient.setQueryData(['presence'], data);
+      else queryClient.invalidateQueries(['presence']);
+    });
+    socket.on('connect_error', (err) => {
+      console.warn('[socket.io] connect_error:', err?.message || err);
+    });
+
+    return () => socket.disconnect();
+  }, [queryClient]);
+
+  /* ======== Filtros & Orden ======== */
+  const filteredRows = useMemo(() => {
+    const lower = filter.toLowerCase();
+    let data = rows.filter(
+      (r) =>
+        (!availableOnly || r.available) &&
+        (r.friendlyName.toLowerCase().includes(lower) ||
+          r.activityName.toLowerCase().includes(lower))
+    );
+    if (sortKey === 'activity') {
+      data = data.slice().sort((a, b) =>
+        a.activityName.localeCompare(b.activityName) * (sortAsc ? 1 : -1)
+      );
+    } else if (sortKey === 'available') {
+      data = data
+        .slice()
+        .sort(
+          (a, b) =>
+            (a.available === b.available ? 0 : a.available ? 1 : -1) *
+            (sortAsc ? 1 : -1)
+        );
+    } else {
+      // orden por defecto: disponibles primero, luego por nombre
+      data = data
+        .slice()
+        .sort((a, b) => {
+          if (a.available === b.available) {
+            return a.friendlyName.localeCompare(b.friendlyName);
+          }
+          return a.available ? -1 : 1;
+        });
+    }
+    return data;
+  }, [rows, filter, availableOnly, sortKey, sortAsc]);
+
+  const topChips = filteredRows.slice(0, 8);
+  const availableCount = rows?.filter?.((r) => r.available)?.length || 0;
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortAsc(!sortAsc);
+    else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  };
+
+  return (
+    <Box
+      backgroundColor="colorBackground"
+      borderRadius="borderRadius30"
+      boxShadow="shadow"
+      padding="space70"
+      display="flex"
+      flexDirection="column"
+      height="100%"
+      minHeight="0"
+    >
+      <style>{`
+        .presence__chips{
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: var(--paste-space-50);
+        }
+        .presence__chip{
+          background: var(--paste-color-background-body);
+          border-radius: var(--paste-border-radius-20);
+          padding: var(--paste-space-50);
+          display: flex;
+          flex-direction: column;
+          gap: var(--paste-space-30);
+          min-width: 0;
+          min-height: 120px;
+        }
+        .presence__chipRow{
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--paste-space-40);
+          min-width: 0;
+        }
+        .presence__chipName{
+          font-weight: var(--paste-font-weight-semibold);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .presence__toolbar{
+          gap: var(--paste-space-40);
+          flex-wrap: wrap;
+        }
+        .presence__modalTable{
+          max-height: 60vh; overflow:auto;
+        }
+      `}</style>
+
+      {/* Header compacto */}
+      {error && (
+        <Box marginBottom="space50">
+          <Alert variant="error">{error}</Alert>
+        </Box>
+      )}
+
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space50"
+        distribution="spaceBetween"
+        alignment="center"
+        style={{ flexWrap: 'wrap' }}
+      >
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h3" variant="heading30" margin="space0">
+            {t('presence')}
+          </Heading>
+          <Badge as="span" variant="new">
+            {availableCount} {t('available')}
+          </Badge>
+        </Stack>
+
+        {/* Toolbar */}
+        <Stack orientation="horizontal" className="presence__toolbar">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t('filterAgentsPlaceholder')}
+            aria-label={t('filterAgentsAria')}
+          />
+          <Button
+            variant={availableOnly ? 'primary' : 'secondary'}
+            onClick={() => setAvailableOnly((v) => !v)}
+          >
+            {t('available')}
+          </Button>
+          <Button
+            aria-label={t('refreshAria')}
+            onClick={() => queryClient.refetchQueries(['presence'])}
+            disabled={loading}
+            variant="secondary"
+          >
+            {loading ? t('loading') : t('refresh')}
+          </Button>
+          <Button variant="primary" onClick={() => setOpen(true)}>
+            Open roster
+          </Button>
+        </Stack>
+      </Stack>
+
+      {/* Chips (vista rápida) */}
+      <Box marginTop="space60" flexGrow={1} minHeight="0" overflow="auto">
+        {loading ? (
+          <SkeletonLoader />
+        ) : !filteredRows.length ? (
+          <Box color="colorTextWeak">{t('noAgents')}</Box>
+        ) : (
+          <Box className="presence__chips">
+            {topChips.map((r) => (
+              <Box key={r.workerSid} className="presence__chip">
+                <Box className="presence__chipRow">
+                  <Box className="presence__chipName" title={r.friendlyName}>
+                    <UserIcon decorative /> {r.friendlyName}
+                  </Box>
+                  <Badge as="span" variant={r.available ? 'success' : 'neutral'}>
+                    {r.available ? t('yes') : t('no')}
+                  </Badge>
+                </Box>
+
+                <Box className="presence__chipRow">
+                  <Box color="colorTextWeak" fontSize="fontSize30" title={r.activityName}>
+                    {t('activity')}: <b>{r.activityName}</b>
+                  </Box>
+                </Box>
+
+                <Box className="presence__chipRow">
+                  <Box color="colorTextWeak" fontSize="fontSize30" title={r.contactUri || '—'}>
+                    {t('contactUri')}: <b>{r.contactUri || '—'}</b>
+                  </Box>
+                </Box>
+
+                <Stack orientation="horizontal" spacing="space40">
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => onTransferClick?.(r)}
+                  >
+                    {t('transferTo')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => onWhisperClick?.(r)}
+                  >
+                    {t('whisperTo')}
+                  </Button>
+                </Stack>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+
+      {/* Modal con tabla completa (no rompe el layout del card) */}
+      <Modal isOpen={open} onDismiss={() => setOpen(false)} size="wide">
+        <ModalHeader>
+          <ModalHeading>{t('presence')}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t('filterAgentsPlaceholder')}
+              aria-label={t('filterAgentsAria')}
+            />
+            <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+              <Button
+                variant={sortKey === 'activity' ? 'primary' : 'secondary'}
+                onClick={() => handleSort('activity')}
+              >
+                {t('activity')}
+              </Button>
+              <Button
+                variant={sortKey === 'available' ? 'primary' : 'secondary'}
+                onClick={() => handleSort('available')}
+              >
+                {t('available')}
+              </Button>
+              <Button variant="secondary" onClick={() => { setSortKey(null); setSortAsc(true); }}>
+                Reset
+              </Button>
+            </Stack>
+          </Stack>
+
+          <Box className="presence__modalTable" marginTop="space60">
+            {loading ? (
+              <SkeletonLoader />
+            ) : !filteredRows.length ? (
+              <Box color="colorTextWeak">{t('noAgents')}</Box>
+            ) : (
+              <Table scrollHorizontally>
+                <THead>
+                  <Tr>
+                    <Th scope="col">{t('agent')}</Th>
+                    <Th scope="col">{t('activity')}</Th>
+                    <Th scope="col">{t('available')}</Th>
+                    <Th scope="col">{t('contactUri')}</Th>
+                    <Th scope="col">{t('actions')}</Th>
+                  </Tr>
+                </THead>
+                <TBody>
+                  {filteredRows.map((r) => (
+                    <Tr role="row" key={r.workerSid}>
+                      <Td title={r.friendlyName}>
+                        <UserIcon decorative /> {r.friendlyName}
+                      </Td>
+                      <Td title={r.activityName}>{r.activityName}</Td>
+                      <Td>
+                        <Badge as="span" variant={r.available ? 'success' : 'neutral'}>
+                          {r.available ? t('yes') : t('no')}
+                        </Badge>
+                      </Td>
+                      <Td title={r.contactUri || '—'}>{r.contactUri || '—'}</Td>
+                      <Td>
+                        <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
+                          <Button
+                            variant="secondary"
+                            size="small"
+                            onClick={() => onTransferClick?.(r)}
+                          >
+                            {t('transferTo')}
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="small"
+                            onClick={() => onWhisperClick?.(r)}
+                          >
+                            {t('whisperTo')}
+                          </Button>
+                        </Stack>
+                      </Td>
+                    </Tr>
+                  ))}
+                </TBody>
+              </Table>
+            )}
+          </Box>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="primary" onClick={() => setOpen(false)}>Close</Button>
+        </ModalFooter>
+      </Modal>
+    </Box>
+  );
+}
+
+==== /src\features\tasks\components\Presence.jsx ====
+
+==== src\features\tasks\components\Reservations.jsx ====
+import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { Box } from '@twilio-paste/core/box';
+import { Stack } from '@twilio-paste/core/stack';
+import { Heading } from '@twilio-paste/core/heading';
+import { Badge } from '@twilio-paste/core/badge';
+import { Button } from '@twilio-paste/core/button';
+import { Input } from '@twilio-paste/core/input';
+import { Separator } from '@twilio-paste/core/separator';
+import { Table, THead, TBody, Tr, Th, Td } from '@twilio-paste/core/table';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+export default function Reservations({ items = [], standalone = false, loading = false, onRefresh }) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState('date');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  const count = items?.length || 0;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = !q
+      ? items
+      : items.filter((r) => {
+          const sid = String(r.sid || '').toLowerCase();
+          const taskSid = String(r.task?.sid || '').toLowerCase();
+          const st = String(r.reservationStatus || r.status || '').toLowerCase();
+          return sid.includes(q) || taskSid.includes(q) || st.includes(q);
+        });
+
+    const sorted = [...base].sort((a, b) => {
+      if (sortKey === 'status') {
+        const sa = String(a.reservationStatus || a.status || '').toLowerCase();
+        const sb = String(b.reservationStatus || b.status || '').toLowerCase();
+        return sa.localeCompare(sb) * (sortAsc ? 1 : -1);
+      } else {
+        const da = a.dateCreated ? new Date(a.dateCreated).getTime() : 0;
+        const db = b.dateCreated ? new Date(b.dateCreated).getTime() : 0;
+        return (da - db) * (sortAsc ? 1 : -1);
+      }
+    });
+
+    return sorted;
+  }, [items, query, sortKey, sortAsc]);
+
+  function toggleSort(key) {
+    if (key === sortKey) {
+      setSortAsc((v) => !v);
+    } else {
+      setSortKey(key);
+      setSortAsc(false);
+    }
+  }
+
+  function statusVariant(v) {
+    const s = String(v || '').toLowerCase();
+    if (['accepted', 'assigned', 'reserved'].includes(s)) return 'new';
+    if (['wrapping'].includes(s)) return 'warning';
+    if (['completed'].includes(s)) return 'success';
+    if (['timeout', 'rejected', 'canceled', 'rescinded', 'failed'].includes(s)) return 'error';
+    return 'neutral';
+  }
+
+  const CardShell = ({ children }) =>
+    standalone ? (
+      <Box
+        backgroundColor="colorBackground"
+        borderRadius="borderRadius30"
+        boxShadow="shadow"
+        padding="space70"
+        display="flex"
+        flexDirection="column"
+        height="100%"
+        minHeight="0"
+      >
+        {children}
+      </Box>
+    ) : (
+      <>{children}</>
+    );
+
+  return (
+    <CardShell>
+      <style>{`
+        .resv__body { flex: 1; min-height: 0; overflow: auto; }
+        .resv__truncate {
+          max-width: 260px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .resv__th--click { cursor: pointer; }
+        .resv__sid { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      `}</style>
+
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space50"
+        alignment="center"
+        distribution="spaceBetween"
+        style={{ flexWrap: 'wrap' }}
+      >
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h3" variant="heading30" margin="space0">
+            {t('reservations')}
+          </Heading>
+          <Badge as="span" variant="neutral">
+            {count}
+          </Badge>
+        </Stack>
+
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('filterAgentsPlaceholder')}
+            aria-label={t('filterAgentsAria')}
+          />
+          {typeof onRefresh === 'function' ? (
+            <Button variant="secondary" onClick={onRefresh} disabled={loading}>
+              {loading ? t('loading') : t('refresh')}
+            </Button>
+          ) : null}
+        </Stack>
+      </Stack>
+
+      <Separator orientation="horizontal" verticalSpacing="space50" />
+
+      <Box className="resv__body">
+        {loading ? (
+          <SkeletonLoader />
+        ) : !filtered.length ? (
+          <Box color="colorTextWeak">{t('noReservations')}</Box>
+        ) : (
+          <Table scrollHorizontally>
+            <THead>
+              <Tr>
+                <Th scope="col">{t('reservationSid')}</Th>
+                <Th scope="col">{t('taskSid')}</Th>
+                <Th
+                  scope="col"
+                  className="resv__th--click"
+                  onClick={() => toggleSort('status')}
+                  aria-sort={sortKey === 'status' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+                >
+                  {t('status')} {sortKey === 'status' ? (sortAsc ? '↑' : '↓') : ''}
+                </Th>
+                <Th
+                  scope="col"
+                  className="resv__th--click"
+                  onClick={() => toggleSort('date')}
+                  aria-sort={sortKey === 'date' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+                >
+                  Date {sortKey === 'date' ? (sortAsc ? '↑' : '↓') : ''}
+                </Th>
+              </Tr>
+            </THead>
+            <TBody>
+              {filtered.map((r) => {
+                const status = r.reservationStatus || r.status || '—';
+                const date =
+                  r.dateCreated
+                    ? new Date(r.dateCreated).toLocaleString()
+                    : '—';
+                return (
+                  <Tr key={r.sid}>
+                    <Td className="resv__truncate resv__sid" title={r.sid}>
+                      {r.sid}
+                    </Td>
+                    <Td className="resv__truncate resv__sid" title={r.task?.sid || '—'}>
+                      {r.task?.sid || '—'}
+                    </Td>
+                    <Td>
+                      <Badge as="span" variant={statusVariant(status)}>
+                        {status}
+                      </Badge>
+                    </Td>
+                    <Td className="resv__truncate" title={date}>
+                      {date}
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </Box>
+    </CardShell>
+  );
+}
+
+==== /src\features\tasks\components\Reservations.jsx ====
+
+==== src\features\tasks\components\StatusBar.jsx ====
+// contact-center/client/src/components/StatusBar.jsx
+import { useEffect, useState } from 'react';
+import http from '../../../shared/services/http.js';
+import { useTranslation } from 'react-i18next';
+
+import { Box } from '@twilio-paste/core/box';
+import { Badge } from '@twilio-paste/core/badge';
+import { Select, Option } from '@twilio-paste/core/select';
+import { Stack } from '@twilio-paste/core/stack';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+import { Label } from '@twilio-paste/core/label';
+
+export default function StatusBar({ label, onChange }) {
+  const [acts, setActs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation();
+
+  useEffect(() => {
+    http
+      .get('/taskrouter/activities')
+      .then((r) => setActs(r.data || []))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const isAvailable = String(label || '').toLowerCase().includes('available');
+
+  return (
+    <Box
+      as="section"
+      width="100%"
+      // --- Anti-solape: sticky bajo el header del shell ---
+      style={{
+        position: 'sticky',
+        top: 'var(--shell-header-h, 64px)', // ajustable desde el shell si cambias la altura del header
+        zIndex: 2,
+        backdropFilter: 'saturate(140%) blur(6px)',
+      }}
+      backgroundColor="colorBackgroundBody"
+      borderBottomColor="colorBorderWeak"
+      borderBottomWidth="borderWidth10"
+      borderBottomStyle="solid"
+    >
+      <Box
+        paddingX="space70"
+        paddingY="space60"
+        backgroundColor="colorBackgroundBody"
+      >
+        <Stack
+          orientation={['vertical', 'horizontal']}
+          spacing="space60"
+          alignment="center"
+          distribution="spaceBetween"
+          style={{ flexWrap: 'wrap' }}
+        >
+          {/* Estado del agente */}
+          <Box aria-live="polite" minWidth="0">
+            {t('agentStatus')}{' '}
+            {loading ? (
+              <SkeletonLoader />
+            ) : (
+              <Badge as="span" variant={isAvailable ? 'success' : 'neutral'}>
+                {label || '—'}
+              </Badge>
+            )}
+          </Box>
+
+          {/* Selector de actividad (tamaño consistente) */}
+          <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+            <Box>
+              <Label htmlFor="activitySelect" margin="space0">
+                {t('changeActivity')}
+              </Label>
+            </Box>
+            {loading ? (
+              <SkeletonLoader />
+            ) : (
+              <Select
+                id="activitySelect"
+                onChange={(e) => onChange?.(e.target.value)}
+                defaultValue=""
+                size="default"
+                disabled={!acts.length}
+                // ancho consistente para que no “salte” el layout
+                style={{ minWidth: 220, maxWidth: 320 }}
+              >
+                <Option value="" disabled>
+                  {t('changeActivity')}
+                </Option>
+                {acts.map((a) => (
+                  <Option key={a.sid} value={a.sid}>
+                    {a.name}
+                  </Option>
+                ))}
+              </Select>
+            )}
+          </Stack>
+        </Stack>
+      </Box>
+    </Box>
+  );
+}
+
+==== /src\features\tasks\components\StatusBar.jsx ====
+
+==== src\features\tasks\components\TasksPanel.jsx ====
+// contact-center/client/src/components/TasksPanel.jsx
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+
+import Api from '../../index.js';
+import http from '../../../shared/services/http.js';
+import { getCallSid } from '../../softphone/services/callSidStore.js';
+
+import { Box } from '@twilio-paste/core/box';
+import { Stack } from '@twilio-paste/core/stack';
+import { Heading } from '@twilio-paste/core/heading';
+import { Button } from '@twilio-paste/core/button';
+import { Card } from '@twilio-paste/core/card';
+import { Badge } from '@twilio-paste/core/badge';
+import { Separator } from '@twilio-paste/core/separator';
+import {
+  Modal,
+  ModalHeader,
+  ModalHeading,
+  ModalBody,
+  ModalFooter
+} from '@twilio-paste/core/modal';
+import { Select, Option } from '@twilio-paste/core/select';
+import { Label } from '@twilio-paste/core/label';
+import { Input } from '@twilio-paste/core/input';
+import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
+import { Toaster, useToaster } from '@twilio-paste/core/toast';
+import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
+
+/**
+ * TasksPanel — app-like, no inner scrolls
+ * - Voice: compact header + responsive card grid + simple transfer/wrap-up
+ * - Chat : card list (no table/scroll), clear actions
+ */
+export default function TasksPanel({ onFinished, setAvailable, channel = 'voice', onOpenChat }) {
+  const voiceMode = channel !== 'chat';
+  const { t: translate } = useTranslation();
+  const toaster = useToaster();
+
+  // Data
+  const { data: itemsRaw = [], isLoading: loading, refetch: load } = useQuery({
+    queryKey: ['myTasks'],
+    queryFn: () => Api.myTasks('wrapping,assigned,reserved'),
+    staleTime: 10000,
+    onError: () =>
+      toaster.push({ message: translate('tasksLoadError') || 'Failed to load tasks.', variant: 'error' })
+  });
+
+  // Split by channel
+  const voiceTasks = useMemo(
+    () => itemsRaw.filter((t) => (t?.attributes?.channel || 'voice') !== 'chat'),
+    [itemsRaw]
+  );
+  const chatTasks = useMemo(
+    () => itemsRaw.filter((t) => (t?.attributes?.channel || '') === 'chat'),
+    [itemsRaw]
+  );
+  const items = voiceMode ? voiceTasks : chatTasks;
+
+  /* =========================
+   * Wrap-up (chat) — igual que voz, pero sin cerrar la conversación
+   * ========================= */
+  const [openChatWrap, setOpenChatWrap] = useState(false);
+  const [chatWrapTask, setChatWrapTask] = useState(null);
+  const [chatWrapDisposition, setChatWrapDisposition] = useState('Resolved');
+  const [chatWrapNotes, setChatWrapNotes] = useState('');
+
+  function onChatFinishPress(t) {
+    setChatWrapTask(t);
+    setChatWrapDisposition('Resolved');
+    setChatWrapNotes('Chat wrap-up'); // evita reason vacío
+    setOpenChatWrap(true);
+  }
+
+  async function doChatFinish() {
+    if (!chatWrapTask) {
+      setOpenChatWrap(false);
+      return;
+    }
+
+    const reason = (chatWrapNotes || '').trim() || 'Chat wrap-up';
+    const disposition = chatWrapDisposition || 'Resolved';
+    const taskSid = chatWrapTask.sid;
+
+    try {
+      // 1) Log CRM (best-effort)
+      try {
+        await Api.crmLogInteraction?.({
+          customerId: chatWrapTask.attributes?.customerId || null,
+          channel: 'chat',
+          intent: chatWrapTask.attributes?.intent || null,
+          taskSid,
+          conversationSid:
+            chatWrapTask.attributes?.conversationSid ||
+            chatWrapTask.attributes?.conversation_sid ||
+            null,
+          disposition,
+          notes: reason,
+        });
+      } catch (e) {
+        console.warn('logInteraction (chat) failed', e?.message || e);
+      }
+
+      // 2) Completar con autoWrap si venía en ASSIGNED
+      await Api.completeTask(taskSid, { reason, disposition, autoWrap: true });
+
+      setOpenChatWrap(false);
+      await load();
+      onFinished?.(taskSid);
+      toaster.push({
+        message: translate('completeTaskSuccess') || 'Task completed',
+        variant: 'success',
+        dismissAfter: 3000,
+      });
+    } catch (e) {
+      console.error('finishChatTask error', e);
+      toaster.push({
+        message: e?.response?.data?.error || translate('completeTaskError') || 'Failed to complete task.',
+        variant: 'error',
+      });
+    }
+  }
+
+  /* =========================
+   * Transfer (voice)
+   * ========================= */
+  const [openTransfer, setOpenTransfer] = useState(false);
+  const [transferTask, setTransferTask] = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [transferMode, setTransferMode] = useState('Agent'); // 'Agent' | 'External'
+  const [search, setSearch] = useState('');
+  const [target, setTarget] = useState('');          // for Agent
+  const [externalNumber, setExternalNumber] = useState(''); // for External
+
+  const filteredAgents = useMemo(
+    () => agents.filter((a) => a.friendlyName.toLowerCase().includes(search.toLowerCase())),
+    [agents, search]
+  );
+
+  async function loadAgents() {
+    try {
+      const list = await Api.availableWorkers();
+      setAgents((list || []).filter((a) => !!a.contactUri));
+    } catch {
+      setAgents([]);
+      toaster.push({ message: translate('agentsLoadError') || 'Failed to load agents.', variant: 'error' });
+    }
+  }
+
+  function onTransfer(task) {
+    setTransferTask(task);
+    setTransferMode('Agent');
+    setSearch('');
+    setTarget('');
+    setExternalNumber('');
+    setOpenTransfer(true);
+    loadAgents();
+  }
+
+  async function doCold() {
+    const cSid = transferTask?.attributes?.callSid || transferTask?.attributes?.call_sid;
+    const agentCallSid = getCallSid() || undefined;
+    const transferTarget = transferMode === 'Agent' ? target : externalNumber;
+    if (!cSid || !transferTarget) {
+      toaster.push({ message: translate('transferMissingData') || 'Missing data for transfer.', variant: 'error' });
+      return;
+    }
+    try {
+      await Api.transferCold({ customerCallSid: cSid, targetIdentity: transferTarget, agentCallSid });
+      setOpenTransfer(false);
+      toaster.push({ message: translate('transferSuccess') || 'Transfer successful', variant: 'success', dismissAfter: 3000 });
+      await load();
+    } catch (e) {
+      console.error('transfer cold error', e);
+      toaster.push({ message: translate('transferError') || 'Failed to transfer.', variant: 'error' });
+    }
+  }
+
+  async function doWarm() {
+    const cSid = transferTask?.attributes?.callSid || transferTask?.attributes?.call_sid;
+    const agentCallSid = getCallSid();
+    const transferTarget = transferMode === 'Agent' ? target : externalNumber;
+    if (!cSid || !agentCallSid || !transferTarget) {
+      toaster.push({ message: translate('warmTransferMissingData') || 'Missing data for warm transfer.', variant: 'error' });
+      return;
+    }
+    try {
+      await Api.transferWarm({
+        taskSid: transferTask?.sid,
+        customerCallSid: cSid,
+        agentCallSid,
+        targetIdentity: transferTarget
+      });
+      setOpenTransfer(false);
+      toaster.push({ message: translate('transferSuccess') || 'Transfer successful', variant: 'success', dismissAfter: 3000 });
+    } catch (e) {
+      console.error('transfer warm error', e);
+      toaster.push({ message: translate('warmTransferError') || 'Failed to initiate warm transfer.', variant: 'error' });
+    }
+  }
+
+  async function doCompleteTransfer() {
+    const agentCallSid = getCallSid();
+    if (!agentCallSid) {
+      toaster.push({ message: translate('noActiveCall') || 'No active call', variant: 'error' });
+      return;
+    }
+    try {
+      await Api.transferComplete(agentCallSid);
+      await load();
+      toaster.push({ message: translate('transferSuccess') || 'Transfer successful', variant: 'success', dismissAfter: 3000 });
+    } catch (e) {
+      console.error('transfer complete error', e);
+      toaster.push({ message: translate('completeTransferError') || 'Failed to complete transfer.', variant: 'error' });
+    }
+  }
+
+  /* =========================
+   * Wrap-up (voice)
+   * ========================= */
+  const [openWrap, setOpenWrap] = useState(false);
+  const [wrapTask, setWrapTask] = useState(null);
+  const [wrapDisposition, setWrapDisposition] = useState('Resolved');
+  const [wrapNotes, setWrapNotes] = useState('');
+
+  function onFinishPress(t) {
+    const dur = t.age || 0;
+    setWrapTask(t);
+    setWrapDisposition('Resolved');
+    setWrapNotes(`Call duration: ${Math.max(0, dur)}s`);
+    setOpenWrap(true);
+  }
+
+  async function doFinish() {
+    if (!wrapTask) return setOpenWrap(false);
+    try {
+      // Optional CRM log (best-effort)
+      try {
+        await Api.crmLogInteraction?.({
+          customerId: wrapTask.attributes?.customerId || null,
+          channel: 'voice',
+          intent: wrapTask.attributes?.intent || null,
+          taskSid: wrapTask.sid,
+          callSid: wrapTask.attributes?.callSid || wrapTask.attributes?.call_sid || null,
+          disposition: wrapDisposition,
+          notes: wrapNotes
+        });
+      } catch (e) {
+        console.warn('logInteraction failed (non-blocking)', e?.message || e);
+      }
+
+      await Api.completeTask(wrapTask.sid, { reason: wrapNotes, disposition: wrapDisposition });
+      setOpenWrap(false);
+      await load();
+      onFinished?.(wrapTask.sid);
+      toaster.push({ message: translate('completeTaskSuccess') || 'Task completed', variant: 'success', dismissAfter: 3000 });
+    } catch (e) {
+      console.error('finishTask error', e);
+      toaster.push({ message: translate('completeTaskError') || 'Failed to complete task.', variant: 'error' });
+    }
+  }
+
+  /* =========================
+   * Chat actions
+   * ========================= */
+  async function closeChat(conversationSid) {
+    try {
+      // Cierre “duro”: timers a 0 y remover participantes
+      await http.post(`/conversations/${conversationSid}/close`, { removeParticipants: true });
+      toaster.push({ message: 'Chat closed', variant: 'success', dismissAfter: 2000 });
+      await load();
+    } catch (e) {
+      console.error('close chat error', e);
+      // Fallback: ajustar ambos timers si /close no existiese aún
+      try {
+        await http.post(`/conversations/${conversationSid}/timers`, { inactive: 'PT0S', closed: 'PT0S' });
+        toaster.push({ message: 'Chat close requested', variant: 'success', dismissAfter: 2000 });
+        await load();
+      } catch (e2) {
+        toaster.push({ message: 'Failed to close chat', variant: 'error' });
+      }
+    }
+  }
+
+  /* =========================
+   * Render — CHAT (cards, no table/scroll)
+   * ========================= */
+  if (!voiceMode) {
+    return (
+      <Box
+        display="grid"
+        gridTemplateRows="auto auto 1fr"
+        gap="space50"
+        height="100%"
+        minHeight="0"
+        backgroundColor="colorBackground"
+        borderRadius="borderRadius30"
+        boxShadow="shadow"
+        padding="space70"
+      >
+        <Toaster {...toaster} />
+        <Stack
+          orientation={['vertical','horizontal']}
+          spacing="space50"
+          alignment="center"
+          distribution="spaceBetween"
+          style={{ flexWrap: 'wrap' }}
+        >
+          <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Heading as="h3" variant="heading30" margin="space0">Chat Tasks</Heading>
+            <Badge as="span" variant="neutral">{chatTasks.length}</Badge>
+          </Stack>
+          <Button variant="secondary" onClick={load} disabled={loading}>
+            {loading ? 'Loading…' : 'Refresh'}
+          </Button>
+        </Stack>
+
+        <Separator orientation="horizontal" />
+
+        {loading ? (
+          <SkeletonLoader />
+        ) : !chatTasks.length ? (
+          <Box color="colorTextWeak">No chat tasks</Box>
+        ) : (
+          <Box
+            // cards grid — no internal scroll, parent page scrolls
+            display="grid"
+            gridTemplateColumns="repeat(auto-fit, minmax(320px, 1fr))"
+            gap="space60"
+          >
+            {chatTasks.map((t) => {
+              const a = t.attributes || {};
+              const convoSid = a.conversationSid || a.conversation_sid || '';
+              return (
+                <Card key={t.sid} padding="space70">
+                  <Stack orientation="vertical" spacing="space50">
+                    <Stack orientation={['vertical','horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+                      <Heading as="h4" variant="heading40" margin="space0">{t.sid}</Heading>
+                      <Badge as="span" variant="new">{t.assignmentStatus}</Badge>
+                    </Stack>
+                    <Box color="colorTextWeak" fontSize="fontSize30">Conversation: <b>{convoSid || '—'}</b></Box>
+                    <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+                      <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>
+                        Open chat
+                      </Button>
+                      {/* Botón pequeño para wrap-up del task de chat (NO cierra el chat) */}
+                      <Button
+                        variant="primary"
+                        size="small"
+                        onClick={() => onChatFinishPress(t)}
+                      >
+                        {translate('completeTask') || 'Complete task'}
+                      </Button>
+                      <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>
+                        Close chat
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Card>
+              );
+            })}
+          </Box>
+        )}
+
+        {/* Modal: Wrap-up de CHAT */}
+        <Modal isOpen={openChatWrap} onDismiss={() => setOpenChatWrap(false)} ariaLabel="wrapup-chat-task" size="default">
+          <ModalHeader>
+            <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
+          </ModalHeader>
+          <ModalBody>
+            <Stack orientation="vertical" spacing="space60">
+              <Box>
+                <Label htmlFor="chat-dispo">{translate('disposition') || 'Disposition'}</Label>
+                <Select
+                  id="chat-dispo"
+                  value={chatWrapDisposition}
+                  onChange={(e) => setChatWrapDisposition(e.target.value)}
+                >
+                  {['Resolved','Escalated','Callback scheduled','Voicemail left','No answer','Wrong number']
+                    .map((d) => (
+                      <Option key={`chat-${d}`} value={d}>{d}</Option>
+                    ))}
+                </Select>
+              </Box>
+              <Box>
+                <Label htmlFor="chat-notes">{translate('notesReason') || 'Notes'}</Label>
+                <Input
+                  id="chat-notes"
+                  value={chatWrapNotes}
+                  onChange={(e) => setChatWrapNotes(e.target.value)}
+                  placeholder={translate('shortNotesPlaceholder') || 'Short wrap-up notes...'}
+                />
+              </Box>
+            </Stack>
+          </ModalBody>
+          <ModalFooter>
+            <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+              <Button variant="secondary" onClick={() => setOpenChatWrap(false)}>{translate('cancel') || 'Cancel'}</Button>
+              <Button variant="primary" onClick={doChatFinish}>{translate('complete') || 'Complete'}</Button>
+            </Stack>
+          </ModalFooter>
+        </Modal>
+      </Box>
+    );
+  }
+
+  /* =========================
+   * Render — VOICE (cards, no inner scrolls)
+   * ========================= */
+  const avgSLA = items.length > 0
+    ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
+    : 0;
+
+  return (
+    <Box
+      display="grid"
+      gridTemplateRows="auto auto 1fr"
+      gap="space50"
+      height="100%"
+      minHeight="0"
+      backgroundColor="colorBackground"
+      borderRadius="borderRadius30"
+      boxShadow="shadow"
+      padding="space70"
+    >
+      <Toaster {...toaster} />
+
+      {/* Header */}
+      <Stack
+        orientation={['vertical','horizontal']}
+        spacing="space40"
+        alignment="center"
+        distribution="spaceBetween"
+        style={{ flexWrap: 'wrap' }}
+      >
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h3" variant="heading30" margin="space0">
+            {translate('myTasks') || 'My Tasks'}
+          </Heading>
+          <Badge as="span" variant="neutral">{items.length}</Badge>
+          <Badge as="span">Avg SLA: {avgSLA}s</Badge>
+        </Stack>
+
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Button aria-label={translate('refreshAria') || 'Refresh'} onClick={load} disabled={loading} variant="secondary">
+            {loading ? translate('loading') || 'Loading…' : translate('refresh') || 'Refresh'}
+          </Button>
+          <Button
+            aria-label={translate('completeTransferAria') || 'Complete transfer'}
+            variant="destructive"
+            onClick={doCompleteTransfer}
+            disabled={!getCallSid()}
+          >
+            {translate('completeTransfer') || 'Complete transfer'}
+          </Button>
+        </Stack>
+      </Stack>
+
+      <Separator orientation="horizontal" />
+
+      {/* Cards grid */}
+      {loading ? (
+        <SkeletonLoader />
+      ) : !items.length ? (
+        <Box color="colorTextWeak">{translate('noTasks') || 'No tasks'}</Box>
+      ) : (
+        <Box
+          display="grid"
+          gridTemplateColumns="repeat(auto-fit, minmax(340px, 1fr))"
+          gap="space60"
+        >
+          {items.map((t) => (
+            <VoiceTaskCard key={t.sid} t={t} onFinishPress={onFinishPress} onTransfer={onTransfer} />
+          ))}
+        </Box>
+      )}
+
+      {/* Transfer modal */}
+      <Modal isOpen={openTransfer} onDismiss={() => setOpenTransfer(false)} size="default">
+        <ModalHeader>
+          <ModalHeading>{translate('transferCall') || 'Transfer call'}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          <Stack orientation="vertical" spacing="space60">
+            <RadioGroup
+              name="transferMode"
+              value={transferMode}
+              legend={translate('transferMode') || 'Transfer mode'}
+              onChange={(v) => setTransferMode(v)}
+            >
+              <Radio id="tm-agent" value="Agent">{translate('agent') || 'Agent'}</Radio>
+              <Radio id="tm-external" value="External">{translate('external') || 'External'}</Radio>
+            </RadioGroup>
+
+            {transferMode === 'Agent' ? (
+              <Stack orientation="vertical" spacing="space50">
+                <Label htmlFor="searchAgents">{translate('searchAgents') || 'Search agents'}</Label>
+                <Input id="searchAgents" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" />
+                <Label htmlFor="agentDest">{translate('agentDestination') || 'Agent destination'}</Label>
+                <Select id="agentDest" value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <Option value="">{translate('chooseAgent') || 'Choose an available agent…'}</Option>
+                  {filteredAgents.map((a) => (
+                    <Option key={a.workerSid} value={a.contactUri}>
+                      {a.friendlyName} · {a.contactUri}
+                    </Option>
+                  ))}
+                </Select>
+              </Stack>
+            ) : (
+              <Stack orientation="vertical" spacing="space50">
+                <Label htmlFor="ext">{translate('enterPhone') || 'Enter phone number'}</Label>
+                <Input id="ext" value={externalNumber} onChange={(e) => setExternalNumber(e.target.value)} placeholder="+1…" />
+              </Stack>
+            )}
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => setOpenTransfer(false)}>{translate('cancel') || 'Cancel'}</Button>
+            <Button variant="secondary" onClick={doCold}>{translate('coldTransfer') || 'Cold transfer'}</Button>
+            <Button variant="primary" onClick={doWarm}>{translate('warmTransfer') || 'Warm transfer'}</Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
+
+      {/* Wrap-up modal */}
+      <Modal isOpen={openWrap} onDismiss={() => setOpenWrap(false)} ariaLabel="wrapup-task" size="default">
+        <ModalHeader>
+          <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          <Stack orientation="vertical" spacing="space60">
+            <Box>
+              <Label htmlFor="dispo">{translate('disposition') || 'Disposition'}</Label>
+              <Select id="dispo" value={wrapDisposition} onChange={(e) => setWrapDisposition(e.target.value)}>
+                {['Resolved','Escalated','Callback scheduled','Voicemail left','No answer','Wrong number'].map((d) => (
+                  <Option key={d} value={d}>{d}</Option>
+                ))}
+              </Select>
+            </Box>
+            <Box>
+              <Label htmlFor="notes">{translate('notesReason') || 'Notes'}</Label>
+              <Input id="notes" value={wrapNotes} onChange={(e) => setWrapNotes(e.target.value)} placeholder="Short notes..." />
+            </Box>
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => setOpenWrap(false)}>{translate('cancel') || 'Cancel'}</Button>
+            <Button variant="primary" onClick={doFinish}>{translate('complete') || 'Complete'}</Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
+    </Box>
+  );
+}
+
+/* ===== Voice Card ===== */
+function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
+  const status = String(t.assignmentStatus || '').toLowerCase();
+  const canFinish = status === 'wrapping';
+  const customerCallSid = t.attributes?.callSid || t.attributes?.call_sid || null;
+
+  return (
+    <Card padding="space70">
+      <Stack orientation="vertical" spacing="space50">
+        <Stack orientation={['vertical','horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+          <Heading as="h4" variant="heading40" margin="space0">{t.sid}</Heading>
+          <Badge as="span" variant={canFinish ? 'warning' : 'neutral'}>{t.assignmentStatus}</Badge>
+        </Stack>
+
+        {customerCallSid ? (
+          <Box color="colorTextWeak" fontSize="fontSize30">CallSid: <b>{customerCallSid}</b></Box>
+        ) : null}
+
+        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
+          <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid}>Transfer</Button>
+          <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish}>Finish</Button>
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
+
+==== /src\features\tasks\components\TasksPanel.jsx ====
+
+==== src\features\tasks\hooks\useWorker.js ====
+// contact-center/client/src/hooks/useWorker.js
+import { useEffect, useRef, useState } from 'react';
+import Api from '../../index.js';
+
+export function useWorker() {
+  const [worker, setWorker] = useState(null);
+  const [activity, setActivity] = useState('');
+  const [reservations, setReservations] = useState([]);
+  const refreshRef = useRef(null);
+
+  useEffect(() => {
+    let w;
+
+    (async () => {
+      const token = await Api.workerToken();
+      // eslint-disable-next-line no-undef
+      w = new Twilio.TaskRouter.Worker(token);
+
+      w.on('ready', () => setActivity(w.activityName));
+      w.on('activity.update', () => setActivity(w.activityName));
+      w.on('reservation.created', (r) => {
+        console.log('reservation', r.sid, r.task?.attributes);
+        setReservations((prev) => [r, ...prev]);
+      });
+      w.on('error', (e) => console.error('TR Worker error', e));
+
+      setWorker(w);
+
+      refreshRef.current = setInterval(async () => {
+        try {
+          const newToken = await Api.workerToken();
+          if (typeof w.updateToken === 'function') {
+            w.updateToken(newToken);
+          } else {
+            const prev = w;
+            // eslint-disable-next-line no-undef
+            const nw = new Twilio.TaskRouter.Worker(newToken);
+            nw.on('ready', () => setActivity(nw.activityName));
+            nw.on('activity.update', () => setActivity(nw.activityName));
+            nw.on('reservation.created', (r) =>
+              setReservations((prev) => [r, ...prev])
+            );
+            nw.on('error', (e) => console.error('TR Worker error', e));
+            setWorker(nw);
+            try {
+              prev?.disconnect?.();
+            } catch {}
+            w = nw;
+          }
+        } catch (e) {
+          console.error('Worker token refresh failed', e);
+        }
+      }, 55 * 60 * 1000);
+    })();
+
+    return () => {
+      clearInterval(refreshRef.current);
+      try {
+        w && w.disconnect && w.disconnect();
+      } catch {}
+    };
+  }, []);
+
+  async function setAvailable(activitySid) {
+    await worker?.update({ ActivitySid: activitySid });
+  }
+
+  return { worker, activity, reservations, setAvailable };
+}
+
+==== /src\features\tasks\hooks\useWorker.js ====
+
+==== src\features\tasks\services\crm.js ====
+import http from '../../../shared/services/http.js';
+
+export const crmVehicleById = (id) =>
+  http.get(`/crm/vehicles/by-id/${id}`).then((r) => r.data);
+
+export const crmCustomer = (id) =>
+  http.get(`/crm/customers/${id}`).then((r) => r.data);
+
+export const crmVehicleByVin = (vin) =>
+  http.get(`/crm/vehicles/${vin}`).then((r) => r.data);
+
+export const crmVehicleByPlate = (plate) =>
+  http.get(`/crm/vehicles/by-plate/${plate}`).then((r) => r.data);
+
+export const crmAppointments = (vehicleId) =>
+  http.get(`/crm/appointments/${vehicleId}`).then((r) => r.data);
+
+export const crmCreateAppointment = (payload) =>
+  http.post(`/crm/appointments`, payload).then((r) => r.data);
+
+export const crmFinance = (customerId, otpVerified = false) =>
+  http.get(`/crm/finance/${customerId}`, { params: { otpVerified } }).then((r) => r.data);
+
+export const crmPaylink = (customerId) =>
+  http.post(`/crm/paylink`, { customerId }).then((r) => r.data);
+
+export const crmLogInteraction = (payload) =>
+  http.post(`/crm/interactions`, payload).then((r) => r.data);
+
+export const crmInteractions = (customerId) =>
+  http.get(`/crm/interactions/${customerId}`).then((r) => r.data);
+
+==== /src\features\tasks\services\crm.js ====
+
+==== src\features\tasks\services\reports.js ====
+import http from '../../../shared/services/http.js';
+
+export const reports = () => http.get('/reports').then((r) => r.data);
+
+==== /src\features\tasks\services\reports.js ====
+
+==== src\features\tasks\services\taskRouter.js ====
+import http, { retry } from '../../../shared/services/http.js';
+import { useQuery } from '@tanstack/react-query';
+
+export const workerToken = () =>
+  retry(() => http.get('/token/tr-worker').then((r) => r.data.token));
+
+export const myTasks = (statuses = 'wrapping,assigned,reserved') =>
+  http.get('/taskrouter/my-tasks', { params: { statuses } }).then((r) => r.data);
+
+export const completeTask = (taskSid, body = {}) =>
+  http.post(`/taskrouter/tasks/${taskSid}/complete`, body).then((r) => r.data);
+
+export const availableWorkers = () =>
+  http.get('/taskrouter/available-workers').then((r) => r.data);
+
+export const presence = () =>
+  http.get('/taskrouter/presence').then((r) => r.data);
+
+export const recentEvents = () =>
+  http.get('/events/recent').then((r) => r.data);
+
+export const useMyTasks = (statuses) => useQuery({
+  queryKey: ['myTasks', statuses],
+  queryFn: () => myTasks(statuses),
+  staleTime: 10000,
+});
+
+export const usePresence = () => useQuery({
+  queryKey: ['presence'],
+  queryFn: presence,
+  staleTime: 10000,
+});
+
+==== /src\features\tasks\services\taskRouter.js ====
+
+==== src\i18n.js ====
+// contact-center/client/src/i18n.js
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+
+// Define resources for English and Spanish
+const resources = {
+  en: {
+    translation: {
+      // General
+      "customer360": "Customer 360",
+      "noActiveTask": "No active task",
+      "intent": "Intent",
+      "ivrPath": "IVR Path",
+      "vehicle": "Vehicle",
+      "vin": "VIN",
+      "plate": "Plate",
+      "noVehicle": "No recent appointments found.",
+      "appointments": "Appointments",
+      "noAppointments": "No recent appointments.",
+      "scheduleNewAppointment": "Schedule New Appointment",
+      "finance": "Finance",
+      "balance": "Balance",
+      "masked": "Masked",
+      "payoffDate": "Payoff date",
+      "loyaltyCashback": "Loyalty cashback",
+      "lastPayment": "Last payment",
+      "noFinance": "No finance information.",
+      "sendPayLink": "Send Pay Link",
+      "payLinkSent": "Pay link sent (demo).",
+      "payLinkError": "Error sending pay link.",
+      "history": "History",
+      "noInteractions": "No interactions found.",
+      "tabsAria": "Customer sections",
+      "vehicleTab": "Vehicle",
+      "appointmentsTab": "Appointments",
+      "financeTab": "Finance",
+      "historyTab": "History",
+      "scheduleAppointment": "Schedule Appointment",
+      "date": "Date",
+      "serviceType": "Service Type",
+      "selectType": "Select type",
+      "cancel": "Cancel",
+      "schedule": "Schedule",
+      "scheduleMissingFields": "Missing fields for scheduling.",
+      "scheduleError": "Failed to schedule appointment.",
+      "scheduleSuccess": "Appointment scheduled.",
+      "crmFetchError": "Failed to fetch CRM data.",
+
+      // Softphone
+      "softphone": "Softphone",
+      "registered": "Registered",
+      "registering": "Registering…",
+      "call": "Call",
+      "incomingCall": "Incoming call",
+      "acceptIncomingPrompt": "Accept the incoming call?",
+      "reject": "Reject",
+      "accept": "Accept",
+      "dialPlaceholder": "Dial: +1..., or client:agent:42",
+      "callAria": "Call",
+      "dial": "Dial",
+      "toggleMuteTooltip": "Toggle microphone mute",
+      "toggleMuteAria": "Toggle mute",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "muteAria": "Mute microphone",
+      "unmuteAria": "Unmute microphone",
+      "hangup": "Hangup",
+      "hangupAria": "Hangup",
+      "dtmf": "DTMF",
+      "dtmfAria": "Open DTMF keypad",
+      "more": "More",
+      "dtmfKeypad": "DTMF Keypad",
+      "close": "Close",
+      "micMuted": "Mic is muted",
+      "micLive": "Mic is live",
+      "registrationError": "Failed to register device.",
+      "generalError": "An error occurred.",
+      "acceptError": "Failed to accept call.",
+      "rejectError": "Failed to reject call.",
+      "muteError": "Failed to toggle mute.",
+      "hangupError": "Failed to hangup.",
+      "dialError": "Failed to dial.",
+      "callControls": "Call controls",
+      "agentCall": "Agent call",
+      "customerCall": "Customer call",
+      "openSoftphonePopout": "Open Softphone pop-out",
+
+      // TasksPanel
+      "myTasks": "My Tasks",
+      "afterFinish": "After finish:",
+      "available": "Available",
+      "onBreak": "On Break",
+      "loading": "Loading…",
+      "refresh": "Refresh",
+      "refreshAria": "Refresh tasks",
+      "completeTransfer": "Complete transfer",
+      "completeWarmTransferTitle": "Complete warm transfer",
+      "noActiveCallTitle": "No active call",
+      "completeTransferAria": "Complete transfer",
+      "noTasks": "No tasks",
+      "finishTask": "Finish task",
+      "finishTaskTitle": "Complete task",
+      "wrappingOnlyTitle": "Wrapping only",
+      "finishTaskAria": "Finish task",
+      "transfer": "Transfer",
+      "transferTitle": "Transfer call",
+      "noCallSidTitle": "No callSid",
+      "transferAria": "Transfer",
+      "callControl": "Call Control",
+      "hold": "Hold",
+      "holdAria": "Hold",
+      "resume": "Resume",
+      "resumeAria": "Resume",
+      "startRecTitle": "Start recording",
+      "pauseRecTitle": "Pause recording",
+      "resumeRecTitle": "Resume recording",
+      "stopRecTitle": "Stop recording",
+      "startRecAria": "Start recording",
+      "pauseRecAria": "Pause recording",
+      "resumeRecAria": "Resume recording",
+      "stopRecAria": "Stop recording",
+      "finishTaskTooltip": "Complete and wrap up task",
+      "transferTooltip": "Transfer call to another agent or number",
+      "holdTooltip": "Hold customer call",
+      "resumeTooltip": "Resume customer call",
+      "startRecTooltip": "Start call recording",
+      "pauseRecTooltip": "Pause call recording",
+      "resumeRecTooltip": "Resume call recording",
+      "stopRecTooltip": "Stop call recording",
+      "completeTaskSuccess": "Task completed",
+      "transferCall": "Transfer call",
+      "transferMode": "Transfer mode",
+      "agent": "Agent",
+      "external": "External",
+      "searchAgents": "Search agents",
+      "agentDestination": "Agent destination",
+      "chooseAgent": "Choose an available agent…",
+      "enterPhone": "Enter phone number",
+      "cancel": "Cancel",
+      "cancelAria": "Cancel",
+      "warmTransfer": "Warm transfer",
+      "warmTransferAria": "Warm transfer",
+      "coldTransfer": "Cold transfer",
+      "coldTransferAria": "Cold transfer",
+      "transferSuccess": "Transfer successful",
+      "transferMissingData": "Missing data for transfer.",
+      "transferError": "Failed to transfer.",
+      "warmTransferMissingData": "Missing data for warm transfer.",
+      "warmTransferError": "Failed to initiate warm transfer.",
+      "noAgentCallSid": "No agent CallSid.",
+      "completeTransferError": "Failed to complete transfer.",
+      "noCustomerCallSid": "No customerCallSid in the Task.",
+      "holdError": "Failed to hold.",
+      "unholdError": "Failed to resume.",
+      "noActiveCall": "No active call",
+      "recControlError": "Failed to control recording.",
+      "confirmHold": "Confirm Hold",
+      "confirmHoldMessage": "Are you sure you want to put the call on hold?",
+      "holdDuration": "Hold: {{seconds}}s",
+      "ensureConsent": "Ensure consent before recording",
+      "recording": "Recording",
+      "slaBreachedNotification": "SLA Breached: Task {{taskSid}}",
+      "avgSLA": "Avg SLA: {{avg}}s",
+      "tasksLoadError": "Failed to load tasks.",
+      "activitiesLoadError": "Failed to load activities.",
+      "agentsLoadError": "Failed to load agents.",
+      "completeTaskError": "Failed to complete task.",
+      "completeTask": "Complete task",
+      "disposition": "Disposition",
+      "notesReason": "Notes (reason)",
+      "shortNotesPlaceholder": "Short wrap-up notes...",
+      "cancel": "Cancel",
+      "complete": "Complete",
+      "tabsAria": "Tabs",
+
+      // Presence
+      "presence": "Presence",
+      "refreshAria": "Refresh",
+      "loading": "Loading…",
+      "refresh": "Refresh",
+      "noAgents": "No agents",
+      "agent": "Agent",
+      "activity": "Activity",
+      "available": "Available",
+      "yes": "Yes",
+      "no": "No",
+      "contactUri": "Contact URI",
+      "presenceLoadError": "Failed to load presence.",
+      "filterAgentsPlaceholder": "Filter by name or activity",
+      "filterAgentsAria": "Filter agents",
+      "sortByActivity": "Sort by activity",
+      "sortByAvailability": "Sort by availability",
+
+      // StatusBar
+      "agentStatus": "Agent status:",
+      "changeActivity": "Change activity…",
+
+      // Reservations
+      "reservations": "Reservations",
+      "reservationSid": "Reservation SID",
+      "taskSid": "Task SID",
+      "status": "Status",
+      "noReservations": "No reservations",
+
+      // App
+      "agentDesktop": "Agent Desktop",
+      "logout": "Logout",
+
+      // Add more as needed
+    }
+  },
+  es: {
+    translation: {
+      // General
+      "customer360": "Cliente 360",
+      "noActiveTask": "Sin tarea activa",
+      "intent": "Intención",
+      "ivrPath": "Ruta IVR",
+      "vehicle": "Vehículo",
+      "vin": "VIN",
+      "plate": "Placa",
+      "noVehicle": "No se encontraron citas recientes.",
+      "appointments": "Citas",
+      "noAppointments": "No hay citas recientes.",
+      "scheduleNewAppointment": "Programar Nueva Cita",
+      "finance": "Finanzas",
+      "balance": "Saldo",
+      "masked": "Enmascarado",
+      "payoffDate": "Fecha de pago final",
+      "loyaltyCashback": "Cashback de lealtad",
+      "lastPayment": "Último pago",
+      "noFinance": "No hay información financiera.",
+      "sendPayLink": "Enviar Enlace de Pago",
+      "payLinkSent": "Enlace de pago enviado (demo).",
+      "payLinkError": "Error al enviar enlace de pago.",
+      "history": "Historia",
+      "noInteractions": "No hay interacciones encontradas.",
+      "tabsAria": "Secciones del cliente",
+      "vehicleTab": "Vehículo",
+      "appointmentsTab": "Citas",
+      "financeTab": "Finanzas",
+      "historyTab": "Historia",
+      "scheduleAppointment": "Programar Cita",
+      "date": "Fecha",
+      "serviceType": "Tipo de Servicio",
+      "selectType": "Seleccionar tipo",
+      "cancel": "Cancelar",
+      "schedule": "Programar",
+      "scheduleMissingFields": "Faltan campos para programar.",
+      "scheduleError": "No se pudo programar la cita.",
+      "scheduleSuccess": "Cita programada.",
+      "crmFetchError": "No se pudieron obtener datos de CRM.",
+
+      // Softphone
+      "softphone": "Softphone",
+      "registered": "Registrado",
+      "registering": "Registrando…",
+      "call": "Llamada",
+      "incomingCall": "Llamada entrante",
+      "acceptIncomingPrompt": "¿Aceptar la llamada entrante?",
+      "reject": "Rechazar",
+      "accept": "Aceptar",
+      "dialPlaceholder": "Marcar: +1..., o client:agent:42",
+      "callAria": "Llamar",
+      "dial": "Marcar",
+      "toggleMuteTooltip": "Alternar mute del micrófono",
+      "toggleMuteAria": "Alternar mute",
+      "mute": "Silenciar",
+      "unmute": "Activar sonido",
+      "muteAria": "Silenciar micrófono",
+      "unmuteAria": "Activar micrófono",
+      "hangup": "Colgar",
+      "hangupAria": "Colgar",
+      "dtmf": "DTMF",
+      "dtmfAria": "Abrir teclado DTMF",
+      "more": "Más",
+      "dtmfKeypad": "Teclado DTMF",
+      "close": "Cerrar",
+      "micMuted": "Micrófono silenciado",
+      "micLive": "Micrófono activo",
+      "registrationError": "No se pudo registrar el dispositivo.",
+      "generalError": "Ocurrió un error.",
+      "acceptError": "No se pudo aceptar la llamada.",
+      "rejectError": "No se pudo rechazar la llamada.",
+      "muteError": "No se pudo alternar mute.",
+      "hangupError": "No se pudo colgar.",
+      "dialError": "No se pudo marcar.",
+      "callControls": "Controles de llamada",
+      "agentCall": "Llamada del agente",
+      "customerCall": "Llamada del cliente",
+      "openSoftphonePopout": "Abrir ventana emergente del Softphone",
+
+      // TasksPanel
+      "myTasks": "Mis Tareas",
+      "afterFinish": "Después de finalizar:",
+      "available": "Disponible",
+      "onBreak": "En Descanso",
+      "loading": "Cargando…",
+      "refresh": "Actualizar",
+      "refreshAria": "Actualizar tareas",
+      "completeTransfer": "Completar transferencia",
+      "completeWarmTransferTitle": "Completar transferencia warm",
+      "noActiveCallTitle": "No hay llamada activa",
+      "completeTransferAria": "Completar transferencia",
+      "noTasks": "Sin tareas",
+      "finishTask": "Finalizar tarea",
+      "finishTaskTitle": "Completar tarea",
+      "wrappingOnlyTitle": "Solo wrapping",
+      "finishTaskAria": "Finalizar tarea",
+      "transfer": "Transferir",
+      "transferTitle": "Transferir llamada",
+      "noCallSidTitle": "Sin callSid",
+      "transferAria": "Transferir",
+      "callControl": "Control de Llamada",
+      "hold": "Mantener",
+      "holdAria": "Mantener",
+      "resume": "Reanudar",
+      "resumeAria": "Reanudar",
+      "startRecTitle": "Iniciar grabación",
+      "pauseRecTitle": "Pausar grabación",
+      "resumeRecTitle": "Reanudar grabación",
+      "stopRecTitle": "Detener grabación",
+      "startRecAria": "Iniciar grabación",
+      "pauseRecAria": "Pausar grabación",
+      "resumeRecAria": "Reanudar grabación",
+      "stopRecAria": "Detener grabación",
+      "finishTaskTooltip": "Completar y finalizar tarea",
+      "transferTooltip": "Transferir llamada a otro agente o número",
+      "holdTooltip": "Mantener llamada del cliente",
+      "resumeTooltip": "Reanudar llamada del cliente",
+      "startRecTooltip": "Iniciar grabación de la llamada",
+      "pauseRecTooltip": "Pausar grabación de la llamada",
+      "resumeRecTooltip": "Reanudar grabación de la llamada",
+      "stopRecTooltip": "Detener grabación de la llamada",
+      "completeTaskSuccess": "Tarea completada",
+      "transferCall": "Transferir llamada",
+      "transferMode": "Modo de transferencia",
+      "agent": "Agente",
+      "external": "Externo",
+      "searchAgents": "Buscar agentes",
+      "agentDestination": "Destino del agente",
+      "chooseAgent": "Elegir un agente disponible…",
+      "enterPhone": "Ingresar número de teléfono",
+      "cancel": "Cancelar",
+      "cancelAria": "Cancelar",
+      "warmTransfer": "Transferencia warm",
+      "warmTransferAria": "Transferencia warm",
+      "coldTransfer": "Transferencia cold",
+      "coldTransferAria": "Transferencia cold",
+      "transferSuccess": "Transferencia exitosa",
+      "transferMissingData": "Faltan datos para transferir.",
+      "transferError": "No se pudo transferir.",
+      "warmTransferMissingData": "Faltan datos para transferencia warm.",
+      "warmTransferError": "No se pudo iniciar transferencia warm.",
+      "noAgentCallSid": "Sin CallSid del agente.",
+      "completeTransferError": "No se pudo completar transferencia.",
+      "noCustomerCallSid": "Sin customerCallSid en la Tarea.",
+      "holdError": "No se pudo poner en hold.",
+      "unholdError": "No se pudo reanudar.",
+      "noActiveCall": "Sin llamada activa",
+      "recControlError": "No se pudo controlar la grabación.",
+      "confirmHold": "Confirmar Hold",
+      "confirmHoldMessage": "¿Está seguro de poner la llamada en hold?",
+      "holdDuration": "Hold: {{seconds}}s",
+      "ensureConsent": "Asegure consentimiento antes de grabar",
+      "recording": "Grabación",
+      "slaBreachedNotification": "SLA Incumplido: Tarea {{taskSid}}",
+      "avgSLA": "SLA Promedio: {{avg}}s",
+      "tasksLoadError": "No se pudieron cargar las tareas.",
+      "activitiesLoadError": "No se pudieron cargar las actividades.",
+      "agentsLoadError": "No se pudieron cargar los agentes.",
+      "completeTaskError": "No se pudo completar la tarea.",
+      "completeTask": "Completar tarea",
+      "disposition": "Disposición",
+      "notesReason": "Notas (razón)",
+      "shortNotesPlaceholder": "Notas cortas de wrap-up...",
+      "cancel": "Cancelar",
+      "complete": "Completar",
+      "tabsAria": "Pestañas",
+
+      // Presence
+      "presence": "Presencia",
+      "refreshAria": "Actualizar",
+      "loading": "Cargando…",
+      "refresh": "Actualizar",
+      "noAgents": "Sin agentes",
+      "agent": "Agente",
+      "activity": "Actividad",
+      "available": "Disponible",
+      "yes": "Sí",
+      "no": "No",
+      "contactUri": "URI de Contacto",
+      "presenceLoadError": "No se pudo cargar la presencia.",
+      "filterAgentsPlaceholder": "Filtrar por nombre o actividad",
+      "filterAgentsAria": "Filtrar agentes",
+      "sortByActivity": "Ordenar por actividad",
+      "sortByAvailability": "Ordenar por disponibilidad",
+      "transferTo": "Transferir a",
+      "whisperTo": "Susurrar a",
+
+      // StatusBar
+      "agentStatus": "Estado del agente:",
+      "changeActivity": "Cambiar actividad…",
+
+      // Reservations
+      "reservations": "Reservas",
+      "reservationSid": "SID de Reserva",
+      "taskSid": "SID de Tarea",
+      "status": "Estado",
+      "noReservations": "Sin reservas",
+
+      // App
+      "agentDesktop": "Escritorio del Agente",
+      "logout": "Cerrar Sesión",
+
+      // Add more as needed
+    }
+  }
+};
+
+i18n
+  .use(initReactI18next)
+  .init({
+    resources,
+    lng: 'en', // Default language
+    fallbackLng: 'en',
+    interpolation: {
+      escapeValue: false,
+    },
+  });
+
+export default i18n;
+
+==== /src\i18n.js ====
+
+==== src\main.jsx ====
+// contact-center/client/src/main.jsx
+import { createRoot } from 'react-dom/client';
+import { Theme } from '@twilio-paste/core/theme';
+import App from './App.jsx';
+import Softphone from './features/softphone/components/Softphone.jsx';
+import SoftphoneLayout from './features/softphone/components/SoftphoneLayout.jsx';
+import ChatWidget from './chat/ChatWidget.jsx';
+
+const root = createRoot(document.getElementById('root'));
+
+const qp = new URLSearchParams(window.location.search);
+const isSoftphonePopup = qp.get('popup') === 'softphone';
+const isChatPopup = qp.get('popup') === 'chat';
+const chatSid = qp.get('sid');
+const remoteOnly = isSoftphonePopup;
+
+root.render(
+  <Theme.Provider theme="default">
+    {isSoftphonePopup ? (
+      // Popup del Softphone en modo remoto
+      <SoftphoneLayout>
+        <Softphone remoteOnly={remoteOnly} />
+      </SoftphoneLayout>
+    ) : isChatPopup ? (
+      // Popup de Chat (solo el widget)
+      <SoftphoneLayout>
+        <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+          <ChatWidget
+            conversationIdOrUniqueName={chatSid}
+            isActive
+            onMessageAdded={() => {}}
+            onLabel={() => {}}
+          />
+        </div>
+      </SoftphoneLayout>
+    ) : (
+      <App />
+    )}
+  </Theme.Provider>
+);
+
+==== /src\main.jsx ====
+
+==== src\shared\components\CardSection.jsx ====
+// contact-center/client/src/components/CardSection.jsx
+import { Box } from '@twilio-paste/core/box';
+
+export default function CardSection({ id, title, children }) {
+  return (
+    <Box id={id} marginBottom="space70">
+      <Box
+        backgroundColor="colorBackground"
+        borderRadius="borderRadius30"
+        boxShadow="shadow"
+        padding="space70"
+      >
+        <Box as="h4" margin="space0" fontSize="fontSize40" fontWeight="fontWeightSemibold">
+          {title}
+        </Box>
+        <Box marginTop="space60">{children}</Box>
+      </Box>
+    </Box>
+  );
+}
+
+
+==== /src\shared\components\CardSection.jsx ====
+
+==== src\shared\hooks\useLocalStorage.js ====
+import { useState } from 'react';
+
+export default function useLocalStorage(key, initialValue) {
+  const [storedValue, setStoredValue] = useState(() => {
+    try {
+      const item = window.localStorage.getItem(key);
+      return item ? JSON.parse(item) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+  const setValue = (value) => {
+    try {
+      const next = value instanceof Function ? value(storedValue) : value;
+      setStoredValue(next);
+      window.localStorage.setItem(key, JSON.stringify(next));
+    } catch {}
+  };
+  return [storedValue, setValue];
+}
+
+==== /src\shared\hooks\useLocalStorage.js ====
+
+==== src\shared\services\http.js ====
+import axios from 'axios';
+
+const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+
+const http = axios.create({ baseURL, withCredentials: true });
+
+let refreshPromise = null;
+
+http.interceptors.response.use(
+  (r) => r,
+  async (err) => {
+    const { response, config } = err || {};
+    if (response?.status === 401 && !config._retry && config.url !== '/auth/refresh') {
+      config._retry = true;
+      try {
+        refreshPromise = refreshPromise || http.post('/auth/refresh');
+        await refreshPromise;
+        refreshPromise = null;
+        return http(config);
+      } catch {
+        refreshPromise = null;
+        return Promise.reject(err);
+      }
+    }
+    return Promise.reject(err);
+  }
+);
+
+export async function retry(fn, times = 2) {
+  let last;
+  for (let i = 0; i <= times; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i === times) throw last;
+    }
+  }
+}
+
+export default http;
+
+==== /src\shared\services\http.js ====
+
+==== vite.config.js ====
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()]
+});
+
+==== /vite.config.js ====
+

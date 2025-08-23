@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+﻿﻿import axios from 'axios';
 import { rest } from '../twilio.js';
 import { serverEnv as env } from 'shared/env';
 
@@ -40,6 +40,14 @@ export async function listWorkersWithRetry(retries = 2, delay = 300) {
   }
 }
 
+// 🔸 aceptar una reservación (para auto-asignar al agente)
+export const acceptReservation = (workerSid, reservationSid) =>
+  rest.taskrouter.v1
+    .workspaces(env.workspaceSid)
+    .workers(workerSid)
+    .reservations(reservationSid)
+    .update({ reservationStatus: 'accepted' });
+
 const _events = [];
 export function pushEvent(type, payload) {
   _events.push({ type, payload, ts: new Date().toISOString() });
@@ -47,4 +55,3 @@ export function pushEvent(type, payload) {
 }
 export const recentEvents = () => _events.slice(-200);
 export { axios, env };
-

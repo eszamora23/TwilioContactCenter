@@ -1,4 +1,4 @@
-﻿import { requireAuth } from 'shared/auth';
+﻿﻿import { requireAuth } from 'shared/auth';
 import {
   listActivities,
   listWorkerReservations,
@@ -15,6 +15,24 @@ import {
 export function assignment(req, res) {
   try {
     const taskSid = String(req.body.TaskSid || '').trim();
+
+    const channelName = String(req.body.TaskChannelUniqueName || '').toLowerCase();
+    let attrs = {};
+    try {
+      attrs = req.body.TaskAttributes ? JSON.parse(req.body.TaskAttributes) : {};
+    } catch {
+      attrs = {};
+    }
+
+    const isChat =
+      channelName === 'chat' ||
+      String(attrs.channel || '').toLowerCase() === 'chat' ||
+      !!attrs.conversationSid;
+
+    if (isChat) {
+      return res.status(200).json({ instruction: 'accept' });
+    }
+
     if (!env.callerId) {
       return res.status(200).json({ instruction: 'reject', reason: 'missing callerId' });
     }
@@ -101,30 +119,96 @@ export async function myTasks(req, res) {
   }
 }
 
-export async function completeTask(req, res) {
+/**
+ * NUEVO: Forzar WRAPPING (pensado para chat).
+ */
+export async function wrapTask(req, res) {
   try {
     const { taskSid } = req.params;
-    const { reason, disposition } = req.body || {};
+    const { reason = 'Wrap from Agent UI', disposition } = req.body || {};
     if (!taskSid) return res.status(400).json({ error: 'missing taskSid' });
+
     const task = await fetchTask(taskSid);
-    if (String(task.assignmentStatus).toLowerCase() !== 'wrapping') {
-      return res.status(400).json({ error: 'task is not in wrapping', assignmentStatus: task.assignmentStatus });
-    }
+    const status = String(task.assignmentStatus).toLowerCase();
+
     let attrs = {};
     try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
     if (disposition) attrs.disposition = disposition;
     if (reason) attrs.wrapup_reason = reason;
+
+    if (status === 'wrapping') {
+      if (disposition || reason) {
+        await updateTask(taskSid, { attributes: JSON.stringify(attrs) });
+      }
+      pushEvent('TASK_WRAPPING', { taskSid, reason, disposition });
+      return res.json({ ok: true, taskSid, assignmentStatus: 'wrapping' });
+    }
+
+    if (status === 'assigned') {
+      const updated = await updateTask(taskSid, {
+        assignmentStatus: 'wrapping',
+        reason: String(reason || 'Wrap from Agent UI').slice(0, 200),
+        attributes: JSON.stringify(attrs),
+      });
+      pushEvent('TASK_WRAPPING', { taskSid: updated.sid, reason, disposition });
+      return res.json({ ok: true, taskSid: updated.sid, assignmentStatus: 'wrapping' });
+    }
+
+    return res.status(400).json({
+      error: `cannot wrap task in status ${task.assignmentStatus}`,
+      assignmentStatus: task.assignmentStatus
+    });
+  } catch (e) {
+    console.error('[WRAP_TASK] error:', e);
+    return res.status(500).json({ error: 'cannot wrap task' });
+  }
+}
+
+export async function completeTask(req, res) {
+  try {
+    const { taskSid } = req.params;
+    const { reason, disposition, autoWrap } = req.body || {};
+    if (!taskSid) return res.status(400).json({ error: 'missing taskSid' });
+
+    let task = await fetchTask(taskSid);
+    let status = String(task.assignmentStatus).toLowerCase();
+
+    if (autoWrap && status === 'assigned') {
+      let attrs = {};
+      try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+      if (disposition) attrs.disposition = disposition;
+      if (reason) attrs.wrapup_reason = reason;
+      await updateTask(taskSid, {
+        assignmentStatus: 'wrapping',
+        reason: String(reason || 'Wrap before complete').slice(0, 200),
+        attributes: JSON.stringify(attrs),
+      });
+      task = await fetchTask(taskSid);
+      status = String(task.assignmentStatus).toLowerCase();
+    }
+
+    if (status !== 'wrapping') {
+      return res.status(400).json({ error: 'task is not in wrapping', assignmentStatus: task.assignmentStatus });
+    }
+
+    let attrs = {};
+    try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+    if (disposition) attrs.disposition = disposition;
+    if (reason) attrs.wrapup_reason = reason;
+
     const updated = await updateTask(taskSid, {
       assignmentStatus: 'completed',
       reason: reason ? String(reason).slice(0, 200) : 'Finished from Agent UI',
       attributes: JSON.stringify(attrs)
     });
+
     pushEvent('TASK_COMPLETED', {
       taskSid: updated.sid,
       workerSid: req.claims?.workerSid || null,
       disposition: disposition || null,
       reason: reason || null
     });
+
     try {
       await axios.post('https://analytics.example.com/track', {
         disposition,
@@ -134,6 +218,7 @@ export async function completeTask(req, res) {
     } catch (analyticsError) {
       console.warn('Analytics post failed', analyticsError);
     }
+
     return res.json({
       sid: updated.sid,
       assignmentStatus: updated.assignmentStatus,
@@ -196,4 +281,3 @@ export function recent(req, res) {
 function safeParseJson(str) {
   try { return JSON.parse(str || '{}'); } catch { return {}; }
 }
-

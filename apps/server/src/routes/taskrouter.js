@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+﻿﻿import { Router } from 'express';
 import { verifyTwilioSignature } from '../middleware/verifyTwilio.js';
 import { requireAuth } from 'shared/auth';
 import {
@@ -9,7 +9,8 @@ import {
   completeTask,
   availableWorkers,
   presence,
-  recent
+  recent,
+  wrapTask,            // NUEVO
 } from '../controllers/taskrouter.js';
 
 export const taskrouter = Router();
@@ -17,8 +18,13 @@ taskrouter.post('/taskrouter/assignment', verifyTwilioSignature, assignment);
 taskrouter.post('/taskrouter/events', verifyTwilioSignature, events);
 taskrouter.get('/taskrouter/activities', activities);
 taskrouter.get('/taskrouter/my-tasks', requireAuth, myTasks);
+
+// NUEVO: Forzar WRAPPING (chat)
+taskrouter.post('/taskrouter/tasks/:taskSid/wrap', requireAuth, wrapTask);
+
+// Completar (acepta autoWrap)
 taskrouter.post('/taskrouter/tasks/:taskSid/complete', requireAuth, completeTask);
+
 taskrouter.get('/taskrouter/available-workers', requireAuth, availableWorkers);
 taskrouter.get('/taskrouter/presence', requireAuth, presence);
 taskrouter.get('/events/recent', requireAuth, recent);
-
