@@ -474,151 +474,292 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Website X — Concierge Support</title>
+  <!-- viewport-fit=cover enables safe-area padding on iOS notch devices -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Website X — Concierge Support (Twilio)</title>
+
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+
   <style>
-    /* ======= THEME ======= */
+    /* =====================================
+       THEME — Trust & Confidence (Blue)
+       ===================================== */
     :root{
-      --bg: #0b0f14;
-      --bg-2: #0e141b;
-      --card: rgba(255,255,255,0.04);
-      --card-2: rgba(255,255,255,0.06);
-      --stroke: rgba(255,255,255,0.12);
-      --text: #ecf1f8;
-      --muted: #9fb0c5;
-      --accent: #f1c14d; /* gold */
-      --accent-2:#ffd98a;
-      --success:#3ddc97;
-      --danger:#ff6b6b;
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
-      --radius-xl: 22px;
-      --radius-lg: 16px;
-      --radius: 12px;
-      --glass: backdrop-filter: saturate(140%) blur(14px);
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; color:var(--text); background: radial-gradient(1200px 800px at 10% -10%, #263247 0%, rgba(38,50,71,0) 45%),
-      radial-gradient(800px 600px at 90% 10%, #2b2131 0%, rgba(43,33,49,0) 40%),
-      linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
-      font-family: "Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      letter-spacing:.2px;
+      /* Dark theme (default) */
+      --bg:          #0b1324;      /* deep navy */
+      --bg-2:        #0e182b;
+      --bg-grad-a:   #1c2a44;
+      --bg-grad-b:   #2b2244;
+      --card:        rgba(255,255,255,0.05);
+      --card-2:      rgba(255,255,255,0.07);
+      --stroke:      rgba(255,255,255,0.14);
+      --text:        #eaf1fb;
+      --muted:       #9fb2cc;
+      --accent:      #4da3ff;      /* trust blue */
+      --accent-2:    #9fd1ff;
+      --accent-ink:  #0b1120;
+      --success:     #37d39b;
+      --warning:     #ffbf69;
+      --danger:      #ff6b6b;
+      --shadow:      0 10px 30px rgba(0,0,0,.35);
+      --radius-xl:   22px;
+      --radius-lg:   16px;
+      --radius:      12px;
+      --glass:       saturate(140%) blur(14px);
+      --focus:       0 0 0 3px rgba(77,163,255,.35);
+      --chip-bg:     rgba(77,163,255,.14);
+      --chip-br:     rgba(77,163,255,.35);
+      --spark:       rgba(77,163,255,.38);
+
+      /* App shell metrics */
+      --topbar-h:     64px;
+      --bottombar-h:  64px;
+
+      /* Safe-area iOS */
+      --safe-top:     env(safe-area-inset-top, 0px);
+      --safe-bottom:  env(safe-area-inset-bottom, 0px);
+      --safe-left:    env(safe-area-inset-left, 0px);
+      --safe-right:   env(safe-area-inset-right, 0px);
+
+      /* Typography scale */
+      --fs-h1: clamp(26px, 3.2vw, 36px);
+      --fs-h2: clamp(20px, 2.4vw, 28px);
+      --fs-h3: clamp(17px, 2vw, 22px);
+      --fs-p:  clamp(14px, 1.5vw, 16px);
     }
 
-    /* ======= LAYOUT ======= */
-    .page{display:grid; grid-template-columns: 290px 1fr; min-height:100vh}
-    aside.sidebar{
-      position:sticky; top:0; height:100vh; padding:24px; border-right:1px solid var(--stroke);
-      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+    /* Light theme (toggleable) */
+    body.light{
+      --bg:         #f5f8ff;
+      --bg-2:       #ffffff;
+      --bg-grad-a:  #e7f1ff;
+      --bg-grad-b:  #f6f9ff;
+      --card:       rgba(6,27,54,0.04);
+      --card-2:     rgba(6,27,54,0.06);
+      --stroke:     rgba(6,27,54,0.12);
+      --text:       #0e1a2d;
+      --muted:      #5b6b7f;
+      --accent:     #2563eb;     /* stronger blue in light mode */
+      --accent-2:   #93c5fd;
+      --accent-ink: #061b36;
+      --success:    #10b981;
+      --warning:    #f59e0b;
+      --danger:     #ef4444;
+      --shadow:     0 10px 30px rgba(2,12,31,.12);
+      --chip-bg:    rgba(37,99,235,.08);
+      --chip-br:    rgba(37,99,235,.28);
+      --spark:      rgba(37,99,235,.32);
     }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    html{scroll-behavior:smooth}
+
+    body{
+      margin:0; color:var(--text);
+      background:
+        radial-gradient(1200px 800px at 12% -10%, var(--bg-grad-a) 0%, rgba(0,0,0,0) 45%),
+        radial-gradient(800px 600px at 88% 8%,  var(--bg-grad-b) 0%, rgba(0,0,0,0) 40%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+      font-family: "Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      letter-spacing:.2px;
+      padding-top: calc(var(--topbar-h) + var(--safe-top));
+      /* bottom nav on mobile will overlay; space reserved via media rule below */
+    }
+    body.light{
+      background:
+        radial-gradient(900px 600px at 10% -10%, var(--bg-grad-a) 0%, rgba(255,255,255,0) 45%),
+        radial-gradient(600px 400px at 85% 6%,  var(--bg-grad-b) 0%, rgba(255,255,255,0) 35%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+    }
+
+    /* ========= Desktop Grid ========= */
+    .page{
+      display:grid;
+      grid-template-columns: 300px 1fr;
+      min-height:100svh;
+      column-gap: 0;
+    }
+
+    /* Sidebar (desktop + offcanvas mobile) */
+    aside.sidebar{
+      position:sticky; top:calc(var(--safe-top));
+      height:calc(100svh - var(--safe-top));
+      padding:24px;
+      border-right:1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));
+      backdrop-filter: var(--glass);
+      overflow:auto;
+      transform: translateX(0);
+      transition: transform .25s ease;
+      z-index: 8;
+    }
+
+    /* Content */
     .content{display:flex; flex-direction:column; min-width:0}
     header.topbar{
-      position:sticky; top:0; z-index:20; padding:16px 24px; border-bottom:1px solid var(--stroke);
-      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-      display:flex; align-items:center; gap:16px; justify-content:space-between; 
+      position:fixed; inset:0 0 auto 0;
+      height:var(--topbar-h);
+      padding: max(10px, calc(var(--safe-top)/2)) max(16px, calc(16px + var(--safe-right)));
+      padding-left: max(16px, calc(16px + var(--safe-left)));
+      border-bottom:1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
+      display:flex; align-items:center; gap:12px; justify-content:space-between;
       box-shadow: 0 8px 24px rgba(0,0,0,.18);
+      backdrop-filter: var(--glass);
+      z-index: 9;
     }
     main{padding:28px; display:grid; gap:28px}
 
-    /* ======= SIDEBAR ======= */
+    /* ========= Sidebar content ========= */
     .brand{display:flex; align-items:center; gap:12px; margin-bottom:18px}
     .brand .logo{
-      width:42px; height:42px; border-radius:12px; background: linear-gradient(135deg,#1a1f29,#0f1520);
+      width:42px; height:42px; border-radius:12px;
+      background: linear-gradient(135deg,#0f1a2b,#0a1322);
       border:1px solid rgba(255,255,255,.1); display:grid; place-items:center; box-shadow: var(--shadow);
+      flex: 0 0 auto;
     }
     .brand .logo svg{width:22px; height:22px; color:var(--accent)}
     .brand .title{font-size:16px; font-weight:700; letter-spacing:.4px}
 
-    nav.menu{margin-top:16px}
+    nav.menu{margin-top:16px; display:flex; flex-direction:column; gap:4px}
     .menu a{
       display:flex; gap:12px; align-items:center; text-decoration:none; color:var(--text);
-      padding:12px 12px; border-radius:12px; border:1px solid transparent; transition:.2s ease;
+      padding:10px 12px; border-radius:12px; border:1px solid transparent; transition:.2s ease;
+      outline:none;
     }
-    .menu a:hover{background:var(--card); border-color:var(--stroke)}
+    .menu a:hover, .menu a:focus-visible{background:var(--card); border-color:var(--stroke); box-shadow: var(--focus)}
     .menu svg{width:18px; height:18px; color:var(--muted)}
+    .menu a.active .dot-mini{background: var(--accent)}
+    .dot-mini{width:6px; height:6px; border-radius: 999px; background: transparent; margin-left:auto}
+
     .sidebar .cta{
       margin-top:auto; padding:16px; border:1px solid var(--stroke); border-radius:16px; background:var(--card);
     }
-    .badge{display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#0f1218; background:linear-gradient(180deg,var(--accent),var(--accent-2)); padding:6px 10px; border-radius:999px; font-weight:700}
+    .badge{
+      display:inline-flex; align-items:center; gap:8px; font-size:12px;
+      background:linear-gradient(180deg,var(--accent),var(--accent-2));
+      color:var(--accent-ink); padding:6px 10px; border-radius:999px; font-weight:800;
+      letter-spacing:.2px;
+    }
 
-    /* ======= TOPBAR ======= */
+    /* ========= Topbar ========= */
     .search{
-      display:flex; align-items:center; gap:10px; flex:1; max-width:560px; 
+      display:flex; align-items:center; gap:10px; flex:1; max-width:620px;
       background:var(--card); border:1px solid var(--stroke); border-radius:999px; padding:10px 14px;
     }
     .search input{border:0; outline:0; flex:1; background:transparent; color:var(--text)}
     .actions{display:flex; align-items:center; gap:10px}
-    .btn{display:inline-flex; align-items:center; gap:10px; padding:10px 14px; border-radius:12px; border:1px solid var(--stroke); background:var(--card); color:var(--text); cursor:pointer}
-    .btn:hover{border-color:rgba(255,255,255,.2)}
-    .btn.primary{background:linear-gradient(135deg, #1b1a12, #2e2615); border:1px solid #41351a; color:#f8e8c2; box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 6px 20px rgba(0,0,0,.25)}
+    .btn{
+      display:inline-flex; align-items:center; gap:10px; padding:10px 14px; border-radius:12px;
+      border:1px solid var(--stroke); background:var(--card); color:var(--text); cursor:pointer;
+      outline: none; transition: .15s border-color, .15s transform, .15s background;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover{border-color:rgba(255,255,255,.22); transform: translateY(-1px)}
+    .btn:active{transform: translateY(0)}
+    .btn:focus-visible{box-shadow: var(--focus)}
+    .btn.primary{
+      background:linear-gradient(135deg, #0e3b7e, #112a55);
+      border:1px solid rgba(77,163,255,.45);
+      color:#e7f2ff;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 6px 20px rgba(21,94,194,.28);
+    }
+    .btn.ghost{border-color:var(--chip-br); background:var(--chip-bg)}
 
-    /* ======= HERO ======= */
+    /* Hamburger (mobile) */
+    .btn.icon{
+      width:40px; height:40px; padding:0; display:grid; place-items:center;
+      border-radius:10px;
+    }
+
+    /* ========= Hero ========= */
     .hero{
-      border:1px solid var(--stroke); border-radius:var(--radius-xl); background:linear-gradient(145deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); padding:28px; position:relative; overflow:hidden;
+      border:1px solid var(--stroke); border-radius:var(--radius-xl);
+      background:linear-gradient(145deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
+      padding:24px; position:relative; overflow:hidden;
     }
-    .hero h1{font-size:34px; line-height:1.1; margin:0 0 10px 0}
-    .hero p{color:var(--muted); margin:0}
+    .hero h1{font-size:var(--fs-h1); line-height:1.08; margin:0 0 10px 0; letter-spacing:.2px}
+    .hero p{color:var(--muted); margin:0; font-size:var(--fs-p)}
     .spark{
-      position:absolute; inset:auto -60px -60px auto; width:380px; height:380px; border-radius:50%;
-      background: radial-gradient(closest-side, rgba(241,193,77,.32), rgba(241,193,77,0)); filter: blur(10px);
-      pointer-events:none;
+      position:absolute; inset:auto -60px -60px auto; width:420px; height:420px; border-radius:50%;
+      background: radial-gradient(closest-side, var(--spark), rgba(0,0,0,0));
+      filter: blur(10px); pointer-events:none;
     }
 
-    /* ======= GRID ======= */
+    /* ========= Cards & grid ========= */
     .grid{display:grid; grid-template-columns: 1.1fr .9fr; gap:28px}
     .card{ border:1px solid var(--stroke); border-radius:var(--radius-lg); background:var(--card); box-shadow: var(--shadow); overflow:hidden }
     .card .card-body{padding:22px}
     .split{display:grid; grid-template-columns: 1fr 1fr; gap:14px}
 
-    /* ======= START FORM ======= */
+    /* ========= Form ========= */
     #start-form{display:grid; gap:12px}
     .field{display:grid; gap:8px}
     .label{font-size:12px; color:var(--muted)}
-    .input, select{ background: rgba(255,255,255,.04); border:1px solid var(--stroke); border-radius:12px; padding:12px 14px; color:var(--text); outline:none; transition: .2s border-color; }
-    .input:focus, select:focus{border-color: rgba(255,255,255,.24)}
+    .input, select{
+      background: rgba(255,255,255,.05); border:1px solid var(--stroke); border-radius:12px; padding:14px;
+      color:var(--text); outline:none; transition: .2s border-color, .2s background;
+    }
+    .input:focus, select:focus{border-color: rgba(77,163,255,.55); box-shadow: var(--focus)}
     .helper{font-size:12px; color:var(--muted)}
-    .start-actions{display:flex; align-items:center; gap:12px}
+    .start-actions{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
     .start-actions .btn{height:44px}
 
-    /* ======= CHAT ======= */
+    /* ========= Chat ========= */
     .hidden{display:none !important}
     section.chat{display:grid; gap:18px}
-    .chat-shell{ border:1px solid var(--stroke); border-radius:var(--radius-xl); overflow:hidden; background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); }
-    .chat-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--stroke); background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03)); }
-    .agent{display:flex; align-items:center; gap:12px}
-    .avatar{width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#1a1f29,#0f1520); border:1px solid rgba(255,255,255,.12); display:grid; place-items:center}
+    .chat-shell{
+      border:1px solid var(--stroke); border-radius:var(--radius-xl); overflow:hidden;
+      background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
+    }
+    .chat-header{
+      display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px;
+      border-bottom:1px solid var(--stroke); background:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
+    }
+    .agent{display:flex; align-items:center; gap:12px; min-width:0}
+    .avatar{width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#0f1a2b,#0a1322); border:1px solid rgba(255,255,255,.12); display:grid; place-items:center}
     .status{display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--muted)}
     .dot{width:8px; height:8px; border-radius:50%; background:var(--success); box-shadow:0 0 0 3px rgba(61,220,151,.15)}
 
-    .toolbar{display:flex; align-items:center; gap:8px}
+    .toolbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
 
     /* Video */
     .video-shell{border-top:1px solid var(--stroke); border-bottom:1px solid var(--stroke); padding:12px 16px; background:rgba(255,255,255,.04)}
-    .video-grid{display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:14px}
-    .video-pane{background: #0d0f14; border:1px solid var(--stroke); border-radius:12px; padding:10px; min-height:200px; color:#fff}
+    .video-grid{display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:14px}
+    .video-pane{background: #0d1422; border:1px solid var(--stroke); border-radius:12px; padding:10px; min-height:180px; color:#fff}
     .video-pane h4{margin:0 0 8px 0; font-size:12px; font-weight:700; color:#cbd6e5}
     video{width:100%; height:auto; border-radius:10px}
 
-    /* Messages */
-    .messages-wrap{max-height:52vh; overflow:auto; padding:12px 16px}
+    /* Messages area uses "app height" math for mobile */
+    .messages-wrap{
+      max-height: 52vh;
+      overflow:auto; padding:12px 16px;
+    }
     #messages{list-style:none; margin:0; padding:0; display:grid; gap:10px}
     #messages li{position:relative; display:flex; gap:10px; align-items:flex-end}
-    .bubble{max-width:70%; padding:12px 14px; border-radius:16px; background:rgba(255,255,255,.06); border:1px solid var(--stroke); color:var(--text)}
-    .bubble.me{margin-left:auto; background:linear-gradient(135deg, #1b1a12, #2e2615); border:1px solid #41351a; color:#fee8b0}
-    .time{font-size:11px; color:var(--muted); margin:0 6px}
+    .bubble{max-width:80ch; width:fit-content; padding:12px 14px; border-radius:16px; background:rgba(255,255,255,.07); border:1px solid var(--stroke); color:var(--text)}
+    .bubble.me{margin-left:auto; background:linear-gradient(135deg, #0f315f, #102543); border:1px solid rgba(77,163,255,.45); color:#e6f2ff}
+    .time{font-size:11px; color:var(--muted); margin:0 6px; white-space:nowrap}
 
     /* Composer */
-    .composer{display:flex; align-items:center; gap:10px; padding:12px 16px; border-top:1px solid var(--stroke)}
+    .composer{
+      position: sticky; bottom:0;
+      display:flex; align-items:center; gap:10px; padding:12px 16px; border-top:1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,0));
+      backdrop-filter: var(--glass);
+    }
     .chip{display:inline-grid; place-items:center; width:40px; height:40px; border-radius:12px; border:1px solid var(--stroke); background:var(--card)}
-    #message-input{flex:1; padding:12px 14px; border-radius:999px; border:1px solid var(--stroke); background:rgba(255,255,255,.04); outline:0; color:var(--text)}
-    .send{padding:10px 16px; border-radius:999px; border:1px solid #3b3320; background:linear-gradient(135deg,#2c2414,#3b2f19); color:#ffe7b0; font-weight:700; cursor:pointer}
-    .send:hover{filter:brightness(1.05)}
+    #message-input{flex:1; padding:12px 14px; border-radius:999px; border:1px solid var(--stroke); background:rgba(255,255,255,.05); outline:0; color:var(--text)}
+    .send{
+      padding:12px 16px; border-radius:999px; border:1px solid rgba(77,163,255,.45);
+      background:linear-gradient(135deg,#0e3b7e,#112a55); color:#e6f1ff; font-weight:700; cursor:pointer
+    }
 
-    /* Info card */
+    /* Info KPIs */
     .kpis{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:6px}
     .kpi{border:1px solid var(--stroke); border-radius:14px; padding:14px; background:var(--card-2)}
     .kpi .label{font-size:11px; color:var(--muted)}
@@ -627,67 +768,192 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     /* Utility */
     .row{display:flex; gap:12px; align-items:center}
     .row.wrap{flex-wrap:wrap}
-    .pill{display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--stroke); background:var(--card); border-radius:999px}
+    .pill{display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--chip-br); background:var(--chip-bg); border-radius:999px}
     .small{font-size:12px; color:var(--muted)}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace}
     .grid-3{display:grid; grid-template-columns: repeat(3, 1fr); gap:14px}
     .grid-2{display:grid; grid-template-columns: repeat(2, 1fr); gap:14px}
 
     /* Portal & Phone Lab */
-    .callout{padding:14px; border:1px dashed var(--stroke); border-radius:12px; background:rgba(255,255,255,.03)}
+    .callout{padding:14px; border:1px dashed var(--stroke); border-radius:12px; background:rgba(255,255,255,.04)}
     .iframe-shell{border:1px solid var(--stroke); border-radius:16px; overflow:hidden; background:var(--card)}
     .iframe-placeholder{display:grid; place-items:center; height:520px; color:var(--muted)}
     iframe.softphone{width:100%; height:520px; border:0; background:#0f1319}
 
     /* Footer */
-    footer{padding:18px 28px; border-top:1px solid var(--stroke); color:var(--muted)}
+    footer{
+      padding:18px max(28px, calc(28px + var(--safe-right)));
+      padding-left: max(28px, calc(28px + var(--safe-left)));
+      border-top:1px solid var(--stroke); color:var(--muted)
+    }
 
-    /* Responsive */
-    @media (max-width: 1080px){ .grid{grid-template-columns:1fr} .grid-3{grid-template-columns:1fr} }
-    @media (max-width: 920px){ .page{grid-template-columns:1fr} aside.sidebar{position:static; height:auto; border-right:0; border-bottom:1px solid var(--stroke)} }
+    /* =========================
+       Mobile / Tablet Responsive
+       ========================= */
+    @media (max-width: 1200px){
+      .grid{grid-template-columns:1fr}
+      .grid-3{grid-template-columns: repeat(2, 1fr)}
+      .split{grid-template-columns: 1fr}
+    }
+    @media (max-width: 920px){
+      /* Turn sidebar into off-canvas drawer */
+      .page{grid-template-columns: 1fr}
+      aside.sidebar{
+        position: fixed;
+        left: 0; top: calc(var(--safe-top) + var(--topbar-h));
+        height: calc(100svh - var(--topbar-h) - var(--safe-top) - var(--bottombar-h) - var(--safe-bottom));
+        width: min(86vw, 320px);
+        transform: translateX(-100%);
+        box-shadow: 0 10px 30px rgba(0,0,0,.45);
+        border-right: 1px solid var(--stroke);
+        border-radius: 0 16px 16px 0;
+      }
+      aside.sidebar.open{ transform: translateX(0) }
+
+      /* Give room for bottom navigation */
+      body{
+        padding-bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 8px);
+      }
+
+      /* Messages area: full app height feel */
+      .messages-wrap{
+        max-height: calc(100svh - var(--topbar-h) - var(--bottombar-h) - 260px);
+      }
+      .video-grid{grid-template-columns: 1fr}
+    }
+    @media (max-width: 640px){
+      .grid-3{grid-template-columns: 1fr}
+      .hero{padding:20px}
+      .card .card-body{padding:18px}
+      .btn{padding:10px 12px}
+      .search{max-width: 100%}
+      .bubble{max-width: 88%}
+    }
+
+    /* =========================
+       Bottom Nav (mobile app feel)
+       ========================= */
+    .bottombar{
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: calc(var(--bottombar-h) + var(--safe-bottom));
+      padding-bottom: var(--safe-bottom);
+      border-top: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      backdrop-filter: var(--glass);
+      display: none;
+      z-index: 9;
+    }
+    .bottombar .tabs{
+      height: var(--bottombar-h);
+      display:grid; grid-template-columns: repeat(5, 1fr);
+      align-items: center;
+    }
+    .bottombar a{
+      text-decoration: none; color: var(--text);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+      font-size: 11px;
+      padding-top: 6px;
+    }
+    .bottombar svg{width:20px; height:20px; color: var(--muted)}
+    .bottombar a.active svg{color: var(--accent)}
+    .bottombar a.active span{color: var(--accent)}
+
+    @media (max-width: 920px){
+      .bottombar{ display: block }
+    }
+
+    /* =========================
+       Mobile FAB (Start Chat quick)
+       ========================= */
+    .fab{
+      position: fixed;
+      right: max(16px, calc(16px + var(--safe-right)));
+      bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 16px);
+      display: none;
+      z-index: 9;
+    }
+    .fab button{
+      height:56px; min-width:56px; padding:0 18px; border-radius:999px;
+      border:1px solid rgba(77,163,255,.45);
+      background:linear-gradient(135deg,#0e3b7e,#112a55);
+      color:#e6f1ff; font-weight:700; cursor:pointer;
+      box-shadow: 0 10px 24px rgba(18,69,140,.35);
+      display:inline-flex; align-items:center; gap:10px;
+    }
+    .fab svg{width:18px; height:18px}
+    @media (max-width: 920px){
+      .fab{display:block}
+    }
+
+    /* Drawer Backdrop (mobile) */
+    .backdrop{
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.4);
+      z-index: 7;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s ease;
+    }
+    .backdrop.show{ opacity: 1; pointer-events: auto }
+
+    /* Visually larger touch targets on mobile */
+    @media (hover:none){
+      .menu a, .btn{ min-height: 44px }
+    }
+
+    /* Section headings responsive */
+    h2{font-size: var(--fs-h2); margin: 0 0 8px 0}
+    h3{font-size: var(--fs-h3); margin: 0 0 6px 0}
+    p, li, label{font-size: var(--fs-p) }
   </style>
 </head>
 <body>
+  <!-- Drawer backdrop (mobile) -->
+  <div class="backdrop" id="backdrop"></div>
+
   <div class="page">
-    <!-- ======= SIDEBAR ======= -->
-    <aside class="sidebar">
+    <!-- =========================
+         SIDEBAR (desktop & mobile drawer)
+         ========================= -->
+    <aside class="sidebar" id="drawer">
       <div class="brand" aria-label="Website X brand">
         <div class="logo" aria-hidden="true">
-          <!-- Crown Icon -->
+          <!-- Shield Icon (trust) -->
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 7l4 3 5-6 5 6 4-3v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <path d="M12 2l7 4v6c0 5-3.5 9-7 10-3.5-1-7-5-7-10V6l7-4z"/>
+            <path d="M9 12l2 2 4-4"/>
           </svg>
         </div>
-        <div>
-          <div class="badge" title="Premium support">CONCIERGE</div>
+        <div style="min-width:0">
+          <div class="badge" title="Enterprise-grade">TRUSTED</div>
           <div class="title">Website X • Support</div>
         </div>
       </div>
 
       <nav class="menu" aria-label="Main menu">
-        <a href="#" aria-current="page">
+        <a href="#kb" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6"/></svg>
-          Home
+          Home <span class="dot-mini"></span>
         </a>
-        <a href="#kb">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19.5A2.5 2.5 0 006.5 22H20"/><path d="M20 2H6.5A2.5 2.5 0 004 4.5V19"/><path d="M8 6h9"/><path d="M8 10h9"/><path d="M8 14h9"/></svg>
-          Knowledge Base
-        </a>
-        <a href="#chat">
+        <a href="#chat" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a4 4 0 01-4 4H7l-4 4V5a4 4 0 014-4h10a4 4 0 014 4z"/></svg>
-          Customer Chat
+          Customer Chat <span class="dot-mini"></span>
         </a>
-        <a href="#agent-portal">
+        <a href="#agent-portal" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
-          Agent Portal
+          Agent Portal <span class="dot-mini"></span>
         </a>
-        <a href="#phone-lab">
+        <a href="#phone-lab" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M22 16.92V21a2 2 0 0 1-2.18 2A19.86 19.86 0 0 1 3 6.18 2 2 0 0 1 5 4h4.09a2 2 0 0 1 2 1.72l.45 3a2 2 0 0 1-.57 1.73L9.91 12a16 16 0 0 0 6.18 6.18l1.55-1.05a2 2 0 0 1 1.73-.57l3 .45a2 2 0 0 1 1.72 2.01z"/></svg>
-          Phone Lab (IVR)
+          Phone Lab (IVR) <span class="dot-mini"></span>
         </a>
-        <a href="#status">
+        <a href="#status" class="nav-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v18h18"/><path d="M7 13l3 3 7-7"/></svg>
-          Service Status
+          Service Status <span class="dot-mini"></span>
+        </a>
+        <a href="#how" class="nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.82 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
+          How it works <span class="dot-mini"></span>
         </a>
       </nav>
 
@@ -697,15 +963,24 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       </div>
     </aside>
 
-    <!-- ======= CONTENT ======= -->
-    <div class="content">
+    <!-- =========================
+         CONTENT
+         ========================= -->
+    <div class="content" id="contentRoot">
       <header class="topbar">
-        <div class="search" role="search">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input type="search" placeholder="Search articles or ask a question…" aria-label="Search" />
+        <div class="row" style="gap:10px">
+          <button class="btn icon" id="menuBtn" aria-label="Open menu" title="Menu">
+            <!-- menu icon -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
+          <div class="search" role="search" aria-label="Search">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input type="search" placeholder="Search articles or ask a question…" aria-label="Search" />
+          </div>
         </div>
+
         <div class="actions">
-          <button class="btn" type="button" id="toggle-theme" title="Toggle theme">
+          <button class="btn" type="button" id="toggle-theme" title="Toggle theme (light/dark)">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364 6.364l-1.414-1.414M7.05 7.05L5.636 5.636m12.728 0l-1.414 1.414M7.05 16.95l-1.414 1.414"/></svg>
             Theme
           </button>
@@ -714,23 +989,29 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       </header>
 
       <main>
-        <!-- HERO -->
-        <section class="hero" id="kb">
+        <!-- =========================
+             HERO
+             ========================= -->
+        <section class="hero" id="kb" aria-label="Hero">
           <div class="spark" aria-hidden="true"></div>
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
-            <div class="badge">24/7 Support</div>
-            <div class="status"><span class="dot"></span> Response time &lt; 2 min</div>
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap">
+            <div class="badge">Enterprise-grade</div>
+            <div class="status"><span class="dot"></span> Live routing via Twilio</div>
           </div>
-          <h1>Concierge Support by <span style="color:var(--accent)">Website X</span></h1>
-          <p>Luxury experience: live chat, video, phone calls, and an agent portal for end-to-end testing.</p>
+          <h1>Concierge Contact Center, built on <span style="color:var(--accent)">Twilio</span></h1>
+          <p>
+            Start a customer chat (with optional video), open the Agent Portal, or place an IVR call. This page is the single entry point to experience a cloud-native, high-confidence contact center powered by TaskRouter, Conversations, Voice, and Video—plus a sample CRM for an automotive dealer.
+          </p>
         </section>
 
-        <!-- GRID: Start form + Info -->
-        <section class="grid" id="chat">
+        <!-- =========================
+             GRID: Chat Start + Demo Flow
+             ========================= -->
+        <section class="grid" id="chat" aria-label="Start chat">
           <div class="card">
             <div class="card-body">
-              <h2 style="margin:0 0 12px 0">Start a new chat</h2>
-              <p class="helper">This chat simulates the customer side.</p>
+              <h2>Start a new chat</h2>
+              <p class="helper">This is the customer-side chat. Conversations are routed to agents via TaskRouter.</p>
               <form id="start-form" aria-label="Start form">
                 <div class="split">
                   <div class="field">
@@ -738,7 +1019,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
                     <input class="input" id="name" type="text" placeholder="e.g. Alex Johnson" required />
                   </div>
                   <div class="field">
-                    <label class="label" for="email">Email</label>
+                    <label class="label" for="email">Email (reuses a single thread per email)</label>
                     <input class="input" id="email" type="email" placeholder="you@company.com" required />
                   </div>
                 </div>
@@ -764,17 +1045,20 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
                   <button class="btn primary" type="submit">Start chat</button>
                   <span class="helper">By starting, you accept our <a href="#" style="color:var(--accent)">Terms</a>.</span>
                 </div>
+                <div class="callout small" style="margin-top:10px">
+                  Video is optional and depends on backend feature flag <span class="mono">ENABLE_VIDEO=true</span>.
+                </div>
               </form>
             </div>
           </div>
 
           <div class="card">
             <div class="card-body">
-              <h3 style="margin:0">Demo flow (customer ↔ agent)</h3>
+              <h3>Demo flow (customer ↔ agent)</h3>
               <ol class="small" style="margin:10px 0 0 18px; line-height:1.6">
                 <li>Start the <b>customer chat</b> here.</li>
-                <li>Open the <b>Agent Portal</b>, log in with the demo user, and <i>receive</i> chats/calls.</li>
-                <li>Use <b>Phone Lab (IVR)</b> to pick a customer profile and place a simulated call to experience IVR/routing.</li>
+                <li>Open the <b>Agent Portal</b>, log in with the demo fields, and <i>receive</i> chats/calls.</li>
+                <li>Use <b>Phone Lab (IVR)</b> to pick a customer profile and place a simulated call to test IVR and routing.</li>
               </ol>
               <div class="kpis">
                 <div class="kpi"><div class="label">Urgent SLA</div><div class="value">&lt; 60s</div></div>
@@ -785,7 +1069,9 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
           </div>
         </section>
 
-        <!-- CHAT SHELL -->
+        <!-- =========================
+             CHAT SHELL
+             ========================= -->
         <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat">
           <div class="chat-shell">
             <div class="chat-header">
@@ -793,17 +1079,17 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
                 <div class="avatar" aria-hidden="true">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 </div>
-                <div>
-                  <div style="font-weight:700">Concierge Agent</div>
+                <div style="min-width:0">
+                  <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">Concierge Agent</div>
                   <div class="status"><span class="dot"></span> Online</div>
                 </div>
               </div>
               <div class="toolbar" role="toolbar" aria-label="Chat actions">
-                <button class="btn" id="copy-transcript" type="button" title="Copy transcript">
+                <button class="btn ghost" id="copy-transcript" type="button" title="Copy transcript">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   Copy
                 </button>
-                <button class="btn" id="start-video" type="button" title="Start video"> 
+                <button class="btn" id="start-video" type="button" title="Start video">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
                   Video
                 </button>
@@ -833,7 +1119,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
             </div>
 
             <!-- MESSAGES -->
-            <div class="messages-wrap">
+            <div class="messages-wrap" id="messagesWrap">
               <ul id="messages"></ul>
             </div>
 
@@ -849,28 +1135,38 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
           </div>
         </section>
 
-        <!-- ======= AGENT PORTAL ======= -->
-        <section class="grid" id="agent-portal">
+        <!-- =========================
+             AGENT PORTAL
+             ========================= -->
+        <section class="grid" id="agent-portal" aria-label="Agent Portal">
           <div class="card">
             <div class="card-body">
-              <h2 style="margin:0 0 12px 0">Agent Portal — Access</h2>
+              <h2>Agent Portal — Access</h2>
               <p class="helper">Log in as an <b>agent</b> to receive chats and calls from this demo.</p>
 
               <div class="grid-2" style="margin-top:10px">
                 <div class="field">
-                  <label class="label">Portal URL</label>
+                  <label class="label" for="agentPortalUrl">Portal URL</label>
                   <div class="row">
                     <input class="input" id="agentPortalUrl" value="" placeholder="https://portal.agents.demo"/>
                     <button class="btn" type="button" id="openPortal">Open</button>
                   </div>
                 </div>
+
                 <div class="field">
-                  <label class="label">Demo credentials</label>
+                  <label class="label">Demo fields (copy to the Portal)</label>
                   <div class="row wrap">
-                    <span class="pill mono" id="agentUser-pill">user@example.com</span>
-                    <button class="btn" data-copy="#agentUser-pill">Copy user</button>
-                    <span class="pill mono" id="agentPass-pill">••••••</span>
-                    <button class="btn" data-copy="#agentPass-pill">Copy passcode</button>
+                    <span class="pill mono" id="agentId-pill"        title="Agent ID">agent-id: demo-agent-1</span>
+                    <button class="btn" data-copy="#agentId-pill">Copy Agent ID</button>
+
+                    <span class="pill mono" id="workerSid-pill"      title="TaskRouter Worker SID">WKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</span>
+                    <button class="btn" data-copy="#workerSid-pill">Copy Worker SID</button>
+
+                    <span class="pill mono" id="identity-pill"       title="Identity (must equal Worker attributes.contact_uri)">client:agent:demo-agent-1</span>
+                    <button class="btn" data-copy="#identity-pill">Copy Identity</button>
+                  </div>
+                  <div class="callout small" style="margin-top:12px">
+                    <b>Important:</b> In TaskRouter, set the Worker’s <span class="mono">attributes.contact_uri</span> to exactly match the Identity you enter above. The portal login checks this match.
                   </div>
                 </div>
               </div>
@@ -883,7 +1179,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
 
           <div class="card">
             <div class="card-body">
-              <h3 style="margin:0 0 8px 0">Requirements</h3>
+              <h3>Requirements</h3>
               <ul class="small" style="margin: 8px 0 0 18px; line-height:1.6">
                 <li>Allow microphone/camera for WebRTC calls.</li>
                 <li>Disable aggressive blockers if the portal requires 3rd-party cookies or CORS flows.</li>
@@ -893,12 +1189,14 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
           </div>
         </section>
 
-        <!-- ======= PHONE LAB (IVR) ======= -->
-        <section class="grid" id="phone-lab">
+        <!-- =========================
+             PHONE LAB (IVR)
+             ========================= -->
+        <section class="grid" id="phone-lab" aria-label="Phone Lab">
           <div class="card">
             <div class="card-body">
-              <h2 style="margin:0 0 12px 0">Phone Lab — Customer Simulator + IVR</h2>
-              <p class="helper">Pick a <b>customer profile</b>, launch the softphone (iframe), and hit <b>Start call</b>. We control the caller ID to trigger the correct IVR path.</p>
+              <h2>Phone Lab — Customer Simulator + IVR</h2>
+              <p class="helper">Pick a <b>customer profile</b>, launch the softphone (iframe), and hit <b>Start call</b>. We set the caller ID to trigger the correct IVR path.</p>
 
               <div class="grid-3" style="margin-top:10px">
                 <div class="field">
@@ -906,31 +1204,31 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
                   <select id="customerProfile"></select>
                 </div>
                 <div class="field">
-                  <label class="label">Caller ID (ANI)</label>
+                  <label class="label" for="callerId">Caller ID (ANI)</label>
                   <input class="input mono" id="callerId" placeholder="+15555550100"/>
                 </div>
                 <div class="field">
-                  <label class="label">IVR number (DID to dial)</label>
+                  <label class="label" for="ivrNumber">IVR number (DID to dial)</label>
                   <input class="input mono" id="ivrNumber" placeholder="+15555550123"/>
                 </div>
               </div>
 
               <div class="grid-3" style="margin-top:10px">
                 <div class="field">
-                  <label class="label">Scenario ID</label>
+                  <label class="label" for="scenario">Scenario ID</label>
                   <input class="input" id="scenario" placeholder="vip / billing-delinquent / onboarding"/>
                 </div>
                 <div class="field">
-                  <label class="label">Auto DTMF (optional)</label>
+                  <label class="label" for="dtmf">Auto DTMF (optional)</label>
                   <input class="input mono" id="dtmf" placeholder="1-2-1"/>
                 </div>
                 <div class="field">
-                  <label class="label">Language</label>
+                  <label class="label" for="locale">Language</label>
                   <input class="input" id="locale" placeholder="en-US / es-CR"/>
                 </div>
               </div>
 
-              <div class="row" style="margin-top:12px">
+              <div class="row" style="margin-top:12px; flex-wrap:wrap">
                 <button class="btn" id="launchSoftphone" type="button">Launch softphone</button>
                 <button class="btn primary" id="startCall" type="button">Start call</button>
                 <span class="small">The call is triggered via <span class="mono">POST /demo/call/start</span> on your server.</span>
@@ -940,7 +1238,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
 
           <div class="card">
             <div class="card-body">
-              <h3 style="margin:0 0 8px 0">Embedded softphone</h3>
+              <h3>Embedded softphone</h3>
               <div class="iframe-shell">
                 <div id="softphoneWrap" class="iframe-placeholder">
                   Set <span class="mono">DEMO.softphoneUrl</span> to load your webphone here.
@@ -952,6 +1250,48 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
             </div>
           </div>
         </section>
+
+        <!-- =========================
+             SERVICE STATUS
+             ========================= -->
+        <section class="grid" id="status" aria-label="Service Status">
+          <div class="card">
+            <div class="card-body">
+              <h2>Service status</h2>
+              <div class="kpis" id="status-kpis">
+                <div class="kpi">
+                  <div class="label">Backend</div>
+                  <div class="value" id="kpi-health">—</div>
+                </div>
+                <div class="kpi">
+                  <div class="label">Agents online</div>
+                  <div class="value" id="kpi-agents">—</div>
+                </div>
+                <div class="kpi">
+                  <div class="label">Video</div>
+                  <div class="value" id="kpi-video">—</div>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; flex-wrap:wrap">
+                <button class="btn" id="refresh-status" type="button">Refresh</button>
+                <span class="small">Checks <span class="mono">/api/health</span>, <span class="mono">/api/taskrouter/presence</span> and <span class="mono">/api/video/enabled</span>.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" id="how" aria-label="How it works">
+            <div class="card-body">
+              <h3>How it works — under the hood</h3>
+              <ul class="small" style="margin: 8px 0 0 18px; line-height:1.7">
+                <li><b>Conversations (chat):</b> guest tokens (<span class="mono">/api/chat/token/guest</span>), per-conversation webhooks create a chat task automatically.</li>
+                <li><b>TaskRouter (routing):</b> assignment callback (<span class="mono">/api/taskrouter/assignment</span>) accepts chat or sets up voice conferences.</li>
+                <li><b>Voice & Softphone:</b> WebRTC device tokens (<span class="mono">/api/token/voice</span>); hold/record/transfer endpoints control calls.</li>
+                <li><b>Video (optional):</b> <span class="mono">/api/video/ensure-room</span> + agent/guest tokens for a room tied to the chat.</li>
+                <li><b>CRM (demo):</b> the portal shows customer/vehicle/appointments/finance data and logs interactions.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer>
@@ -960,7 +1300,45 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     </div>
   </div>
 
-  <!-- ======= SDKs: Conversations (chat) + Video (WebRTC) ======= -->
+  <!-- =========================
+       Bottom Navigation (mobile)
+       ========================= -->
+  <nav class="bottombar" aria-label="Bottom navigation">
+    <div class="tabs" id="mobileTabs">
+      <a href="#kb"           class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6"/></svg>
+        <span>Home</span>
+      </a>
+      <a href="#chat"         class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 01-4 4H7l-4 4V5a4 4 0 014-4h10a4 4 0 014 4z"/></svg>
+        <span>Chat</span>
+      </a>
+      <a href="#agent-portal" class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+        <span>Portal</span>
+      </a>
+      <a href="#phone-lab"    class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.92V21a2 2 0 0 1-2.18 2A19.86 19.86 0 0 1 3 6.18 2 2 0 0 1 5 4h4.09a2 2 0 0 1 2 1.72l.45 3a2 2 0 0 1-.57 1.73L9.91 12a16 16 0 0 0 6.18 6.18l1.55-1.05a2 2 0 0 1 1.73-.57l3 .45a2 2 0 0 1 1.72 2.01z"/></svg>
+        <span>IVR</span>
+      </a>
+      <a href="#status"       class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 13l3 3 7-7"/></svg>
+        <span>Status</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- Floating Action Button (mobile) -->
+  <div class="fab">
+    <button type="button" id="fabStart">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V5a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+      Start chat
+    </button>
+  </div>
+
+  <!-- =========================
+       SDKs: Conversations (chat) + Video (WebRTC)
+       ========================= -->
   <script src="https://media.twiliocdn.com/sdk/js/conversations/v2.4/twilio-conversations.min.js" defer></script>
   <script src="https://media.twiliocdn.com/sdk/js/video/releases/2.27.0/twilio-video.min.js" defer></script>
 
@@ -971,26 +1349,35 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     // === Central DEMO config ===
     window.DEMO = {
       agentPortalUrl: 'https://agents.demo.example.com',
-      agentUser: 'demo.agent@example.com',
-      agentPasscode: '123456',
+
+      // Portal demo fields (shown as pills to copy)
+      agentId: 'demo-agent-1',
+      workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',   // replace with a real Worker SID
+      identity: 'client:agent:demo-agent-1',             // MUST equal worker.attributes.contact_uri
+
+      // Optional external softphone
       softphoneUrl: '', // e.g. 'https://softphone.demo.example.com?token=...'
-      ivrNumber: '+15555550123',  // your contact-center DID
+
+      // Telephony
+      ivrNumber: '+15555550123',      // your contact-center DID
       outboundFromNumber: '+15555550199',
+
+      // Demo customer profiles
       customerProfiles: [
-        { id:'vip',     name:'VIP — Ana Gomez',      callerId:'+50671112233', scenario:'vip',                dtmf:'1-2',   locale:'es-CR', notes:'Priority routing' },
-        { id:'billing', name:'Billing — Carlos Ruiz',callerId:'+50688887777', scenario:'billing-delinquent', dtmf:'2-1-1', locale:'es-CR', notes:'Past due' },
-        { id:'new',     name:'New Customer — Eva Lee',callerId:'+12025550123',scenario:'new-onboarding',     dtmf:'3-2',   locale:'en-US', notes:'Onboarding EN' }
+        { id:'vip',     name:'VIP — Ana Gomez',       callerId:'+50671112233', scenario:'vip',                dtmf:'1-2',   locale:'es-CR', notes:'Priority routing' },
+        { id:'billing', name:'Billing — Carlos Ruiz', callerId:'+50688887777', scenario:'billing-delinquent', dtmf:'2-1-1', locale:'es-CR', notes:'Past due' },
+        { id:'new',     name:'New Customer — Eva Lee',callerId:'+12025550123', scenario:'new-onboarding',     dtmf:'3-2',   locale:'en-US', notes:'Onboarding EN' }
       ]
     };
   </script>
 
   <script>
-    // ======= Lightweight UI glue (non-conflicting with chat.js) =======
-    const qs = s => document.querySelector(s);
+    // =========================
+    // App JS (navigation, status, drawer)
+    // =========================
     const byId = id => document.getElementById(id);
-
-    const messages = byId('messages');
-    const copyBtn = byId('copy-transcript');
+    const qs   = sel => document.querySelector(sel);
+    const qsa  = sel => document.querySelectorAll(sel);
 
     // Footer year
     byId('year').textContent = new Date().getFullYear();
@@ -998,24 +1385,73 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
     // Theme toggle
     byId('toggle-theme').addEventListener('click', () => {
       document.body.classList.toggle('light');
+      localStorage.setItem('wxs_theme', document.body.classList.contains('light') ? 'light' : 'dark');
+    });
+    (function(){ try{
+      const t = localStorage.getItem('wxs_theme');
+      if(t === 'light') document.body.classList.add('light');
+    }catch(e){} })();
+
+    // Mobile Drawer
+    const drawer   = byId('drawer');
+    const backdrop = byId('backdrop');
+    const menuBtn  = byId('menuBtn');
+    function openDrawer(){ drawer.classList.add('open'); backdrop.classList.add('show'); }
+    function closeDrawer(){ drawer.classList.remove('open'); backdrop.classList.remove('show'); }
+    menuBtn.addEventListener('click', openDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // FAB (Start chat)
+    byId('fabStart').addEventListener('click', () => {
+      location.hash = '#chat';
+      setTimeout(() => byId('name')?.focus(), 120);
     });
 
-    // Copy transcript
-    if (copyBtn) {
-      copyBtn.addEventListener('click', () => {
-        const transcript = Array.from(messages.querySelectorAll('li .bubble')).map(b=>b.textContent).join('\n');
-        navigator.clipboard.writeText(transcript).then(()=> toast('Transcript copied'));
+    // Copy pills (portal)
+    function hookCopyButtons(){
+      qsa('[data-copy]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sel = btn.getAttribute('data-copy');
+          const node = document.querySelector(sel);
+          if(node){ navigator.clipboard.writeText(node.textContent).then(()=> toast('Copied')); }
+        });
       });
     }
 
-    // Small toast helper
+    // Portal fields
+    (function(){
+      const portalInput = byId('agentPortalUrl');
+      const openPortal  = byId('openPortal');
+      const agentIdPill   = byId('agentId-pill');
+      const workerSidPill = byId('workerSid-pill');
+      const identityPill  = byId('identity-pill');
+
+      if(portalInput){ portalInput.value = window.DEMO.agentPortalUrl || portalInput.value; }
+      if(agentIdPill){   agentIdPill.textContent   = window.DEMO.agentId; }
+      if(workerSidPill){ workerSidPill.textContent = window.DEMO.workerSid; }
+      if(identityPill){  identityPill.textContent  = window.DEMO.identity; }
+
+      if(openPortal){
+        openPortal.addEventListener('click', () => {
+          const url = portalInput.value.trim() || window.DEMO.agentPortalUrl;
+          if(!url) return toast('Set the Agent Portal URL first');
+          window.open(url, '_blank', 'noopener');
+        });
+      }
+      hookCopyButtons();
+    })();
+
+    // Toast helper
     function toast(text){
       let node = byId('toast');
       if(!node){
         node = document.createElement('div');
         node.id='toast';
-        node.style.position='fixed'; node.style.bottom='24px'; node.style.right='24px'; node.style.padding='12px 16px';
+        node.style.position='fixed'; node.style.bottom='calc(var(--bottombar-h) + var(--safe-bottom) + 16px)';
+        node.style.right='max(16px, calc(16px + var(--safe-right)))';
+        node.style.padding='12px 16px';
         node.style.border='1px solid var(--stroke)'; node.style.borderRadius='12px'; node.style.background='var(--card)'; node.style.color='var(--text)'; node.style.boxShadow='var(--shadow)';
+        node.style.zIndex='9999';
         document.body.appendChild(node);
       }
       node.textContent=text;
@@ -1023,33 +1459,40 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
       setTimeout(()=>{node.style.transition='opacity .5s'; node.style.opacity='0'}, 1800);
     }
 
-    // ======= Agent Portal wiring =======
-    const portalInput = byId('agentPortalUrl');
-    const openPortal = byId('openPortal');
-    const userPill = byId('agentUser-pill');
-    const passPill = byId('agentPass-pill');
+    // Mobile tabs active state + Sidebar active state (IntersectionObserver)
+    const sections = ['#kb','#chat','#agent-portal','#phone-lab','#status','#how'];
+    const allTargets = sections.map(id => document.querySelector(id)).filter(Boolean);
+    const sideLinks  = qsa('.menu .nav-link');
+    const tabLinks   = qsa('.bottombar .tab');
 
-    if(portalInput){ portalInput.value = window.DEMO.agentPortalUrl || portalInput.value; }
-    if(userPill){ userPill.textContent = window.DEMO.agentUser; }
-    if(passPill){ passPill.textContent = window.DEMO.agentPasscode; }
-
-    document.querySelectorAll('[data-copy]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const sel = btn.getAttribute('data-copy');
-        const node = document.querySelector(sel);
-        if(node){ navigator.clipboard.writeText(node.textContent).then(()=> toast('Copied')); }
-      });
-    });
-
-    if(openPortal){
-      openPortal.addEventListener('click', () => {
-        const url = portalInput.value.trim() || window.DEMO.agentPortalUrl;
-        if(!url) return toast('Set the Agent Portal URL first');
-        window.open(url, '_blank', 'noopener');
-      });
+    function setActive(href){
+      sideLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === href));
+      tabLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === href));
     }
 
-    // ======= Phone Lab wiring =======
+    const io = new IntersectionObserver((entries) => {
+      entries.filter(e => e.isIntersecting).forEach(e => {
+        const id = '#'+e.target.id;
+        setActive(id);
+      });
+    },{
+      root: null,
+      rootMargin: `-${parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) + 24}px 0px -40% 0px`,
+      threshold: 0.3
+    });
+    allTargets.forEach(el => io.observe(el));
+
+    // Close drawer on nav click (mobile)
+    sideLinks.forEach(a => a.addEventListener('click', closeDrawer));
+
+    // Bottom tabs: smooth scroll & highlight
+    tabLinks.forEach(a => {
+      a.addEventListener('click', () => setActive(a.getAttribute('href')));
+    });
+
+    // =========================
+    // Phone Lab wiring
+    // =========================
     const profileSelect = byId('customerProfile');
     const callerId = byId('callerId');
     const ivrNumber = byId('ivrNumber');
@@ -1121,6 +1564,7 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
           });
           if(!res.ok) throw new Error('HTTP '+res.status);
           toast('Call started');
+
           // Inform softphone via postMessage if present
           const frame = document.querySelector('iframe.softphone');
           if(frame && frame.contentWindow){
@@ -1131,9 +1575,38 @@ const API_BASE = window.API_BASE || 'http://localhost:4000';
         }
       });
     }
+
+    // =========================
+    // Service Status checks
+    // =========================
+    const kHealth = byId('kpi-health');
+    const kAgents = byId('kpi-agents');
+    const kVideo  = byId('kpi-video');
+    const btnRefresh = byId('refresh-status');
+
+    async function refreshStatus(){
+      try{
+        // Health
+        const h = await fetch(`${window.API_BASE}/api/health`).then(r=>r.json()).catch(()=>({ok:false}));
+        kHealth.textContent = h && h.ok ? 'OK' : 'Down';
+
+        // Presence
+        const p = await fetch(`${window.API_BASE}/api/taskrouter/presence`).then(r=>r.json()).catch(()=>[]);
+        const online = Array.isArray(p) ? p.filter(x=>x.available).length : 0;
+        kAgents.textContent = String(online);
+
+        // Video
+        const v = await fetch(`${window.API_BASE}/api/video/enabled`).then(r=>r.json()).catch(()=>({enabled:false}));
+        kVideo.textContent = v && v.enabled ? 'Enabled' : 'Disabled';
+      }catch(e){
+        kHealth.textContent='—'; kAgents.textContent='—'; kVideo.textContent='—';
+      }
+    }
+    if(btnRefresh){ btnRefresh.addEventListener('click', refreshStatus); }
+    refreshStatus();
   </script>
 
-  <!-- Your real chat integration -->
+  <!-- Your real chat integration (keeps IDs intact) -->
   <script src="chat.js" defer></script>
 </body>
 </html>

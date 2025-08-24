@@ -23,6 +23,7 @@ export default function VideoPanel({ room, participants, onClose }) {
     }, [room]);
 
 
+
     return (
         <Box borderStyle="solid" borderColor="colorBorderWeaker" borderWidth="borderWidth10" borderRadius="borderRadius30" padding="space60">
             <Box display="flex" columnGap="space60" style={{ flexWrap: 'wrap' }}>

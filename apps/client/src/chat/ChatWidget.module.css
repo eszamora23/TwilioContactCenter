@@ -1,10 +1,104 @@
-.container {
-  width: 100%;
-  max-width: 520px;
-  margin: 0 auto;
+/* src/chat/ChatWidget.module.css */
+:root{ --g: var(--paste-space-60); }
+
+/* Contenedor raíz */
+.container{
+  display:flex; flex-direction:column; width:100%; height:100%; min-height:0; overflow-x:hidden;
 }
 
-.log {
-  height: 50vh;
-  min-height: 260px;
+/* Fullscreen para popup */
+.fullscreen{
+  height:100svh; /* navegadores modernos */
+  height:100vh;  /* fallback */
+  padding: var(--paste-space-70);
+}
+
+/* Shell con card (popup y también sirve embebido si lo prefieres) */
+.card{
+  background: var(--paste-color-background);
+  border-radius: var(--paste-border-radius-30);
+  box-shadow: var(--paste-shadow);
+  padding: var(--paste-space-70);
+  display:flex; flex-direction:column;
+  height:100%; min-height:0;
+}
+
+/* Body */
+.body{ display:flex; flex-direction:column; gap: var(--g); min-height:0; flex:1; }
+
+/* -------- Video -------- */
+.videoWrap{
+  border:1px solid var(--paste-color-border-weaker);
+  border-radius: var(--paste-border-radius-30);
+  padding: var(--paste-space-60);
+  overflow:hidden;
+  background: var(--paste-color-background-body);
+}
+.videoClamp{ height: clamp(240px, 40vh, 420px); display:flex; flex-direction:column; }
+.videoGrid{ display:grid; grid-template-columns: 1fr; gap: var(--paste-space-60); min-height:0; flex:1; }
+@media (min-width: 960px){ .videoGrid{ grid-template-columns: 1fr 1fr; } }
+.videoLocal, .videoRemote{ min-width:0; }
+.videoSurface video, .videoSurface audio{ max-width:100%; width:100%; height:auto; display:block; border-radius:12px; }
+
+/* -------- Chat log (SCROLL INTERNO) -------- */
+.log{
+  position: relative;
+  flex:1; min-height:0; overflow:auto;
+  background: var(--paste-color-background);
+  border-radius: var(--paste-border-radius-20);
+  padding: var(--paste-space-50);
+  overflow-anchor: none;        /* evita auto-ancoras del navegador */
+  overscroll-behavior: contain; /* no propaga el scroll al padre */
+  /* Ojo: NO usamos scroll-behavior:smooth global para evitar “saltos” */
+}
+
+/* Fades */
+.fadeTop, .fadeBottom{ position:absolute; left:0; right:0; height:24px; pointer-events:none; }
+.fadeTop{ top:0; background: linear-gradient(180deg, rgba(0,0,0,.10), transparent); border-top-left-radius: var(--paste-border-radius-20); border-top-right-radius: var(--paste-border-radius-20); }
+.fadeBottom{ bottom:0; background: linear-gradient(0deg, rgba(0,0,0,.10), transparent); border-bottom-left-radius: var(--paste-border-radius-20); border-bottom-right-radius: var(--paste-border-radius-20); }
+
+/* Día */
+.dayChip{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 12px; border-radius:999px;
+  background: var(--paste-color-background-body);
+  border:1px solid var(--paste-color-border-weaker);
+  color: var(--paste-color-text-weak);
+  font-size: 12px; font-weight: 600;
+}
+
+/* Burbujas más legibles */
+.bubble{ max-width: min(68ch, 92%); word-break: break-word; }
+
+/* Mensajes de sistema */
+.system{
+  background: var(--paste-color-background-body);
+  color: var(--paste-color-text-weak);
+  border: 1px dashed var(--paste-color-border-weak);
+  padding: 6px 10px; border-radius: 10px; font-size: 12px; display: inline-block;
+}
+
+/* Composer fijo */
+.composerRow{
+  display:flex; gap: var(--paste-space-50); align-items:center;
+  position: sticky; bottom: 0;
+  padding-top: var(--paste-space-30);
+  background: var(--paste-color-background);
+}
+
+/* Botón “jump to latest” */
+.jump{
+  position:absolute; right: var(--paste-space-70);
+  bottom: calc(var(--paste-space-70) + 56px);
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 14px; border-radius:999px;
+  background: var(--paste-color-background-body);
+  border:1px solid var(--paste-color-border-weaker);
+  box-shadow: var(--paste-shadow);
+  cursor:pointer; user-select:none;
+}
+.jumpCount{
+  display:inline-grid; place-items:center;
+  width:20px; height:20px; border-radius:999px; font-size:12px;
+  background: var(--paste-color-background-inverse); color: var(--paste-color-text-inverse);
 }

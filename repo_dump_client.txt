@@ -200,19 +200,23 @@ export default function ChatPanel({
       <TabPanels>
         {sessions.map((s) => (
           <TabPanel key={s.sid} id={s.sid}>
-            <ChatWidget
-              conversationIdOrUniqueName={s.sid}
-              isActive={activeTab === s.sid}
-              onMessageAdded={() =>
-                s.sid === activeTab
-                  ? onClearUnread?.(s.sid)
-                  : onIncrementUnread?.(s.sid)
-              }
-              onLabel={(label) => onLabel?.(s.sid, label)}
-            />
+            {/* NEW: wrapper con altura acotada y minHeight:0 para habilitar scroll interno */}
+            <Box height="clamp(420px, 65vh, 760px)" minHeight="0" display="flex">
+              <ChatWidget
+                conversationIdOrUniqueName={s.sid}
+                isActive={activeTab === s.sid}
+                onMessageAdded={() =>
+                  s.sid === activeTab
+                    ? onClearUnread?.(s.sid)
+                    : onIncrementUnread?.(s.sid)
+                }
+                onLabel={(label) => onLabel?.(s.sid, label)}
+              />
+            </Box>
           </TabPanel>
         ))}
       </TabPanels>
+
     </Tabs>
   );
 }
@@ -220,7 +224,8 @@ export default function ChatPanel({
 ==== /src\chat\ChatPanel.jsx ====
 
 ==== src\chat\ChatWidget.jsx ====
-import { useEffect, useState, useRef } from 'react';
+// src/chat/ChatWidget.jsx
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { Client as ConversationsClient } from '@twilio/conversations';
 import { Box } from '@twilio-paste/core/box';
 import {
@@ -234,185 +239,53 @@ import { Input } from '@twilio-paste/core/input';
 import { Button } from '@twilio-paste/core/button';
 import { Heading } from '@twilio-paste/core/heading';
 import { Text } from '@twilio-paste/core/text';
+import { Separator } from '@twilio-paste/core/separator';
 import Video from 'twilio-video';
 import styles from './ChatWidget.module.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
 const VIDEO_FLAG = String(import.meta.env.VITE_VIDEO_ENABLED || 'false').toLowerCase() === 'true';
 
-/* ============================================================
- * Video helpers inline (hook + panel) para dejar el archivo autónomo
- * ============================================================ */
+/* ============ Video helpers (inline) ============ */
 function useVideoRoom() {
   const roomRef = useRef(null);
   const [room, setRoom] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [connecting, setConnecting] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      try { roomRef.current?.disconnect(); } catch {}
-      roomRef.current = null;
-    };
-  }, []);
+  useEffect(() => () => { try { roomRef.current?.disconnect(); } catch {} }, []);
 
   const connect = async ({ token, roomName }) => {
     if (!token || !roomName || roomRef.current) return;
     setConnecting(true);
-    const r = await Video.connect(token, {
-      name: roomName,
-      audio: true,
-      video: { width: 640 },
-    });
+    const r = await Video.connect(token, { name: roomName, audio: true, video: { width: 640 } });
     roomRef.current = r;
     setRoom(r);
-
-    const snapshot = () => Array.from(r.participants.values());
-    setParticipants(snapshot());
-
-    const onParticipantConnected = () => setParticipants(snapshot());
-    const onParticipantDisconnected = () => setParticipants(snapshot());
-    const onDisconnected = () => {
-      setParticipants([]);
-      setRoom(null);
-      roomRef.current = null;
-    };
-
-    r.on('participantConnected', onParticipantConnected);
-    r.on('participantDisconnected', onParticipantDisconnected);
-    r.on('disconnected', onDisconnected);
-
+    const list = () => Array.from(r.participants.values());
+    setParticipants(list());
+    const onJoin = () => setParticipants(list());
+    const onLeave = () => setParticipants(list());
+    const onRoomDown = () => { setParticipants([]); setRoom(null); roomRef.current = null; };
+    r.on('participantConnected', onJoin);
+    r.on('participantDisconnected', onLeave);
+    r.on('disconnected', onRoomDown);
     setConnecting(false);
   };
 
   const disconnect = async () => {
-    try { roomRef.current?.disconnect(); } finally {
-      roomRef.current = null;
-      setRoom(null);
-      setParticipants([]);
-    }
+    try { roomRef.current?.disconnect(); } finally { roomRef.current = null; setRoom(null); setParticipants([]); }
   };
 
   return { room, participants, connecting, connect, disconnect };
 }
 
-function RemoteParticipant({ participant }) {
-  const holder = useRef(null);
+/* Helpers de formato */
+const isSystem = (m) =>
+  String(m.author || '').toLowerCase() === 'system' || /^\[system]/i.test(m.body || '');
+const sameDay = (a, b) => a && b && new Date(a).toDateString() === new Date(b).toDateString();
+const timeFmt = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  useEffect(() => {
-    if (!participant) return;
-
-    const attachTrack = (track) => {
-      if (!track || !holder.current) return;
-      // evita duplicados por sid de track
-      if (holder.current.querySelector(`[data-track-sid="${track.sid}"]`)) return;
-      const el = track.attach();
-      el.dataset.trackSid = track.sid;
-      el.dataset.trackKind = track.kind;
-      holder.current.appendChild(el);
-    };
-
-    const detachTrack = (track) => {
-      try { track.detach().forEach((el) => el.remove()); } catch {}
-    };
-
-    // 1) Adjunta los tracks ya suscritos (publications -> track)
-    participant.tracks.forEach((pub) => {
-      if (pub.track) attachTrack(pub.track);
-      // Además, engancha los eventos de la publication por si aún no estaba suscrito
-      pub.on?.('subscribed', attachTrack);
-      pub.on?.('unsubscribed', detachTrack);
-    });
-
-    // 2) Para subscripciones nuevas (eventos del participante)
-    const onTrackSubscribed = (track) => attachTrack(track);
-    const onTrackUnsubscribed = (track) => detachTrack(track);
-    const onTrackPublished = (publication) => {
-      // Si al publicar ya hay track (raro), adjúntalo
-      if (publication.track) attachTrack(publication.track);
-      publication.on?.('subscribed', attachTrack);
-      publication.on?.('unsubscribed', detachTrack);
-    };
-
-    participant.on('trackSubscribed', onTrackSubscribed);
-    participant.on('trackUnsubscribed', onTrackUnsubscribed);
-    participant.on('trackPublished', onTrackPublished);
-
-    // Limpieza
-    return () => {
-      participant.off('trackSubscribed', onTrackSubscribed);
-      participant.off('trackUnsubscribed', onTrackUnsubscribed);
-      participant.off('trackPublished', onTrackPublished);
-      participant.tracks.forEach((pub) => pub.track && detachTrack(pub.track));
-    };
-  }, [participant]);
-
-  return (
-    <Box flex="1" minWidth="280px">
-      <h4 style={{ marginTop: 0 }}>{participant.identity || 'Remote'}</h4>
-      <div ref={holder} />
-    </Box>
-  );
-}
-
-
-
-function VideoPanel({ room, participants, onClose }) {
-  const localRef = useRef(null);
-
-  useEffect(() => {
-    if (!room) return;
-    const local = room.localParticipant;
-
-    // Adjunta medios locales actuales
-    local.tracks.forEach((pub) => {
-      const track = pub.track;
-      if (!track || !localRef.current) return;
-      // evita duplicados
-      if (localRef.current.querySelector(`[data-name="${track.name}"]`)) return;
-      const el = track.attach();
-      el.dataset.name = track.name;
-      localRef.current.appendChild(el);
-    });
-
-    return () => {
-      try {
-        local.tracks.forEach((pub) =>
-          pub.track?.detach()?.forEach((el) => el.remove())
-        );
-      } catch {}
-    };
-  }, [room]);
-
-  return (
-    <Box
-      borderStyle="solid"
-      borderColor="colorBorderWeaker"
-      borderWidth="borderWidth10"
-      borderRadius="borderRadius30"
-      padding="space60"
-    >
-      <Box display="flex" columnGap="space60" style={{ flexWrap: 'wrap' }}>
-        <Box flex="1" minWidth="280px">
-          <h4 style={{ marginTop: 0 }}>You</h4>
-          <div ref={localRef} />
-        </Box>
-        {participants.map((p) => (
-          <RemoteParticipant key={p.sid} participant={p} />
-        ))}
-      </Box>
-      <Box marginTop="space60">
-        <Button variant="destructive" onClick={onClose}>
-          Finalizar video
-        </Button>
-      </Box>
-    </Box>
-  );
-}
-
-/* ============================================================
- * ChatWidget
- * ============================================================ */
+/* ============ ChatWidget ============ */
 export default function ChatWidget({
   conversationIdOrUniqueName,
   onMessageAdded,
@@ -425,40 +298,48 @@ export default function ChatWidget({
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const identityRef = useRef();
-  const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef(null);
+  const logRef = useRef(null);
 
-  // Video state
+  // typing UI
+  const [isTyping, setIsTyping] = useState(false);
+
+  // video
   const [videoFeatureEnabled, setVideoFeatureEnabled] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
-  const [videoRoomName, setVideoRoomName] = useState('');
   const { room, participants, connecting, connect, disconnect } = useVideoRoom();
 
-  // Mantener refs para callbacks inestables (no usarlas como deps de efectos con listeners)
+  // scroll helpers
+  const [atBottom, _setAtBottom] = useState(true);
+  const atBottomRef = useRef(true);                 // <- fuente de verdad para autoseguimiento
+  const setAtBottom = (v) => { atBottomRef.current = v; _setAtBottom(v); };
+  const [pendingUnread, setPendingUnread] = useState(0);
+
+  // popup?
+  const isPopup =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('popup') === 'chat';
+
   const onMessageAddedRef = useRef(onMessageAdded);
   const onLabelRef = useRef(onLabel);
   useEffect(() => { onMessageAddedRef.current = onMessageAdded; }, [onMessageAdded]);
   useEffect(() => { onLabelRef.current = onLabel; }, [onLabel]);
 
-  // --- Token de Conversations (agente) ---
+  /* Token Conversations */
   const fetchToken = async () => {
     const url = identityRef.current
       ? `${API_BASE}/chat/refresh?identity=${encodeURIComponent(identityRef.current)}`
       : `${API_BASE}/chat/token`;
     const r = await fetch(url, { credentials: 'include' });
-    if (!r.ok) {
-      const txt = await r.text().catch(() => '');
-      throw new Error(`chat token failed: ${r.status} ${txt}`);
-    }
+    if (!r.ok) throw new Error(`chat token failed: ${r.status}`);
     const data = await r.json();
     if (data.identity) identityRef.current = data.identity;
     return data.token;
   };
 
-  // Bootstrap SDK (un cliente por widget) y resolver conversación (con retry si aún no estamos unidos)
+  /* Bootstrap */
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
         const token = await fetchToken();
@@ -466,55 +347,22 @@ export default function ChatWidget({
         clientRef.current = c;
 
         const refresh = async () => {
-          try {
-            const newToken = await fetchToken();
-            await c.updateToken(newToken);
-          } catch (e) {
-            console.error('[ChatWidget] token refresh error', e);
-          }
+          try { await c.updateToken(await fetchToken()); } catch (e) { console.error('[ChatWidget] token refresh', e); }
         };
         c.on('tokenAboutToExpire', refresh);
         c.on('tokenExpired', refresh);
 
-        if (cancelled) {
-          try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}
-          return;
-        }
+        if (cancelled) { try { c.removeAllListeners?.(); c.shutdown?.(); } catch {}; return; }
         setClient(c);
 
-        // Resolver conversación por SID o uniqueName (reintenta si aún no somos participantes)
-        const maxTries = 6;
-        const delayMs = 1200;
-        let attempt = 0;
         let convo = null;
-
-        while (!cancelled && attempt < maxTries) {
-          try {
-            try {
-              convo = await c.getConversationBySid(conversationIdOrUniqueName);
-            } catch {
-              convo = await c.getConversationByUniqueName(conversationIdOrUniqueName);
-            }
-            if (convo) break;
-          } catch (err) {
-            const msg = String(err?.message || '').toLowerCase();
-            const forbidden = msg.includes('forbidden') || msg.includes('401') || msg.includes('403');
-            if (!forbidden) {
-              console.error('Conversation lookup error', err);
-              break;
-            }
-            await new Promise((r) => setTimeout(r, delayMs));
-            attempt++;
-          }
+        const maxTries = 6, delayMs = 1200;
+        for (let i = 0; i < maxTries && !convo && !cancelled; i++) {
+          try { convo = await c.getConversationBySid(conversationIdOrUniqueName); }
+          catch { try { convo = await c.getConversationByUniqueName(conversationIdOrUniqueName); } catch {} }
+          if (!convo) await new Promise(r => setTimeout(r, delayMs));
         }
-
-        if (!cancelled) {
-          if (convo) {
-            setConversation(convo);
-          } else {
-            console.error('Conversation not found or not joined yet');
-          }
-        }
+        if (!cancelled) convo ? setConversation(convo) : console.error('Conversation not found or not joined yet');
       } catch (e) {
         console.error('[ChatWidget] init error', e);
       }
@@ -522,19 +370,15 @@ export default function ChatWidget({
 
     return () => {
       cancelled = true;
-      const old = clientRef.current;
-      clientRef.current = null;
+      const old = clientRef.current; clientRef.current = null;
       try { old?.removeAllListeners?.(); old?.shutdown?.(); } catch {}
     };
-    // Solo cuando cambia la conversación objetivo (no dependas de onMessageAdded/onLabel)
   }, [conversationIdOrUniqueName]);
 
-  // Resetear mensajes al cambiar de conversación objetivo (evita reciclar estado)
-  useEffect(() => {
-    setMessages([]);
-  }, [conversationIdOrUniqueName]);
+  // Reset list when target changes
+  useEffect(() => { setMessages([]); setPendingUnread(0); }, [conversationIdOrUniqueName]);
 
-  // Cargar historial + suscribirse a nuevos mensajes (1 solo listener por conversación)
+  // Load history + subscribe to updates (handler estable: usa atBottomRef)
   useEffect(() => {
     if (!conversation) return;
     let cancelled = false;
@@ -543,58 +387,53 @@ export default function ChatWidget({
       try {
         const page = await conversation.getMessages();
         if (!cancelled) setMessages(page.items);
-      } catch (e) {
-        console.error('getMessages error', e);
-      }
+        requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }));
+      } catch (e) { console.error('getMessages error', e); }
     })();
 
     const handler = (m) => {
+      const wasAtBottom = atBottomRef.current; // snapshot estable
       setMessages((prev) => [...prev, m]);
-      // notificar al panel con la ref (para no recrear listeners)
+
+      const inbound = m.author !== identityRef.current && !isSystem(m);
+      if (inbound && !wasAtBottom) setPendingUnread((x) => x + 1);
+
+      if (wasAtBottom) {
+        // solo seguimos si el usuario ya estaba abajo
+        requestAnimationFrame(() =>
+          bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+        );
+      }
+
       if (m.author !== identityRef.current) {
         try { onMessageAddedRef.current?.(conversation.sid, m); } catch {}
       }
     };
+
     conversation.on('messageAdded', handler);
+    return () => { cancelled = true; try { conversation.off('messageAdded', handler); } catch {} };
+  }, [conversation]); // <- NO dependemos de atBottom
 
-    return () => {
-      cancelled = true;
-      try { conversation.off('messageAdded', handler); } catch {}
-    };
-  }, [conversation]);
-
-  // Typing indicators (listeners sobre el client, limpios al cambiar client/conversation)
+  /* Typing UI */
   useEffect(() => {
     if (!client || !conversation) return;
-
-    const handleStart = ({ conversationSid }) => {
-      if (conversationSid === conversation.sid) setIsTyping(true);
-    };
-    const handleEnd = ({ conversationSid }) => {
-      if (conversationSid === conversation.sid) setIsTyping(false);
-    };
-
-    client.on('typingStarted', handleStart);
-    client.on('typingEnded', handleEnd);
-
-    return () => {
-      client.off('typingStarted', handleStart);
-      client.off('typingEnded', handleEnd);
-    };
+    const start = ({ conversationSid }) => { if (conversationSid === conversation.sid) setIsTyping(true); };
+    const end   = ({ conversationSid }) => { if (conversationSid === conversation.sid) setIsTyping(false); };
+    client.on('typingStarted', start);
+    client.on('typingEnded', end);
+    return () => { client.off('typingStarted', start); client.off('typingEnded', end); };
   }, [client, conversation]);
 
-  // Marcar leído al activar tab / focus
+  /* Mark read on focus / active */
   useEffect(() => {
     if (!conversation) return;
     const markRead = async () => {
       try {
-        // Evita 403 si aún no eres participante:
         const me = await conversation.getParticipantByIdentity?.(identityRef.current).catch(() => null);
         if (!me) return;
         await conversation.setAllMessagesRead();
-      } catch (e) {
-        console.warn('[ChatWidget] markRead skipped:', e?.message || e);
-      }
+        setPendingUnread(0);
+      } catch {}
     };
     if (isActive) markRead();
     const onFocus = () => { if (isActive) markRead(); };
@@ -602,53 +441,62 @@ export default function ChatWidget({
     return () => window.removeEventListener('focus', onFocus);
   }, [conversation, isActive]);
 
-  // Calcular y propagar "label" sin bucles de render
-  const lastLabelRef = useRef('');
+  /* Derive label for tabs once */
   useEffect(() => {
     if (!conversation) return;
     let mounted = true;
-
     (async () => {
       try {
-        const attrs =
-          typeof conversation.attributes === 'string'
-            ? (conversation.attributes ? JSON.parse(conversation.attributes) : {})
-            : (conversation.attributes || {});
-
+        const attrs = typeof conversation.attributes === 'string'
+          ? (conversation.attributes ? JSON.parse(conversation.attributes) : {})
+          : (conversation.attributes || {});
         let label = attrs.title || conversation.friendlyName || '';
-
         if (!label) {
           const participants = await conversation.getParticipants();
           label = participants
             .map((p) => {
-              const pa =
-                typeof p.attributes === 'string'
-                  ? (p.attributes ? JSON.parse(p.attributes) : {})
-                  : (p.attributes || {});
+              const pa = typeof p.attributes === 'string' ? (p.attributes ? JSON.parse(p.attributes) : {}) : (p.attributes || {});
               return pa.friendlyName || p.identity;
             })
             .filter(Boolean)
             .join(', ');
         }
-
-        if (mounted && label && label !== lastLabelRef.current) {
-          lastLabelRef.current = label;
-          try { onLabelRef.current?.(label); } catch {}
-        }
-      } catch (e) {
-        console.error('conversation info error', e);
-      }
+        if (mounted && label) onLabelRef.current?.(label);
+      } catch (e) { console.error('conversation info error', e); }
     })();
-
     return () => { mounted = false; };
   }, [conversation]);
 
-  // Autoscroll al final
+  /* Detectar “en el fondo” de manera robusta (IntersectionObserver) */
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const root = logRef.current;
+    const sentinel = bottomRef.current;
+    if (!root || !sentinel) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const vis = !!entries[0]?.isIntersecting;
+        setAtBottom(vis);
+      },
+      { root, threshold: 1.0 }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, []);
 
-  // Habilitar/flag de video (cliente + servidor)
+  /* Además, escucha el scroll para limpiar el contador si vuelves al fondo */
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+      setAtBottom(nearBottom);
+      if (nearBottom && pendingUnread) setPendingUnread(0);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [pendingUnread]);
+
+  /* Video flag */
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -658,187 +506,299 @@ export default function ChatWidget({
         const data = await r.json().catch(() => ({}));
         if (!mounted) return;
         setVideoFeatureEnabled(!!data.enabled);
-      } catch {
-        if (mounted) setVideoFeatureEnabled(false);
-      }
+      } catch { if (mounted) setVideoFeatureEnabled(false); }
     })();
     return () => { mounted = false; };
   }, []);
 
   const send = async () => {
-    if (!conversation || !text.trim()) return;
-    await conversation.sendMessage(text.trim());
+    const val = text.trim();
+    if (!conversation || !val) return;
+    await conversation.sendMessage(val);
     setText('');
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }));
   };
 
-  // --- Video actions ---
-  // --- Video actions ---
+  /* Video actions */
   const startVideo = async () => {
     try {
       if (!conversation) return;
-
-      // 0) Asegura que tenemos identidad del agente
-      if (!identityRef.current) {
-        // refresca token de chat para rellenar identityRef.current
-        await fetchToken().catch(() => {});
-      }
-
-      // 1) Asegura sala por conversación
-      const r = await fetch(`${API_BASE}/video/ensure-room`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      if (!identityRef.current) await fetchToken().catch(() => {});
+      const ensure = await fetch(`${API_BASE}/video/ensure-room`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationSid: conversation.sid }),
       });
-      if (!r.ok) {
-        const t = await r.text().catch(() => '');
-        throw new Error(`ensure-room failed: ${r.status} ${t}`);
-      }
-      const data = await r.json();
-      const rn = data.roomName;
-      setVideoRoomName(rn);
+      if (!ensure.ok) throw new Error(`ensure-room failed: ${ensure.status}`);
+      const { roomName } = await ensure.json();
 
-      // 2) Asegura que el AGENTE es participante de la Conversation (idempotente)
       try {
         const joinRes = await fetch(`${API_BASE}/conversations/${conversation.sid}/participants`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({
-            type: 'chat',
-            identity: identityRef.current, // e.g. "agent:42" (sin "client:")
-            attributes: { role: 'agent' },
-          }),
+          body: JSON.stringify({ type: 'chat', identity: identityRef.current, attributes: { role: 'agent' } }),
         });
         if (!joinRes.ok && joinRes.status !== 409) {
           const err = await joinRes.json().catch(() => ({}));
-          // 50433 = Already in Conversation
-          if (err?.error?.code !== 50433) {
-            throw new Error(`join failed: ${joinRes.status} ${JSON.stringify(err)}`);
-          }
+          if (err?.error?.code !== 50433) throw new Error('join failed');
         }
-      } catch (e) {
-        // no bloqueante: si ya estábamos unidos o hay carreras, seguimos
-        console.warn('[video] ensure agent participant skipped:', e?.message || e);
-      }
+      } catch {}
 
-      // 3) Token de agente (requireAuth cookie) — ahora sí debe pasar assertParticipant
-      const tokRes = await fetch(
-        `${API_BASE}/video/token?roomName=${encodeURIComponent(rn)}`,
-        { credentials: 'include' }
-      );
-      if (!tokRes.ok) {
-        const t = await tokRes.text().catch(() => '');
-        throw new Error(`video token failed: ${tokRes.status} ${t}`);
-      }
+      const tokRes = await fetch(`${API_BASE}/video/token?roomName=${encodeURIComponent(roomName)}`, { credentials: 'include' });
+      if (!tokRes.ok) throw new Error(`video token failed: ${tokRes.status}`);
       const { token } = await tokRes.json();
 
-      // 4) Conectar
-      await connect({ token, roomName: rn });
+      await connect({ token, roomName });
       setVideoOpen(true);
-
-      // 5) Mensaje de sistema (no bloqueante)
       try { await conversation.sendMessage('[system] Video call started'); } catch {}
     } catch (e) {
       console.error('startVideo failed', e);
-      alert('No se pudo iniciar la videollamada.');
+      alert('Could not start the video call.');
     }
   };
 
-
   const endVideo = async () => {
-    try {
-      await disconnect();
-    } finally {
+    try { await disconnect(); } finally {
       setVideoOpen(false);
-      setVideoRoomName('');
       try { await conversation?.sendMessage('[system] Video call ended'); } catch {}
     }
   };
 
+  /* Grouping bonito: por día y por autor */
+  const pretty = useMemo(() => {
+    const out = []; let prev = null;
+    for (const m of messages) {
+      const ts = m.dateCreated || m.dateUpdated || Date.now();
+      if (!prev || !sameDay(prev?.ts, ts)) out.push({ kind: 'day', ts });
+      const author = m.author || 'system';
+      const startGroup = !prev || prev.author !== author || Math.abs(ts - prev.ts) > 2 * 60 * 1000;
+      out.push({ kind: 'msg', startGroup, m, ts, author });
+      prev = { ts, author };
+    }
+    return out;
+  }, [messages]);
+
+  /* Shell */
+  const rootClass = [styles.container, isPopup ? styles.fullscreen : ''].join(' ').trim();
+
   return (
-    <Box
-      className={styles.container}
-      borderStyle="solid"
-      borderColor="colorBorderWeaker"
-      borderWidth="borderWidth10"
-      borderRadius="borderRadius30"
-      padding="space60"
-    >
-      <Heading as="h3" variant="heading30" marginBottom="space50">
-        Support Chat
-      </Heading>
-
-      {/* Panel de Video (visible cuando está activo) */}
-      {videoFeatureEnabled && videoOpen && (
-        <Box marginBottom="space60">
-          <VideoPanel room={room} participants={participants} onClose={endVideo} />
-        </Box>
-      )}
-
-      {/* Chat log */}
-      <Box
-        className={styles.log}
-        overflowY="auto"
-        backgroundColor="colorBackground"
-        padding="space50"
-        borderRadius="borderRadius20"
-        marginBottom="space50"
-      >
-        <ChatLog>
-          {messages.map((m) => (
-            <ChatMessage
-              key={m.sid}
-              variant={m.author === identityRef.current ? 'outbound' : 'inbound'}
-            >
-              <ChatBubble>
-                <Text as="p">{m.body}</Text>
-              </ChatBubble>
-              <ChatMessageMeta>
-                <ChatMessageMetaItem>
-                  <Text as="span" color="colorTextWeak" fontSize="fontSize20">
-                    {m.author || 'system'}
-                  </Text>
-                </ChatMessageMetaItem>
-              </ChatMessageMeta>
-            </ChatMessage>
-          ))}
-          <Box ref={bottomRef} />
-        </ChatLog>
-      </Box>
-
-      {isTyping && (
-        <Text as="p" color="colorTextWeak" fontSize="fontSize20" marginBottom="space50">
-          Typing...
-        </Text>
-      )}
-
-      {/* Composer + acciones */}
-      <Box display="flex" columnGap="space50">
-        <Box flexGrow={1}>
-          <Input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Escribe..."
-          />
-        </Box>
-
-        <Button variant="primary" onClick={send}>
-          Enviar
-        </Button>
-
-        {videoFeatureEnabled && (
-          <Button
-            variant={videoOpen ? 'secondary' : 'primary'}
-            onClick={videoOpen ? endVideo : startVideo}
-            disabled={!conversation || connecting}
-            title={videoOpen ? 'Finalizar videollamada' : 'Iniciar videollamada'}
-          >
-            {/* Ícono mínimo garantizado */}
-            <span aria-hidden="true" style={{ marginRight: 6 }}>🎥</span>
-            {videoOpen ? 'Colgar' : 'Video'}
-          </Button>
+    <Box className={rootClass}>
+      <Box className={styles.card}>
+        {/* Título solo en popup */}
+        {isPopup && (
+          <Heading as="h3" variant="heading30" marginBottom="space50">
+            Support Chat
+          </Heading>
         )}
+
+        <Box className={styles.body}>
+          {/* VIDEO (opcional) */}
+          {videoFeatureEnabled && videoOpen && (
+            <Box className={`${styles.videoWrap} ${styles.videoClamp}`}>
+              <Box className={styles.videoGrid}>
+                <VideoLocalAndRemotes room={room} participants={participants} />
+              </Box>
+              <Box marginTop="space60">
+                <Button variant="destructive" onClick={endVideo}>End video</Button>
+              </Box>
+            </Box>
+          )}
+
+          {/* CHAT LOG con scroll interno */}
+          <Box ref={logRef} className={styles.log}>
+            {!atBottom && <div className={styles.fadeTop} />}
+            <div className={styles.fadeBottom} />
+
+            <ChatLog>
+              {pretty.map((it, idx) => {
+                if (it.kind === 'day') {
+                  const d = new Date(it.ts);
+                  const label = d.toLocaleDateString(undefined, {
+                    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+                  });
+                  return (
+                    <Box
+                      key={`day-${idx}`}
+                      marginY="space50"
+                      display="grid"
+                      gridTemplateColumns="1fr auto 1fr"
+                      alignItems="center"
+                      columnGap="space50"
+                    >
+                      <Separator orientation="horizontal" />
+                      <span className={styles.dayChip}>{label}</span>
+                      <Separator orientation="horizontal" />
+                    </Box>
+                  );
+                }
+
+                const m = it.m;
+                const outbound = m.author === identityRef.current;
+                const system = isSystem(m);
+
+                if (system) {
+                  return (
+                    <Box key={m.sid || `${m.index}-sys`} marginBottom="space30">
+                      <span className={styles.system}>
+                        {m.body?.replace(/^\[system]\s*/i, '') || 'system'}
+                      </span>
+                    </Box>
+                  );
+                }
+
+                return (
+                  <ChatMessage key={m.sid || m.index} variant={outbound ? 'outbound' : 'inbound'}>
+                    <ChatBubble className={styles.bubble}>
+                      <Text as="p">{m.body}</Text>
+                    </ChatBubble>
+
+                    {it.startGroup && (
+                      <ChatMessageMeta>
+                        <ChatMessageMetaItem>
+                          <Text as="span" color="colorTextWeak" fontSize="fontSize20">
+                            {m.author || 'user'}
+                          </Text>
+                        </ChatMessageMetaItem>
+                        <ChatMessageMetaItem>
+                          <Text as="span" color="colorTextWeaker" fontSize="fontSize20">
+                            {timeFmt(m.dateCreated || Date.now())}
+                          </Text>
+                        </ChatMessageMetaItem>
+                      </ChatMessageMeta>
+                    )}
+                  </ChatMessage>
+                );
+              })}
+              <Box ref={bottomRef} />
+            </ChatLog>
+
+            {/* Botón flotante para volver al final */}
+            {!atBottom && (
+              <button
+                className={styles.jump}
+                onClick={() => {
+                  bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  setPendingUnread(0);
+                }}
+                type="button"
+                aria-label="Jump to latest"
+                title="Jump to latest"
+              >
+                ↓ New messages
+                {pendingUnread > 0 && <span className={styles.jumpCount}>{pendingUnread}</span>}
+              </button>
+            )}
+          </Box>
+
+          {/* Typing */}
+          {isTyping && (
+            <Text as="p" color="colorTextWeak" fontSize="fontSize20">
+              Typing…
+            </Text>
+          )}
+
+          {/* COMPOSER (sticky) */}
+          <Box className={styles.composerRow}>
+            <Box flexGrow={1}>
+              <Input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+                }}
+                placeholder="Type a message…"
+                aria-label="Type a message"
+              />
+            </Box>
+
+            <Button variant="primary" onClick={send}>Send</Button>
+
+            {videoFeatureEnabled && (
+              <Button
+                variant={videoOpen ? 'secondary' : 'primary'}
+                onClick={videoOpen ? endVideo : startVideo}
+                disabled={!conversation || connecting}
+                title={videoOpen ? 'End video call' : 'Start video call'}
+              >
+                <span aria-hidden="true" style={{ marginRight: 6 }}>🎥</span>
+                {videoOpen ? 'Hang up' : 'Video'}
+              </Button>
+            )}
+          </Box>
+        </Box>
       </Box>
+    </Box>
+  );
+}
+
+/* Local + Remotos (video) */
+function VideoLocalAndRemotes({ room, participants }) {
+  const localRef = useRef(null);
+  useEffect(() => {
+    if (!room) return;
+    const local = room.localParticipant;
+    local.tracks.forEach((pub) => {
+      const track = pub.track;
+      if (!track || !localRef.current) return;
+      if (localRef.current.querySelector(`[data-track-sid="${track.sid}"]`)) return;
+      const el = track.attach();
+      el.dataset.trackSid = track.sid;
+      localRef.current.appendChild(el);
+    });
+    return () => {
+      try { local.tracks.forEach((pub) => pub.track?.detach()?.forEach((el) => el.remove())); } catch {}
+    };
+  }, [room]);
+
+  return (
+    <>
+      <Box className={`${styles.videoLocal} ${styles.videoSurface}`}>
+        <h4 style={{ marginTop: 0 }}>You</h4>
+        <div ref={localRef} />
+      </Box>
+      {participants.map((p) => (
+        <RemoteParticipant key={p.sid} participant={p} />
+      ))}
+    </>
+  );
+}
+
+function RemoteParticipant({ participant }) {
+  const holder = useRef(null);
+  useEffect(() => {
+    if (!participant) return;
+    const attachTrack = (track) => {
+      if (!track || !holder.current) return;
+      if (holder.current.querySelector(`[data-track-sid="${track.sid}"]`)) return;
+      const el = track.attach();
+      el.dataset.trackSid = track.sid;
+      holder.current.appendChild(el);
+    };
+    const detachTrack = (track) => { try { track?.detach()?.forEach((el) => el.remove()); } catch {} };
+    participant.tracks.forEach((pub) => {
+      if (pub.track) attachTrack(pub.track);
+      pub.on?.('subscribed', attachTrack);
+      pub.on?.('unsubscribed', detachTrack);
+    });
+    const onTrackSubscribed = (track) => attachTrack(track);
+    const onTrackUnsubscribed = (track) => detachTrack(track);
+    participant.on('trackSubscribed', onTrackSubscribed);
+    participant.on('trackUnsubscribed', onTrackUnsubscribed);
+    return () => {
+      participant.off('trackSubscribed', onTrackSubscribed);
+      participant.off('trackUnsubscribed', onTrackUnsubscribed);
+      participant.tracks.forEach((pub) => {
+        pub.off?.('subscribed', attachTrack);
+        pub.off?.('unsubscribed', detachTrack);
+        detachTrack(pub.track);
+      });
+    };
+  }, [participant]);
+
+  return (
+    <Box className={`${styles.videoRemote} ${styles.videoSurface}`}>
+      <h4 style={{ marginTop: 0 }}>{participant.identity || 'Remote'}</h4>
+      <div ref={holder} />
     </Box>
   );
 }
@@ -846,15 +806,109 @@ export default function ChatWidget({
 ==== /src\chat\ChatWidget.jsx ====
 
 ==== src\chat\ChatWidget.module.css ====
-.container {
-  width: 100%;
-  max-width: 520px;
-  margin: 0 auto;
+/* src/chat/ChatWidget.module.css */
+:root{ --g: var(--paste-space-60); }
+
+/* Contenedor raíz */
+.container{
+  display:flex; flex-direction:column; width:100%; height:100%; min-height:0; overflow-x:hidden;
 }
 
-.log {
-  height: 50vh;
-  min-height: 260px;
+/* Fullscreen para popup */
+.fullscreen{
+  height:100svh; /* navegadores modernos */
+  height:100vh;  /* fallback */
+  padding: var(--paste-space-70);
+}
+
+/* Shell con card (popup y también sirve embebido si lo prefieres) */
+.card{
+  background: var(--paste-color-background);
+  border-radius: var(--paste-border-radius-30);
+  box-shadow: var(--paste-shadow);
+  padding: var(--paste-space-70);
+  display:flex; flex-direction:column;
+  height:100%; min-height:0;
+}
+
+/* Body */
+.body{ display:flex; flex-direction:column; gap: var(--g); min-height:0; flex:1; }
+
+/* -------- Video -------- */
+.videoWrap{
+  border:1px solid var(--paste-color-border-weaker);
+  border-radius: var(--paste-border-radius-30);
+  padding: var(--paste-space-60);
+  overflow:hidden;
+  background: var(--paste-color-background-body);
+}
+.videoClamp{ height: clamp(240px, 40vh, 420px); display:flex; flex-direction:column; }
+.videoGrid{ display:grid; grid-template-columns: 1fr; gap: var(--paste-space-60); min-height:0; flex:1; }
+@media (min-width: 960px){ .videoGrid{ grid-template-columns: 1fr 1fr; } }
+.videoLocal, .videoRemote{ min-width:0; }
+.videoSurface video, .videoSurface audio{ max-width:100%; width:100%; height:auto; display:block; border-radius:12px; }
+
+/* -------- Chat log (SCROLL INTERNO) -------- */
+.log{
+  position: relative;
+  flex:1; min-height:0; overflow:auto;
+  background: var(--paste-color-background);
+  border-radius: var(--paste-border-radius-20);
+  padding: var(--paste-space-50);
+  overflow-anchor: none;        /* evita auto-ancoras del navegador */
+  overscroll-behavior: contain; /* no propaga el scroll al padre */
+  /* Ojo: NO usamos scroll-behavior:smooth global para evitar “saltos” */
+}
+
+/* Fades */
+.fadeTop, .fadeBottom{ position:absolute; left:0; right:0; height:24px; pointer-events:none; }
+.fadeTop{ top:0; background: linear-gradient(180deg, rgba(0,0,0,.10), transparent); border-top-left-radius: var(--paste-border-radius-20); border-top-right-radius: var(--paste-border-radius-20); }
+.fadeBottom{ bottom:0; background: linear-gradient(0deg, rgba(0,0,0,.10), transparent); border-bottom-left-radius: var(--paste-border-radius-20); border-bottom-right-radius: var(--paste-border-radius-20); }
+
+/* Día */
+.dayChip{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 12px; border-radius:999px;
+  background: var(--paste-color-background-body);
+  border:1px solid var(--paste-color-border-weaker);
+  color: var(--paste-color-text-weak);
+  font-size: 12px; font-weight: 600;
+}
+
+/* Burbujas más legibles */
+.bubble{ max-width: min(68ch, 92%); word-break: break-word; }
+
+/* Mensajes de sistema */
+.system{
+  background: var(--paste-color-background-body);
+  color: var(--paste-color-text-weak);
+  border: 1px dashed var(--paste-color-border-weak);
+  padding: 6px 10px; border-radius: 10px; font-size: 12px; display: inline-block;
+}
+
+/* Composer fijo */
+.composerRow{
+  display:flex; gap: var(--paste-space-50); align-items:center;
+  position: sticky; bottom: 0;
+  padding-top: var(--paste-space-30);
+  background: var(--paste-color-background);
+}
+
+/* Botón “jump to latest” */
+.jump{
+  position:absolute; right: var(--paste-space-70);
+  bottom: calc(var(--paste-space-70) + 56px);
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 14px; border-radius:999px;
+  background: var(--paste-color-background-body);
+  border:1px solid var(--paste-color-border-weaker);
+  box-shadow: var(--paste-shadow);
+  cursor:pointer; user-select:none;
+}
+.jumpCount{
+  display:inline-grid; place-items:center;
+  width:20px; height:20px; border-radius:999px; font-size:12px;
+  background: var(--paste-color-background-inverse); color: var(--paste-color-text-inverse);
 }
 
 ==== /src\chat\ChatWidget.module.css ====
@@ -1655,6 +1709,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
 ==== /src\features\softphone\components\Softphone.module.css ====
 
 ==== src\features\softphone\components\SoftphoneLayout.jsx ====
+/* src/features/softphone/components/SoftphoneLayout.jsx */
 import { Box } from '@twilio-paste/core/box';
 import styles from './Softphone.module.css';
 
@@ -1667,7 +1722,10 @@ export default function SoftphoneLayout({ children }) {
       padding="space70"
       className={styles.layout}
       minHeight="100vh"
+      height="100vh"
+      style={{ overflowX: 'hidden' }}
     >
+      {/* prevent any sideways scroll in popouts */}
       {children}
     </Box>
   );
@@ -5692,6 +5750,7 @@ export default function VideoPanel({ room, participants, onClose }) {
             try { local.tracks.forEach((pub) => pub.track?.detach()?.forEach((el) => el.remove())); } catch { }
         };
     }, [room]);
+
 
 
     return (

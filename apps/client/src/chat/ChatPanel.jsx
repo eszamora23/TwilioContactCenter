@@ -90,19 +90,23 @@ export default function ChatPanel({
       <TabPanels>
         {sessions.map((s) => (
           <TabPanel key={s.sid} id={s.sid}>
-            <ChatWidget
-              conversationIdOrUniqueName={s.sid}
-              isActive={activeTab === s.sid}
-              onMessageAdded={() =>
-                s.sid === activeTab
-                  ? onClearUnread?.(s.sid)
-                  : onIncrementUnread?.(s.sid)
-              }
-              onLabel={(label) => onLabel?.(s.sid, label)}
-            />
+            {/* NEW: wrapper con altura acotada y minHeight:0 para habilitar scroll interno */}
+            <Box height="clamp(420px, 65vh, 760px)" minHeight="0" display="flex">
+              <ChatWidget
+                conversationIdOrUniqueName={s.sid}
+                isActive={activeTab === s.sid}
+                onMessageAdded={() =>
+                  s.sid === activeTab
+                    ? onClearUnread?.(s.sid)
+                    : onIncrementUnread?.(s.sid)
+                }
+                onLabel={(label) => onLabel?.(s.sid, label)}
+              />
+            </Box>
           </TabPanel>
         ))}
       </TabPanels>
+
     </Tabs>
   );
 }
