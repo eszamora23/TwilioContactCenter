@@ -1,0 +1,90 @@
+/* ===== Base: reset mínimo, tipografía y variables ===== */
+
+:root {
+  --bg: #0b1324;
+  --bg-2: #0e182b;
+  --bg-grad-a: #1c2a44;
+  --bg-grad-b: #2b2244;
+  --card: rgba(255, 255, 255, 0.05);
+  --card-2: rgba(255, 255, 255, 0.07);
+  --stroke: rgba(255, 255, 255, 0.14);
+  --text: #eaf1fb;
+  --muted: #9fb2cc;
+  --accent: #4da3ff;
+  --accent-2: #9fd1ff;
+  --accent-ink: #0b1120;
+  --success: #37d39b;
+  --warning: #ffbf69;
+  --danger: #ff6b6b;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  --radius-xl: 22px;
+  --radius-lg: 16px;
+  --radius: 12px;
+  --glass: saturate(140%) blur(14px);
+  --focus: 0 0 0 3px rgba(77, 163, 255, .35);
+  --chip-bg: rgba(77, 163, 255, .14);
+  --chip-br: rgba(77, 163, 255, .35);
+  --spark: rgba(77, 163, 255, .38);
+
+  --topbar-h: 64px;
+  --bottombar-h: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  --fs-h1: clamp(26px, 3.2vw, 36px);
+  --fs-h2: clamp(20px, 2.4vw, 28px);
+  --fs-h3: clamp(17px, 2vw, 22px);
+  --fs-p: clamp(14px, 1.5vw, 16px);
+}
+
+body.light {
+  --bg: #f5f8ff;
+  --bg-2: #ffffff;
+  --bg-grad-a: #e7f1ff;
+  --bg-grad-b: #f6f9ff;
+  --card: rgba(6, 27, 54, 0.04);
+  --card-2: rgba(6, 27, 54, 0.06);
+  --stroke: rgba(6, 27, 54, 0.12);
+  --text: #0e1a2d;
+  --muted: #5b6b7f;
+  --accent: #2563eb;
+  --accent-2: #93c5fd;
+  --accent-ink: #061b36;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --shadow: 0 10px 30px rgba(2, 12, 31, .12);
+  --chip-bg: rgba(37, 99, 235, .08);
+  --chip-br: rgba(37, 99, 235, .28);
+  --spark: rgba(37, 99, 235, .32);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 800px at 12% -10%, var(--bg-grad-a) 0%, rgba(0, 0, 0, 0) 45%),
+    radial-gradient(800px 600px at 88% 8%, var(--bg-grad-b) 0%, rgba(0, 0, 0, 0) 40%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+  font-family: "Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  letter-spacing: .2px;
+  padding-top: calc(var(--topbar-h) + var(--safe-top));
+}
+
+body.light {
+  background:
+    radial-gradient(900px 600px at 10% -10%, var(--bg-grad-a) 0%, rgba(255, 255, 255, 0) 45%),
+    radial-gradient(600px 400px at 85% 6%, var(--bg-grad-b) 0%, rgba(255, 255, 255, 0) 35%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+}
+
+/* Tipografía básica */
+h2 { font-size: var(--fs-h2); margin: 0 0 8px 0; }
+h3 { font-size: var(--fs-h3); margin: 0 0 6px 0; }
+p, li, label { font-size: var(--fs-p); }

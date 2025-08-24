@@ -21,6 +21,9 @@ import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.ro
 import { configureServiceWebhooks } from './conversations/service.js';
 import { video as videoRoutes } from './routes/video.js';
 
+// 🚀 Nuevo: rutas de demo (llamadas de prueba Phone Lab)
+import demoRoutes from './routes/demo-routes.js';
+
 const app = express();
 validateEnv();
 app.set('trust proxy', true);
@@ -68,6 +71,12 @@ app.use('/api/conversations', conversationsRoute);
 app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);
 
+// --- Rutas DEMO (Phone Lab / softphone embebido) ---
+// El frontend llama a: POST ${API_BASE}/demo/call/start
+// Por eso montamos el router exactamente en /demo (sin /api).
+app.use('/demo', rateLimit({ windowMs: 15 * 60 * 1000, max: 15 }));
+app.use('/demo', demoRoutes);
+
 if (env.publicBaseUrl) {
   configureServiceWebhooks({
     preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`,
@@ -82,6 +91,7 @@ if (env.publicBaseUrl) {
     method: 'POST'
   }).catch(e => console.error('Failed to configure Conversations webhooks', e));
 }
+
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -96,4 +106,3 @@ const io = new Server(server, {
 app.set('io', io);
 
 server.listen(env.port, () => console.log(`server on :${env.port}`));
-

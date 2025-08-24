@@ -1286,11 +1286,18 @@ export const videoController = {
 ==== /src\controllers\video.js ====
 
 ==== src\controllers\voice.js ====
+// contact-center/server/src/controllers/voice.js
 import { buildOutboundTwiml } from '../services/voice.js';
 
+/**
+ * TwiML para salientes desde la TwiML App.
+ * Acepta To (destino) y callerId/ANI opcional para sobrescribir el callerId por defecto.
+ * (Twilio sólo acepta callerId si es un número Twilio tuyo o un Verified Caller ID).
+ */
 export function outbound(req, res) {
   const to = (req.body.To || '').trim();
-  const twiml = buildOutboundTwiml(to);
+  const callerId = (req.body.callerId || req.body.ANI || '').trim(); // llega desde Device.connect params
+  const twiml = buildOutboundTwiml(to, callerId);
   return res.type('text/xml').status(200).send(twiml);
 }
 
@@ -1851,6 +1858,9 @@ import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.ro
 import { configureServiceWebhooks } from './conversations/service.js';
 import { video as videoRoutes } from './routes/video.js';
 
+// 🚀 Nuevo: rutas de demo (llamadas de prueba Phone Lab)
+import demoRoutes from './routes/demo-routes.js';
+
 const app = express();
 validateEnv();
 app.set('trust proxy', true);
@@ -1898,6 +1908,12 @@ app.use('/api/conversations', conversationsRoute);
 app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);
 
+// --- Rutas DEMO (Phone Lab / softphone embebido) ---
+// El frontend llama a: POST ${API_BASE}/demo/call/start
+// Por eso montamos el router exactamente en /demo (sin /api).
+app.use('/demo', rateLimit({ windowMs: 15 * 60 * 1000, max: 15 }));
+app.use('/demo', demoRoutes);
+
 if (env.publicBaseUrl) {
   configureServiceWebhooks({
     preWebhookUrl: `${env.publicBaseUrl}/webhooks/conversations/pre`,
@@ -1912,6 +1928,7 @@ if (env.publicBaseUrl) {
     method: 'POST'
   }).catch(e => console.error('Failed to configure Conversations webhooks', e));
 }
+
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -1926,7 +1943,6 @@ const io = new Server(server, {
 app.set('io', io);
 
 server.listen(env.port, () => console.log(`server on :${env.port}`));
-
 
 ==== /src\index.js ====
 
@@ -2800,6 +2816,104 @@ crmProxy.post('/crm/interactions', postInteraction);
 
 ==== /src\routes\crm.js ====
 
+==== src\routes\demo-routes.js ====
+// server/demo-routes.js
+import express from 'express';
+import twilio from 'twilio';
+import { serverEnv as env } from 'shared/env';
+import { buildVoiceToken } from '../twilio.js';
+
+const router = express.Router();
+
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN
+} = process.env;
+
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+// Único destino permitido por ahora (IVR del demo)
+const ALLOWED_TO = new Set(['+12058275832']);
+
+/**
+ * ✅ Token de Voice (público para el demo)
+ * Requiere en el .env:
+ *  - TWILIO_ACCOUNT_SID
+ *  - TWILIO_API_KEY_SID
+ *  - TWILIO_API_KEY_SECRET
+ *  - TWIML_APP_SID          (muy importante para salientes)
+ *
+ * Nota: buildVoiceToken añade VoiceGrant con outgoingApplicationSid=TWIML_APP_SID.
+ */
+router.get('/token/voice', (req, res) => {
+  try {
+    const identity = String(req.query.identity || 'softphone:alex').trim();
+
+    const missing = [];
+    if (!env.accountSid) missing.push('TWILIO_ACCOUNT_SID');
+    if (!env.apiKey)     missing.push('TWILIO_API_KEY_SID');
+    if (!env.apiSecret)  missing.push('TWILIO_API_KEY_SECRET');
+    if (!env.twimlAppSid) missing.push('TWIML_APP_SID'); // necesario para device.connect() → /api/voice/outbound
+
+    if (missing.length) {
+      return res.status(500).json({
+        error: 'missing env',
+        missing
+      });
+    }
+
+    const token = buildVoiceToken(identity);
+    return res.json({ token, identity });
+  } catch (e) {
+    console.error('[demo/token/voice] error', e);
+    return res.status(500).json({ error: e?.message || 'token failed' });
+  }
+});
+
+/**
+ * ☎️ Fallback REST: inicia llamada desde el servidor (sin WebRTC en el browser).
+ * Queda para demo; el UI usa WebRTC primero y cae aquí si falla la inicialización.
+ */
+router.post('/call/start', async (req, res) => {
+  try {
+    const { to, from, dtmf } = req.body || {};
+
+    if (!to || !from) return res.status(400).json({ error: 'Missing to/from' });
+    if (!ALLOWED_TO.has(to)) return res.status(400).json({ error: 'TO not allowed for demo' });
+
+    // "1-2-1" → "1w2w1" (w = 0.5s)
+    const digits = String(dtmf || '')
+      .trim()
+      .replace(/[^\d\-w]/g, '')
+      .replace(/-+/g, 'w');
+
+    const vr = new twilio.twiml.VoiceResponse();
+    if (digits) {
+      vr.pause({ length: 1 });
+      vr.play({ digits });
+    }
+    // Mantener “viva” la llamada hasta 10 min para navegar el IVR si hiciera falta:
+    vr.pause({ length: 600 });
+
+    const call = await client.calls.create({
+      to,
+      from,
+      twiml: vr.toString(),
+      // statusCallback: `${env.publicBaseUrl}/demo/call/status`,
+      // statusCallbackEvent: ['initiated','ringing','answered','completed'],
+    });
+
+    return res.json({ ok: true, sid: call.sid });
+  } catch (err) {
+    console.error('[demo/call/start] error', err);
+    return res.status(500).json({ error: err.message || 'call failed' });
+  }
+});
+
+export default router;
+
+==== /src\routes\demo-routes.js ====
+
 ==== src\routes\health.js ====
 import { Router } from 'express';
 import { getHealth } from '../controllers/health.js';
@@ -3085,16 +3199,23 @@ export { env };
 ==== /src\services\transfer.js ====
 
 ==== src\services\voice.js ====
-﻿import Twilio from 'twilio';
+﻿// contact-center/server/src/services/voice.js
+import Twilio from 'twilio';
 import { serverEnv as env } from 'shared/env';
 
-export function buildOutboundTwiml(to) {
+/**
+ * Construye TwiML <Dial> hacia número o <Client>, permitiendo callerIdOverride.
+ * Si callerIdOverride no es válido, Twilio usará el callerId por defecto (env.callerId).
+ */
+export function buildOutboundTwiml(to, callerIdOverride) {
   const twiml = new Twilio.twiml.VoiceResponse();
   if (!to) {
     twiml.say('Missing destination.');
     return twiml.toString();
   }
-  const dial = twiml.dial({ callerId: env.callerId });
+
+  const dial = twiml.dial({ callerId: (callerIdOverride || env.callerId) });
+
   if (to.startsWith('client:')) {
     dial.client({}, to.replace('client:', ''));
   } else {
@@ -3102,7 +3223,6 @@ export function buildOutboundTwiml(to) {
   }
   return twiml.toString();
 }
-
 
 ==== /src\services\voice.js ====
 

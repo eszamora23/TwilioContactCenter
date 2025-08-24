@@ -1,0 +1,14 @@
+<div class="card" aria-label="How it works">
+  <div class="card-body">
+    <h3>How it works — under the hood</h3>
+    <ul class="small" style="margin:8px 0 0 18px; line-height:1.7">
+      <li><b>Conversations (chat):</b> guest tokens (<span class="mono">/api/chat/token/guest</span>),
+        per-conversation webhooks create a chat task automatically.</li>
+      <li><b>TaskRouter (routing):</b> assignment callback (<span class="mono">/api/taskrouter/assignment</span>) accepts chat or sets up voice conferences.</li>
+      <li><b>Voice & Softphone:</b> WebRTC device tokens (<span class="mono">/api/token/voice</span>);
+        hold/record/transfer endpoints control calls.</li>
+      <li><b>Video (optional):</b> <span class="mono">/api/video/ensure-room</span> + agent/guest tokens for a room tied to the chat.</li>
+      <li><b>CRM (demo):</b> the portal shows customer/vehicle/appointments/finance data and logs interactions.</li>
+    </ul>
+  </div>
+</div>

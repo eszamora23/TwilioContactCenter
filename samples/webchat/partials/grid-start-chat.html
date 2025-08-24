@@ -1,0 +1,68 @@
+<div class="card">
+  <div class="card-body">
+    <h2>Start a new chat</h2>
+    <p class="helper">This is the customer-side chat. Conversations are routed to agents via TaskRouter.</p>
+    <form id="start-form" aria-label="Start form">
+      <div class="split">
+        <div class="field">
+          <label class="label" for="name">Full name</label>
+          <input class="input" id="name" type="text" placeholder="e.g. Alex Johnson" required />
+        </div>
+        <div class="field">
+          <label class="label" for="email">Email (reuses a single thread per email)</label>
+          <input class="input" id="email" type="email" placeholder="you@company.com" required />
+        </div>
+      </div>
+      <div class="split">
+        <div class="field">
+          <label class="label" for="topic">Topic</label>
+          <select id="topic" aria-label="Topic">
+            <option value="support">Technical support</option>
+            <option value="billing">Billing</option>
+            <option value="sales">Sales</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="priority">Priority</label>
+          <select id="priority" aria-label="Priority">
+            <option>Standard</option>
+            <option>High</option>
+            <option>Urgent</option>
+          </select>
+        </div>
+      </div>
+      <div class="start-actions">
+        <button class="btn primary" type="submit">Start chat</button>
+        <span class="helper">By starting, you accept our <a href="#" style="color:var(--accent)">Terms</a>.</span>
+      </div>
+      <div class="callout small" style="margin-top:10px">
+        Video is optional and depends on backend feature flag <span class="mono">ENABLE_VIDEO=true</span>.
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h3>Demo flow (customer ↔ agent)</h3>
+    <ol class="small" style="margin:10px 0 0 18px; line-height:1.6">
+      <li>Start the <b>customer chat</b> here.</li>
+      <li>Open the <b>Agent Portal</b>, log in with the demo fields, and <i>receive</i> chats/calls.</li>
+      <li>Use <b>Phone Lab (IVR)</b> to pick a customer profile and place a simulated call to test IVR and routing.</li>
+    </ol>
+    <div class="kpis">
+      <div class="kpi">
+        <div class="label">Urgent SLA</div>
+        <div class="value">&lt; 60s</div>
+      </div>
+      <div class="kpi">
+        <div class="label">CSAT</div>
+        <div class="value">98.6%</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Avg. Time to Resolve</div>
+        <div class="value">7m 42s</div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,23 @@
+<div class="card">
+  <div class="card-body">
+    <h2>Service status</h2>
+    <div class="kpis" id="status-kpis">
+      <div class="kpi">
+        <div class="label">Backend</div>
+        <div class="value" id="kpi-health">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Agents online</div>
+        <div class="value" id="kpi-agents">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Video</div>
+        <div class="value" id="kpi-video">—</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px; flex-wrap:wrap">
+      <button class="btn" id="refresh-status" type="button">Refresh</button>
+      <span class="small">Checks <span class="mono">/api/health</span>, <span class="mono">/api/taskrouter/presence</span> and <span class="mono">/api/video/enabled</span>.</span>
+    </div>
+  </div>
+</div>

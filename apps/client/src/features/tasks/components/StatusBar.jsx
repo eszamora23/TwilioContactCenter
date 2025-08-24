@@ -1,4 +1,4 @@
-// contact-center/client/src/components/StatusBar.jsx
+// contact-center/client/src/features/tasks/components/StatusBar.jsx
 import { useEffect, useState } from 'react';
 import http from '../../../shared/services/http.js';
 import { useTranslation } from 'react-i18next';
@@ -22,7 +22,11 @@ export default function StatusBar({ label, onChange }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const isAvailable = String(label || '').toLowerCase().includes('available');
+  const txt = String(label || '').toLowerCase();
+  const variant =
+    txt.includes('available') ? 'success' :
+    txt.includes('offline')   ? 'error'   :
+                                'neutral';
 
   return (
     <Box
@@ -31,7 +35,7 @@ export default function StatusBar({ label, onChange }) {
       // --- Anti-solape: sticky bajo el header del shell ---
       style={{
         position: 'sticky',
-        top: 'var(--shell-header-h, 64px)', // ajustable desde el shell si cambias la altura del header
+        top: 'var(--shell-header-h, 64px)',
         zIndex: 2,
         backdropFilter: 'saturate(140%) blur(6px)',
       }}
@@ -40,11 +44,7 @@ export default function StatusBar({ label, onChange }) {
       borderBottomWidth="borderWidth10"
       borderBottomStyle="solid"
     >
-      <Box
-        paddingX="space70"
-        paddingY="space60"
-        backgroundColor="colorBackgroundBody"
-      >
+      <Box paddingX="space70" paddingY="space60" backgroundColor="colorBackgroundBody">
         <Stack
           orientation={['vertical', 'horizontal']}
           spacing="space60"
@@ -58,7 +58,7 @@ export default function StatusBar({ label, onChange }) {
             {loading ? (
               <SkeletonLoader />
             ) : (
-              <Badge as="span" variant={isAvailable ? 'success' : 'neutral'}>
+              <Badge as="span" variant={variant}>
                 {label || '—'}
               </Badge>
             )}
@@ -80,7 +80,6 @@ export default function StatusBar({ label, onChange }) {
                 defaultValue=""
                 size="default"
                 disabled={!acts.length}
-                // ancho consistente para que no “salte” el layout
                 style={{ minWidth: 220, maxWidth: 320 }}
               >
                 <Option value="" disabled>
