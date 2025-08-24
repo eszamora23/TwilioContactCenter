@@ -19,6 +19,7 @@ import conversationsRoute from './routes/conversations.route.js';
 import conversationsWebhooksRoute from './routes/conversations-webhooks.route.js';
 import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.route.js';
 import { configureServiceWebhooks } from './conversations/service.js';
+import { video as videoRoutes } from './routes/video.js';
 
 const app = express();
 validateEnv();
@@ -62,6 +63,7 @@ app.use('/api/ivr/finance', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }));
 app.use('/api', ivr);
 app.use('/api', crmProxy);
 app.use('/api/chat', chatTokenRoute);
+app.use('/api', videoRoutes);
 app.use('/api/conversations', conversationsRoute);
 app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);

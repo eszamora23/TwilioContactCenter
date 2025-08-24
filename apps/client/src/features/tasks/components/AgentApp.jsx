@@ -1,5 +1,6 @@
 // contact-center/client/src/features/tasks/components/AgentApp.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { io } from 'socket.io-client';
 
 import { Box } from '@twilio-paste/core/box';
@@ -37,6 +38,14 @@ const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
 
 export default function AgentApp() {
+  const queryClient = useQueryClient();
+
+  // invalida listas y el “current task” que usa Customer360
+  const invalidateTasks = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['myTasks'] });
+    queryClient.invalidateQueries({ queryKey: ['myTask'] });
+  }, [queryClient]);
+
   const { worker, activity, reservations, setAvailable } = useWorker();
   const toaster = useToaster();
 
@@ -168,7 +177,7 @@ export default function AgentApp() {
       o.start();
       g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
       o.stop(ctx.currentTime + 0.34);
-    } catch {}
+    } catch { }
   }, []);
 
   const notifyChatAssigned = useCallback((convoSid, label) => {
@@ -203,7 +212,7 @@ export default function AgentApp() {
           });
         }
       }
-    } catch {}
+    } catch { }
 
     playChime();
     setChatBadge((c) => c + 1);
@@ -235,14 +244,14 @@ export default function AgentApp() {
     } else {
       const storageHandler = (e) => {
         if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
-          try { onMsg({ data: JSON.parse(e.newValue) }); } catch {}
+          try { onMsg({ data: JSON.parse(e.newValue) }); } catch { }
         }
       };
       window.addEventListener('storage', storageHandler);
       channel = { close: () => window.removeEventListener('storage', storageHandler) };
     }
 
-    return () => { try { channel?.close?.(); } catch {} };
+    return () => { try { channel?.close?.(); } catch { } };
   }, [setSoftphonePopout, toaster]);
 
   /* --------------------------------
@@ -265,6 +274,8 @@ export default function AgentApp() {
           const label = a.customerName || a.from || a.name || sid;
           if (sid) await ensureChatSessionRef.current?.(sid, label);
         }
+        invalidateTasks();
+
       } catch (e) {
         console.warn('[worker reservation.created handler]', e);
       }
@@ -280,24 +291,39 @@ export default function AgentApp() {
           await ensureChatSessionRef.current?.(sid, label);
           notifyChatAssignedRef.current?.(sid, label);
         }
+        invalidateTasks();
       } catch (e) {
         console.warn('[worker reservation.accepted handler]', e);
       }
     };
 
     // Limpia posibles escuchas previas con mismas referencias
-    try { worker.off('reservation.created', onCreated); } catch {}
-    try { worker.off('reservation.accepted', onAccepted); } catch {}
+    try { worker.off('reservation.created', onCreated); } catch { }
+    try { worker.off('reservation.accepted', onAccepted); } catch { }
 
     worker.on('reservation.created', onCreated);
     worker.on('reservation.accepted', onAccepted);
 
     return () => {
-      try { worker.off('reservation.created', onCreated); } catch {}
-      try { worker.off('reservation.accepted', onAccepted); } catch {}
+      try { worker.off('reservation.created', onCreated); } catch { }
+      try { worker.off('reservation.accepted', onAccepted); } catch { }
     };
-  }, [worker]);
-
+  }, [worker, invalidateTasks]);
+  // Cualquier cambio de reserva que cambie el estado visible -> refetch
+  useEffect(() => {
+    if (!worker) return;
+    const refresh = () => invalidateTasks();
+    const evs = [
+      'reservation.rejected',
+      'reservation.timeout',
+      'reservation.canceled',
+      'reservation.completed',
+      // opcional: cuando cambie la actividad, a veces llegan tareas nuevas
+      'activity.update',
+    ];
+    evs.forEach((e) => { try { worker.on(e, refresh); } catch { } });
+    return () => evs.forEach((e) => { try { worker.off(e, refresh); } catch { } });
+  }, [worker, invalidateTasks]);
   // Safety-net polling to join sessions
   useEffect(() => {
     if (!worker) return;
@@ -321,7 +347,11 @@ export default function AgentApp() {
     const it = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(it); };
   }, [worker]);
-
+  useEffect(() => {
+    const onFocus = () => invalidateTasks();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [invalidateTasks]);
   // Realtime “task_created” (first inbound message) — dedupe por SID
   useEffect(() => {
     const socket = io(socketBase, {
@@ -338,6 +368,7 @@ export default function AgentApp() {
         if (processedTaskCreatedRef.current.has(conversationSid)) return;
         processedTaskCreatedRef.current.add(conversationSid);
         await ensureChatSessionRef.current?.(conversationSid);
+        invalidateTasks();
       } catch (e) {
         console.warn('[socket task_created handler]', e);
       }
@@ -361,7 +392,7 @@ export default function AgentApp() {
 
   const toggleSoftphonePopout = useCallback(() => {
     if (isSoftphonePopout) {
-      try { softphoneWinRef.current?.close(); } catch {}
+      try { softphoneWinRef.current?.close(); } catch { }
       softphoneWinRef.current = null;
       setSoftphonePopout(false);
     } else {
@@ -381,7 +412,7 @@ export default function AgentApp() {
   const logout = useCallback(async () => {
     await Api.logout();
     const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace with real Activity SID if needed
-    try { await setAvailable(offlineSid); } catch {}
+    try { await setAvailable(offlineSid); } catch { }
     window.location.reload();
   }, [setAvailable]);
 

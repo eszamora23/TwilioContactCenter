@@ -23,7 +23,8 @@
     "react-i18next": "^15.7.0",
     "react-idle-timer": "^5.7.2",
     "shared": "file:../../packages/shared",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "twilio-video": "^2.32.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

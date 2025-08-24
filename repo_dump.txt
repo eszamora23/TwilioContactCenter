@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "provision": "node ./scripts/provision.mjs"
+    "provision": "node ./scripts/provision.mjs",
+    "cleanup:conversations": "node ./scripts/cleanup-conversations.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -20,8 +21,139 @@
     "twilio": "^5.8.0"
   }
 }
-
 ==== /package.json ====
+
+==== scripts\cleanup-conversations.mjs ====
+// scripts/cleanup-conversations.mjs
+import 'dotenv/config';
+import Twilio from 'twilio';
+
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_CONVERSATIONS_SERVICE_SID,
+  TWILIO_REGION,
+  TWILIO_EDGE,
+} = process.env;
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_CONVERSATIONS_SERVICE_SID) {
+  console.error('Missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_CONVERSATIONS_SERVICE_SID');
+  process.exit(1);
+}
+
+const client = Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, {
+  autoRetry: true,
+  maxRetries: 3,
+  keepAlive: true,
+  region: TWILIO_REGION || undefined,
+  edge: TWILIO_EDGE || undefined,
+});
+
+const args = new Set(process.argv.slice(2));
+const DRY = args.has('--dry');      // solo listar
+const HARD = args.has('--hard');     // también remover participantes
+const DELETE = args.has('--delete'); // borrar conversación (requiere estado closed)
+
+const service = client.conversations.v1.services(TWILIO_CONVERSATIONS_SERVICE_SID);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function listAllConversations(pageSize = 100) {
+  const out = [];
+  let page = await service.conversations.page({ pageSize });
+  while (page) {
+    out.push(...page.instances);
+    if (!page.hasNextPage) break;
+    page = await page.nextPage();
+  }
+  return out;
+}
+
+async function removeAllParticipants(conversationSid) {
+  const parts = await service.conversations(conversationSid).participants.list({ limit: 200 });
+  let removed = 0;
+  for (const p of parts) {
+    try {
+      await service.conversations(conversationSid).participants(p.sid).remove();
+      removed++;
+    } catch (e) {
+      console.warn(`[WARN] remove participant ${p.sid} failed:`, e?.message || e);
+    }
+    await sleep(50);
+  }
+  return removed;
+}
+
+async function closeOne(convo) {
+  const sid = convo.sid;
+  const uniqueName = convo.uniqueName;
+  const prev = String(convo.state || convo.status || '').toLowerCase();
+
+  if (DRY) return { sid, uniqueName, prev, now: prev, partsRemoved: 0, deleted: false, skipped: true };
+
+  // Intenta cierre directo
+  if (prev !== 'closed') {
+    try {
+      await service.conversations(sid).update({ state: 'closed' });
+    } catch (e) {
+      // Fallback con timers=PT0S si el cierre directo falla
+      console.warn(`[WARN] state=closed failed for ${sid}: ${e?.message || e}. Falling back to timers.`);
+      await service.conversations(sid).update({
+        'timers.inactive': 'PT0S',
+        'timers.closed': 'PT0S',
+      });
+    }
+  }
+
+  let partsRemoved = 0;
+  if (HARD) {
+    partsRemoved = await removeAllParticipants(sid);
+  }
+
+  let deleted = false;
+  if (DELETE) {
+    try { await service.conversations(sid).remove(); deleted = true; }
+    catch (e) { console.warn(`[WARN] delete ${sid} failed:`, e?.message || e); }
+  }
+
+  return { sid, uniqueName, prev, now: 'closed', partsRemoved, deleted, skipped: false };
+}
+
+async function run() {
+  const all = await listAllConversations(100);
+  console.log(`Found ${all.length} conversations`);
+
+  const results = [];
+  let closed = 0, skipped = 0, totalPartsRemoved = 0, totalDeleted = 0;
+
+  // Concurrency
+  const MAX = 10;
+  for (let i = 0; i < all.length; i += MAX) {
+    const batch = all.slice(i, i + MAX);
+    const r = await Promise.all(batch.map(closeOne));
+    for (const item of r) {
+      results.push(item);
+      if (item.skipped) { skipped++; continue; }
+      closed++;
+      totalPartsRemoved += item.partsRemoved;
+      if (item.deleted) totalDeleted++;
+    }
+  }
+
+  console.table(results.map(x => ({
+    sid: x.sid,
+    uniqueName: x.uniqueName || '',
+    prev: x.prev,
+    now: x.now,
+    partsRemoved: x.partsRemoved,
+    deleted: x.deleted
+  })));
+
+  console.log(`Closed: ${closed}, Skipped(dry-run): ${skipped}, Participants removed: ${totalPartsRemoved}, Deleted: ${totalDeleted}`);
+}
+
+run().catch((e) => { console.error(e); process.exit(1); });
+
+==== /scripts\cleanup-conversations.mjs ====
 
 ==== scripts\provision.mjs ====
 // scripts/provision.mjs
@@ -932,6 +1064,227 @@ export async function complete(req, res) {
 
 ==== /src\controllers\transfer.js ====
 
+==== src\controllers\video.js ====
+// contact-center/server/src/controllers/video.js
+import { rest } from '../twilio.js';
+import { buildVideoToken } from '../twilio.js';
+import { fetchConversation, updateConversationAttributes, listParticipants } from '../conversations/service.js';
+
+const ENABLED = String(process.env.ENABLE_VIDEO || 'false').toLowerCase() === 'true';
+
+// ✅ Usa 'group' por defecto y valida tipos permitidos
+const ROOM_TYPE_ENV = (process.env.VIDEO_ROOM_TYPE || 'group').trim();
+const ALLOWED_TYPES = new Set(['group', 'group-small', 'peer-to-peer', 'go']);
+const ROOM_TYPE = ALLOWED_TYPES.has(ROOM_TYPE_ENV) ? ROOM_TYPE_ENV : 'group';
+
+const MAX_AGENTS = parseInt(process.env.VIDEO_MAX_AGENTS_PER_ROOM || '1', 10) || 1;
+// Opcional: const REGION = process.env.VIDEO_REGION;
+
+/* =========================
+ * Helpers
+ * ========================= */
+function roomNameFor({ conversationSid, taskSid, name }) {
+  if (name) return name;
+  if (conversationSid) return `conv_${conversationSid}`;
+  if (taskSid) return `task_${taskSid}`;
+  return `room_${Date.now()}`;
+}
+
+/** Extrae ConversationSid desde un roomName conv_CHxxxxxxxx... */
+function parseConversationSidFromRoomName(roomName) {
+  const m = String(roomName || '').match(/^conv_(CH[a-zA-Z0-9]{32})$/);
+  return m ? m[1] : null;
+}
+
+function cleanIdentity(identity) {
+  const raw = String(identity || '').trim();
+  return raw.startsWith('client:') ? raw.slice('client:'.length) : raw;
+}
+
+/** Verifica que identity sea participante de la Conversation */
+async function assertParticipant({ conversationSid, identity }) {
+  if (!conversationSid || !identity) {
+    const err = new Error('conversationSid and identity required');
+    err.status = 400;
+    throw err;
+  }
+  // Asegura que la conversación exista
+  await fetchConversation(conversationSid);
+  // Lista participantes y valida
+  const parts = await listParticipants(conversationSid);
+  const who = cleanIdentity(identity);
+  const ok = parts.some((p) => p.identity === who);
+  if (!ok) {
+    const err = new Error('identity is not a participant of this conversation');
+    err.status = 403;
+    throw err;
+  }
+}
+
+async function ensureRoom({ uniqueName }) {
+  try {
+    const existing = await rest.video.v1.rooms(uniqueName).fetch();
+    const st = String(existing.status || '').toLowerCase();
+    if (['in-progress', 'connected', 'open'].includes(st)) return existing;
+    // Si está 'completed', crea nuevo con sufijo
+    uniqueName = `${uniqueName}_${Date.now()}`;
+  } catch {
+    // 404 => crear
+  }
+
+  // Crear con el tipo elegido y reintentar con 'group' si Twilio rechaza el tipo (legacy/invalid)
+  try {
+    return await rest.video.v1.rooms.create({
+      uniqueName,
+      type: ROOM_TYPE,
+      // recordParticipantsOnConnect: false,
+      // region: REGION || undefined,
+    });
+  } catch (e) {
+    const msg = String(e?.message || '').toLowerCase();
+    const isTypeErr =
+      e?.status === 400 ||
+      msg.includes('legacy room type') ||
+      msg.includes('unsupported') ||
+      msg.includes('invalid "type"') ||
+      msg.includes('room type');
+
+    if (isTypeErr && ROOM_TYPE !== 'group') {
+      // Fallback robusto a 'group'
+      return await rest.video.v1.rooms.create({
+        uniqueName,
+        type: 'group',
+      });
+    }
+    throw e;
+  }
+}
+
+// Evita 2 agentes en la misma sala
+async function agentSlotAvailable(uniqueName, identity) {
+  try {
+    const list = await rest.video.v1.rooms(uniqueName)
+      .participants
+      .list({ status: 'connected', limit: 50 });
+    const agents = list.filter((p) => String(p.identity || '').startsWith('agent:'));
+    // Si el mismo agente reintenta, permitimos
+    if (agents.some((a) => a.identity === cleanIdentity(identity))) return true;
+    return agents.length < MAX_AGENTS;
+  } catch {
+    // Si no se puede listar, preferimos dejar pasar para no bloquear operativa
+    return true;
+  }
+}
+
+/* =========================
+ * Controller
+ * ========================= */
+export const videoController = {
+  enabled: (_req, res) => res.json({ enabled: ENABLED }),
+
+  /**
+   * Crea/obtiene Room y (si hay Conversation) marca atributos.
+   * Seguridad:
+   *  - Si viene identity (agente via JWT o guest via body), validamos pertenencia.
+   *  - Si NO viene identity (p.ej., webchat antiguo), permitimos crear la sala pero
+   *    la emisión del token (siguiente paso) sí validará pertenencia.
+   */
+  ensureRoom: async (req, res) => {
+    try {
+      if (!ENABLED) return res.status(404).json({ error: 'video disabled' });
+
+      const { conversationSid, taskSid, name, identity: bodyIdentity } = req.body || {};
+      const claimsIdentity = req.claims?.identity; // presente si el caller es agente autenticado
+      const callerIdentity = claimsIdentity || bodyIdentity || null;
+
+      // Si tenemos identidad y conversationSid, validamos pertenencia:
+      if (callerIdentity && conversationSid) {
+        await assertParticipant({ conversationSid, identity: callerIdentity });
+      }
+
+      const uniqueName = roomNameFor({ conversationSid, taskSid, name });
+      const room = await ensureRoom({ uniqueName });
+
+      if (conversationSid) {
+        try {
+          await updateConversationAttributes(conversationSid, {
+            video: { roomName: room.uniqueName, roomSid: room.sid, startedAt: new Date().toISOString() }
+          });
+        } catch (e) {
+          // no bloqueante
+          console.warn('[video/ensure-room] updateConversationAttributes skipped:', e?.message || e);
+        }
+      }
+
+      res.json({ roomName: room.uniqueName, roomSid: room.sid, type: room.type });
+    } catch (e) {
+      const code = e.status || 500;
+      console.error('[video/ensure-room]', e?.message || e);
+      res.status(code).json({ error: e.message || 'cannot ensure room' });
+    }
+  },
+
+  /**
+   * Token para AGENTE (cookie/JWT requerida a nivel de router).
+   * Adicionalmente:
+   *  - si el roomName está ligado a una conversación (conv_CH...), validamos que el agente sea participante del chat.
+   *  - limitamos el número de agentes simultáneos por sala con MAX_AGENTS.
+   */
+  tokenAgent: async (req, res) => {
+    try {
+      if (!ENABLED) return res.status(404).json({ error: 'video disabled' });
+      const identity = req.claims?.identity;
+      const { roomName } = req.query || {};
+      if (!identity || !roomName) return res.status(400).json({ error: 'missing identity or roomName' });
+
+      const convSid = parseConversationSidFromRoomName(roomName);
+      if (convSid) {
+        await assertParticipant({ conversationSid: convSid, identity });
+      }
+
+      const allowed = await agentSlotAvailable(roomName, identity);
+      if (!allowed) return res.status(409).json({ error: 'room already has an agent' });
+
+      const token = buildVideoToken(identity, roomName);
+      res.json({ token, identity });
+    } catch (e) {
+      const code = e.status || 500;
+      console.error('[video/tokenAgent]', e?.message || e);
+      res.status(code).json({ error: e.message || 'cannot issue token' });
+    }
+  },
+
+  /**
+   * Token para invitado (webchat público).
+   * Seguridad:
+   *  - exigimos que roomName tenga formato conv_{ConversationSid}.
+   *  - validamos que identity pertenezca a esa Conversation antes de emitir token.
+   */
+  tokenGuest: async (req, res) => {
+    try {
+      if (!ENABLED) return res.status(404).json({ error: 'video disabled' });
+
+      const identity = String(req.query.identity || '').trim(); // ej: "guest:uuid"
+      const roomName = String(req.query.roomName || '').trim();
+      if (!identity || !roomName) return res.status(400).json({ error: 'identity and roomName required' });
+
+      const conversationSid = parseConversationSidFromRoomName(roomName);
+      if (!conversationSid) return res.status(400).json({ error: 'invalid roomName (must be conv_{ConversationSid})' });
+
+      await assertParticipant({ conversationSid, identity });
+
+      const token = buildVideoToken(identity, roomName);
+      res.json({ token, identity });
+    } catch (e) {
+      const code = e.status || 500;
+      console.error('[video/tokenGuest]', e?.message || e);
+      res.status(code).json({ error: e.message || 'cannot issue guest token' });
+    }
+  },
+};
+
+==== /src\controllers\video.js ====
+
 ==== src\controllers\voice.js ====
 import { buildOutboundTwiml } from '../services/voice.js';
 
@@ -1496,6 +1849,7 @@ import conversationsRoute from './routes/conversations.route.js';
 import conversationsWebhooksRoute from './routes/conversations-webhooks.route.js';
 import conversationsPreWebhooksRoute from './routes/conversations-prewebhooks.route.js';
 import { configureServiceWebhooks } from './conversations/service.js';
+import { video as videoRoutes } from './routes/video.js';
 
 const app = express();
 validateEnv();
@@ -1539,6 +1893,7 @@ app.use('/api/ivr/finance', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }));
 app.use('/api', ivr);
 app.use('/api', crmProxy);
 app.use('/api/chat', chatTokenRoute);
+app.use('/api', videoRoutes);
 app.use('/api/conversations', conversationsRoute);
 app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);
@@ -1762,6 +2117,9 @@ const allowedDomains = (process.env.ALLOWED_EMAIL_DOMAINS || '')
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 
+// Toggle: conversación única (true) o nueva por sesión (false)
+const SINGLE_CHAT_SESSION = String(process.env.SINGLE_CHAT_SESSION ?? 'true').toLowerCase() !== 'false';
+
 function failsModeration(body = '') {
   const lower = body.toLowerCase();
   return bannedWords.some(w => lower.includes(w));
@@ -1791,16 +2149,18 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
           return res.status(403).send('email domain not allowed');
         }
 
-        // Optional uniqueness check only when using email as uniqueName
-        try {
-          await fetchConversation(email);
-          return res.status(409).send('conversation already exists');
-        } catch (err) {
-          if (err.status && err.status !== 404) {
-            console.error('[Conversations PreWebhook] uniqueness check failed', err);
-            return res.status(500).send('error');
+        // Unicidad por email SOLO si SINGLE_CHAT_SESSION=true
+        if (SINGLE_CHAT_SESSION) {
+          try {
+            await fetchConversation(email);
+            return res.status(409).send('conversation already exists');
+          } catch (err) {
+            if (err.status && err.status !== 404) {
+              console.error('[Conversations PreWebhook] uniqueness check failed', err);
+              return res.status(500).send('error');
+            }
+            // 404 => not found => ok (allow creation)
           }
-          // 404 => not found => ok (allow creation)
         }
       }
 
@@ -1857,6 +2217,18 @@ function toContactUri(identity) {
   return `client:agent:${raw}`;
 }
 
+/** Devuelve true si no hay task o si el task está cerrado/no existe. */
+async function isTaskClosedOrMissing(taskSid) {
+  if (!taskSid) return true;
+  try {
+    const t = await fetchTask(taskSid);
+    const st = String(t.assignmentStatus || '').toLowerCase();
+    return ['completed', 'canceled', 'timeout', 'deleted'].includes(st);
+  } catch {
+    return true; // si no existe o no se puede leer, trátalo como cerrado/missing
+  }
+}
+
 // Twilio will POST events like onMessageAdded here if you attach a webhook per-conversation.
 router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
@@ -1877,7 +2249,7 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
         const conversationSid = req.body.ConversationSid;
         const convo = await fetchConversation(conversationSid);
         const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
-        if (!convoAttrs.taskSid) {
+        if (await isTaskClosedOrMissing(convoAttrs.taskSid)) {
           const task = await createTask({
             attributes: {
               channel: 'chat',
@@ -1888,7 +2260,8 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
             taskChannel: 'chat'
           });
           await updateConversationAttributes(conversationSid, {
-            taskSid: task.sid
+            taskSid: task.sid,
+            agentJoinedAt: null
           });
           pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
           io?.emit('task_created', { taskSid: task.sid, conversationSid });
@@ -1954,8 +2327,8 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
       const updates = { participants };
       const now = new Date().toISOString();
 
-      // 🚀 NUEVO: Si se une un cliente (no agente), crea el Task inmediatamente (sin esperar primer mensaje)
-      if (participantAttrs.role !== 'agent' && !attrs.taskSid) {
+      // Crear Task inmediato si se une cliente y no hay Task ACTIVO
+      if (participantAttrs.role !== 'agent' && (await isTaskClosedOrMissing(attrs.taskSid))) {
         const task = await createTask({
           attributes: {
             channel: 'chat',
@@ -2139,7 +2512,7 @@ import {
   listParticipants,
   updateConversationAttributes,
 } from '../conversations/service.js';
-import { createTask, pushEvent } from '../services/taskrouter.js';
+import { createTask, pushEvent, fetchTask } from '../services/taskrouter.js';
 
 const router = express.Router();
 
@@ -2173,6 +2546,9 @@ function filterTaskAttrs(attrs) {
   return out;
 }
 
+/** Toggle: conversación única por identificador o nueva por sesión */
+const SINGLE_CHAT_SESSION = String(process.env.SINGLE_CHAT_SESSION ?? 'true').toLowerCase() !== 'false';
+
 /** Evita doble creación cuando hay carreras */
 const creatingTaskFor = new Set();
 async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
@@ -2187,7 +2563,18 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
   try {
     const convo = await fetchConversation(conversationSid);
     const attrs = safeJsonParse(convo.attributes, {});
-    if (attrs.taskSid) return attrs.taskSid;
+    // Si hay taskSid, úsalo solo si sigue activo
+    if (attrs.taskSid) {
+      try {
+        const t = await fetchTask(attrs.taskSid);
+        const st = String(t.assignmentStatus || '').toLowerCase();
+        if (!['completed', 'canceled', 'timeout', 'deleted'].includes(st)) {
+          return attrs.taskSid;
+        }
+      } catch {
+        // taskSid inválido → continuar a crear nuevo
+      }
+    }
 
     const task = await createTask({
       attributes: {
@@ -2199,7 +2586,7 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
       taskChannel: 'chat',
     });
 
-    await updateConversationAttributes(conversationSid, { taskSid: task.sid });
+    await updateConversationAttributes(conversationSid, { taskSid: task.sid, agentJoinedAt: null });
     pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
     io?.emit?.('task_created', { taskSid: task.sid, conversationSid });
     return task.sid;
@@ -2212,8 +2599,24 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
 
 // Create or get a conversation by uniqueName
 router.post('/', async (req, res) => {
-  const { uniqueName, friendlyName, attributes } = req.body;
+  let { uniqueName, friendlyName, attributes } = req.body || {};
   try {
+    // Fuente de identidad/identifier (email o externalId)
+    const idHint =
+      attributes?.email ||
+      attributes?.identifier ||
+      attributes?.externalId ||
+      uniqueName ||
+      'chat';
+
+    if (SINGLE_CHAT_SESSION) {
+      // conservar una única Conversation por identificador
+      uniqueName = uniqueName || idHint;
+    } else {
+      // forzar una Conversation nueva por sesión
+      uniqueName = `${idHint}::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
+    }
+
     const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
 
     // (Opcional) Adjunta webhook por-conversación para mayor resiliencia
@@ -2488,6 +2891,22 @@ transfer.post('/transfer/complete', requireAuth, complete);
 
 
 ==== /src\routes\transfer.js ====
+
+==== src\routes\video.js ====
+// contact-center/server/src/routes/video.js
+import { Router } from 'express';
+import { requireAuth } from 'shared/auth';
+import { videoController } from '../controllers/video.js';
+
+export const video = Router();
+
+video.get('/video/enabled', videoController.enabled);
+video.post('/video/ensure-room', videoController.ensureRoom); // sin auth: lo usa también el webchat público
+
+video.get('/video/token', requireAuth, videoController.tokenAgent);
+video.get('/video/token/guest', videoController.tokenGuest);
+
+==== /src\routes\video.js ====
 
 ==== src\routes\voice.js ====
 import { Router } from 'express';
@@ -2826,21 +3245,22 @@ function assertEnv(names, context = 'twilio.js') {
 assertEnv(['accountSid', 'authToken'], 'REST client');
 export const rest = Twilio(env.accountSid, env.authToken);
 
-/* --------------------------- Voice AccessToken --------------------------- */
+/* --------------------------- AccessToken (Voice/Video) --------------------------- */
 const { AccessToken } = Twilio.jwt || {};
 if (!AccessToken) {
   throw new Error('[Twilio] jwt.AccessToken not available (check twilio SDK version)');
 }
-const { VoiceGrant } = AccessToken;
+const { VoiceGrant, VideoGrant } = AccessToken;
 
+/* --------------------------- Voice AccessToken --------------------------- */
 export function buildVoiceToken(identity) {
   if (!identity) throw new Error('[VoiceToken] missing identity');
 
-  // ENVs crÃ­ticos para Voice token
+  // ENVs críticos para Voice token
   assertEnv(['accountSid', 'apiKey', 'apiSecret'], 'Voice AccessToken');
 
   // IMPORTANTE: Voice identity NO debe incluir "client:".
-  // Si llega "client:agent:42" en claims â†’ usar "agent:42".
+  // Si llega "client:agent:42" en claims → usar "agent:42".
   const rawIdentity = String(identity);
   const identityForVoice = rawIdentity.startsWith('client:')
     ? rawIdentity.slice('client:'.length)
@@ -2855,7 +3275,7 @@ export function buildVoiceToken(identity) {
 
   const grant = new VoiceGrant({
     outgoingApplicationSid: env.twimlAppSid || undefined,
-    incomingAllow: true
+    incomingAllow: true,
   });
 
   token.addGrant(grant);
@@ -2880,25 +3300,25 @@ function buildPolicy({ url, method, allow }) {
     method,
     allow,
     queryFilter: {},
-    postFilter: {}
+    postFilter: {},
   });
 }
 
 export function buildWorkerToken(workerSid) {
   if (!workerSid) throw new Error('[WorkerToken] missing workerSid');
 
-  // ENVs crÃ­ticos para Worker capability
+  // ENVs críticos para Worker capability
   assertEnv(['workspaceSid', 'accountSid', 'authToken'], 'TaskRouter Worker Capability');
 
   const workspaceSid = env.workspaceSid;
-  const accountSid   = env.accountSid;
-  const authToken    = env.authToken;
+  const accountSid = env.accountSid;
+  const authToken = env.authToken;
 
   const capability = new TaskRouterCapability({
     accountSid,
     authToken,
     workspaceSid,
-    channelId: workerSid
+    channelId: workerSid,
   });
 
   // Base URLs
@@ -2906,51 +3326,71 @@ export function buildWorkerToken(workerSid) {
   const EB_BASE = 'https://event-bridge.twilio.com/v1/wschannels';
 
   // Worker resources
-  const workerUrl          = `${TR_BASE}/Workspaces/${workspaceSid}/Workers/${workerSid}`;
+  const workerUrl = `${TR_BASE}/Workspaces/${workspaceSid}/Workers/${workerSid}`;
   const workerSubresources = `${workerUrl}/**`;
 
-  // Tasks (SDK lee Task y Reservations de esa Task) â†’ evitar 403 Event Bridge
-  const tasksUrlAll        = `${TR_BASE}/Workspaces/${workspaceSid}/Tasks/**`;
+  // Tasks (SDK lee Task y Reservations de esa Task) → evitar 403 Event Bridge
+  const tasksUrlAll = `${TR_BASE}/Workspaces/${workspaceSid}/Tasks/**`;
 
   // Activities (para UI / estados)
-  const activitiesUrl      = `${TR_BASE}/Workspaces/${workspaceSid}/Activities`;
-  const activitiesAllUrl   = `${activitiesUrl}/**`;
+  const activitiesUrl = `${TR_BASE}/Workspaces/${workspaceSid}/Activities`;
+  const activitiesAllUrl = `${activitiesUrl}/**`;
 
-  // Event Bridge (requerido para WebSocket de TR)
-  const ebChannelUrl  = `${EB_BASE}/${accountSid}/${workerSid}`;
+  // Event Bridge channel + messages (GET/POST)
+  const ebChannelUrl = `${EB_BASE}/${accountSid}/${workerSid}`;
   const ebMessagesUrl = `${ebChannelUrl}/messages`;
 
   const policies = [
     // Worker & subresources
-    buildPolicy({ url: workerUrl,          method: 'GET',  allow: true }),
-    buildPolicy({ url: workerSubresources, method: 'GET',  allow: true }),
-    buildPolicy({ url: workerUrl,          method: 'POST', allow: true }),
+    buildPolicy({ url: workerUrl, method: 'GET', allow: true }),
+    buildPolicy({ url: workerSubresources, method: 'GET', allow: true }),
+    buildPolicy({ url: workerUrl, method: 'POST', allow: true }),
     buildPolicy({ url: workerSubresources, method: 'POST', allow: true }),
 
     // Tasks (NECESARIO para que el SDK consulte Task/Reservations sin 403)
-    buildPolicy({ url: tasksUrlAll, method: 'GET',  allow: true }),
+    buildPolicy({ url: tasksUrlAll, method: 'GET', allow: true }),
     buildPolicy({ url: tasksUrlAll, method: 'POST', allow: true }),
 
-    // Activities (opcional pero Ãºtil para UI)
-    buildPolicy({ url: activitiesUrl,    method: 'GET', allow: true }),
+    // Activities (opcional pero útil para UI)
+    buildPolicy({ url: activitiesUrl, method: 'GET', allow: true }),
     buildPolicy({ url: activitiesAllUrl, method: 'GET', allow: true }),
 
     // Event Bridge channel + messages (GET/POST)
-    buildPolicy({ url: ebChannelUrl,  method: 'GET',  allow: true }),
-    buildPolicy({ url: ebChannelUrl,  method: 'POST', allow: true }),
-    buildPolicy({ url: ebMessagesUrl, method: 'GET',  allow: true }),
-    buildPolicy({ url: ebMessagesUrl, method: 'POST', allow: true })
+    buildPolicy({ url: ebChannelUrl, method: 'GET', allow: true }),
+    buildPolicy({ url: ebChannelUrl, method: 'POST', allow: true }),
+    buildPolicy({ url: ebMessagesUrl, method: 'GET', allow: true }),
+    buildPolicy({ url: ebMessagesUrl, method: 'POST', allow: true }),
   ];
 
   policies.forEach((p) => capability.addPolicy(p));
 
   // Generar JWT (SDKs antiguos usan generate(); modernos usan toJwt())
   if (typeof capability.generate === 'function') return capability.generate(3600); // 1h
-  if (typeof capability.toJwt === 'function')     return capability.toJwt();
+  if (typeof capability.toJwt === 'function') return capability.toJwt();
 
   throw new Error('[TaskRouterCapability] neither generate() nor toJwt() available');
 }
 
+/* --------------------------- Video AccessToken --------------------------- */
+export function buildVideoToken(identity, roomName) {
+  if (!identity) throw new Error('[VideoToken] missing identity');
+  assertEnv(['accountSid', 'apiKey', 'apiSecret'], 'Video AccessToken');
+
+  // Igual que Voice: identidad sin "client:"
+  const raw = String(identity);
+  const clean = raw.startsWith('client:') ? raw.slice('client:'.length) : raw;
+
+  const token = new AccessToken(
+    env.accountSid,
+    env.apiKey,
+    env.apiSecret,
+    { identity: clean, ttl: 3600 } // 1h
+  );
+
+  const grant = roomName ? new VideoGrant({ room: roomName }) : new VideoGrant();
+  token.addGrant(grant);
+  return token.toJwt();
+}
 
 ==== /src\twilio.js ====
 

@@ -44,8 +44,13 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     queryKey: ['myTasks'],
     queryFn: () => Api.myTasks('wrapping,assigned,reserved'),
     staleTime: 10000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10000, // o 0 si no quieres polling
     onError: () =>
-      toaster.push({ message: translate('tasksLoadError') || 'Failed to load tasks.', variant: 'error' })
+      toaster.push({
+        message: translate('tasksLoadError') || 'Failed to load tasks.',
+        variant: 'error'
+      }),
   });
 
   // Split by channel
@@ -696,8 +701,8 @@ function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
     status === 'wrapping'
       ? 'warning'
       : (status === 'assigned' || status === 'reserved')
-      ? 'new'
-      : 'neutral';
+        ? 'new'
+        : 'neutral';
 
   return (
     <Card padding="space70">

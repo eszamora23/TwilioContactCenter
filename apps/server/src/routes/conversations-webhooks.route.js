@@ -23,6 +23,18 @@ function toContactUri(identity) {
   return `client:agent:${raw}`;
 }
 
+/** Devuelve true si no hay task o si el task está cerrado/no existe. */
+async function isTaskClosedOrMissing(taskSid) {
+  if (!taskSid) return true;
+  try {
+    const t = await fetchTask(taskSid);
+    const st = String(t.assignmentStatus || '').toLowerCase();
+    return ['completed', 'canceled', 'timeout', 'deleted'].includes(st);
+  } catch {
+    return true; // si no existe o no se puede leer, trátalo como cerrado/missing
+  }
+}
+
 // Twilio will POST events like onMessageAdded here if you attach a webhook per-conversation.
 router.post('/', verifyTwilioSignature, async (req, res) => {
   const eventType = req.body.EventType || req.body.EventType?.toString();
@@ -43,7 +55,7 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
         const conversationSid = req.body.ConversationSid;
         const convo = await fetchConversation(conversationSid);
         const convoAttrs = convo.attributes ? JSON.parse(convo.attributes) : {};
-        if (!convoAttrs.taskSid) {
+        if (await isTaskClosedOrMissing(convoAttrs.taskSid)) {
           const task = await createTask({
             attributes: {
               channel: 'chat',
@@ -54,7 +66,8 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
             taskChannel: 'chat'
           });
           await updateConversationAttributes(conversationSid, {
-            taskSid: task.sid
+            taskSid: task.sid,
+            agentJoinedAt: null
           });
           pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
           io?.emit('task_created', { taskSid: task.sid, conversationSid });
@@ -120,8 +133,8 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
       const updates = { participants };
       const now = new Date().toISOString();
 
-      // 🚀 NUEVO: Si se une un cliente (no agente), crea el Task inmediatamente (sin esperar primer mensaje)
-      if (participantAttrs.role !== 'agent' && !attrs.taskSid) {
+      // Crear Task inmediato si se une cliente y no hay Task ACTIVO
+      if (participantAttrs.role !== 'agent' && (await isTaskClosedOrMissing(attrs.taskSid))) {
         const task = await createTask({
           attributes: {
             channel: 'chat',

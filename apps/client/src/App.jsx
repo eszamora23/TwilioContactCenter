@@ -8,8 +8,16 @@ import i18n from './i18n.js';
 import Api from './features/index.js';
 import Login from './features/auth/components/Login.jsx';
 import AgentApp from './features/tasks/components/AgentApp.jsx';
-const queryClient = new QueryClient();
-
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+      retry: 2,
+      gcTime: 5 * 60 * 1000,
+    },
+  },
+});
 export default function App() {
   const [ctx, setCtx] = useState(null);
   useEffect(() => {
@@ -17,7 +25,7 @@ export default function App() {
       .then(data => {
         if (data?.agent) setCtx({ agent: data.agent });
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
   if (!ctx) return <Login onReady={setCtx} />;
 

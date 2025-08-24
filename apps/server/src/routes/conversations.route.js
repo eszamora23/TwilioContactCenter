@@ -16,7 +16,7 @@ import {
   listParticipants,
   updateConversationAttributes,
 } from '../conversations/service.js';
-import { createTask, pushEvent } from '../services/taskrouter.js';
+import { createTask, pushEvent, fetchTask } from '../services/taskrouter.js';
 
 const router = express.Router();
 
@@ -50,6 +50,9 @@ function filterTaskAttrs(attrs) {
   return out;
 }
 
+/** Toggle: conversación única por identificador o nueva por sesión */
+const SINGLE_CHAT_SESSION = String(process.env.SINGLE_CHAT_SESSION ?? 'true').toLowerCase() !== 'false';
+
 /** Evita doble creación cuando hay carreras */
 const creatingTaskFor = new Set();
 async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
@@ -64,7 +67,18 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
   try {
     const convo = await fetchConversation(conversationSid);
     const attrs = safeJsonParse(convo.attributes, {});
-    if (attrs.taskSid) return attrs.taskSid;
+    // Si hay taskSid, úsalo solo si sigue activo
+    if (attrs.taskSid) {
+      try {
+        const t = await fetchTask(attrs.taskSid);
+        const st = String(t.assignmentStatus || '').toLowerCase();
+        if (!['completed', 'canceled', 'timeout', 'deleted'].includes(st)) {
+          return attrs.taskSid;
+        }
+      } catch {
+        // taskSid inválido → continuar a crear nuevo
+      }
+    }
 
     const task = await createTask({
       attributes: {
@@ -76,7 +90,7 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
       taskChannel: 'chat',
     });
 
-    await updateConversationAttributes(conversationSid, { taskSid: task.sid });
+    await updateConversationAttributes(conversationSid, { taskSid: task.sid, agentJoinedAt: null });
     pushEvent('TASK_CREATED', { taskSid: task.sid, conversationSid });
     io?.emit?.('task_created', { taskSid: task.sid, conversationSid });
     return task.sid;
@@ -89,8 +103,24 @@ async function ensureTaskForConversation(conversationSid, baseAttrs = {}, io) {
 
 // Create or get a conversation by uniqueName
 router.post('/', async (req, res) => {
-  const { uniqueName, friendlyName, attributes } = req.body;
+  let { uniqueName, friendlyName, attributes } = req.body || {};
   try {
+    // Fuente de identidad/identifier (email o externalId)
+    const idHint =
+      attributes?.email ||
+      attributes?.identifier ||
+      attributes?.externalId ||
+      uniqueName ||
+      'chat';
+
+    if (SINGLE_CHAT_SESSION) {
+      // conservar una única Conversation por identificador
+      uniqueName = uniqueName || idHint;
+    } else {
+      // forzar una Conversation nueva por sesión
+      uniqueName = `${idHint}::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
+    }
+
     const convo = await getOrCreateConversation({ uniqueName, friendlyName, attributes });
 
     // (Opcional) Adjunta webhook por-conversación para mayor resiliencia

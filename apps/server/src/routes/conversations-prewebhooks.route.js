@@ -15,6 +15,9 @@ const allowedDomains = (process.env.ALLOWED_EMAIL_DOMAINS || '')
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 
+// Toggle: conversación única (true) o nueva por sesión (false)
+const SINGLE_CHAT_SESSION = String(process.env.SINGLE_CHAT_SESSION ?? 'true').toLowerCase() !== 'false';
+
 function failsModeration(body = '') {
   const lower = body.toLowerCase();
   return bannedWords.some(w => lower.includes(w));
@@ -44,16 +47,18 @@ router.post('/', verifyTwilioSignature, async (req, res) => {
           return res.status(403).send('email domain not allowed');
         }
 
-        // Optional uniqueness check only when using email as uniqueName
-        try {
-          await fetchConversation(email);
-          return res.status(409).send('conversation already exists');
-        } catch (err) {
-          if (err.status && err.status !== 404) {
-            console.error('[Conversations PreWebhook] uniqueness check failed', err);
-            return res.status(500).send('error');
+        // Unicidad por email SOLO si SINGLE_CHAT_SESSION=true
+        if (SINGLE_CHAT_SESSION) {
+          try {
+            await fetchConversation(email);
+            return res.status(409).send('conversation already exists');
+          } catch (err) {
+            if (err.status && err.status !== 404) {
+              console.error('[Conversations PreWebhook] uniqueness check failed', err);
+              return res.status(500).send('error');
+            }
+            // 404 => not found => ok (allow creation)
           }
-          // 404 => not found => ok (allow creation)
         }
       }
 
