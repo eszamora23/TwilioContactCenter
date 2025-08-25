@@ -391,3 +391,17 @@ What it does:
 ## License & compliance
 
 Use within your organization under your chosen software license. Respect local regulations (recording consent, data retention, privacy). Twilio SDKs are used under their respective licenses.
+## Quick note
+npx serve samples/webchat -l 3000   #start webchat app
+npm run dev -w apps/client
+npm run dev -w apps/server
+npm run dev -w apps/crm-orchestrator
+node dump-files.js samples --out repo_dump_demoweb.txt
+node dump-files.js apps/server --out repo_dump.txt
+node dump-files.js apps/client --out repo_dump_client.txt
+Contact-center\server> ngrok http 4000 #change all the webhooks every time the ngrok changes    change in .env server/.env and crm/.env then in console twilio in:
+task route workflows assignment callback there
+Studio Flow in http requests
+Conversations manage services webhooks
+Voice manage twiml app 
+Twilio\Demo-Non-Flex\Dev-Phone> twilio dev-phone                                                                
