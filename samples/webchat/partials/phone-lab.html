@@ -1,42 +1,21 @@
 <div class="card">
   <div class="card-body">
     <h2>Phone Lab — Customer Simulator + IVR</h2>
-    <p class="helper">Pick a <b>customer profile</b>, launch the softphone (iframe), and hit <b>Start call</b>. We set the caller ID to trigger the correct IVR path.</p>
+    <p class="helper">
+      Pick a <b>customer profile</b> and hit <b>Start call</b>. The IVR number and caller ID are preconfigured for the demo.
+      The softphone is embedded below — when the call starts, we’ll scroll you to it automatically.
+    </p>
 
     <div class="grid-3" style="margin-top:10px">
       <div class="field">
         <label class="label" for="customerProfile">Customer profile</label>
         <select id="customerProfile"></select>
       </div>
-      <div class="field">
-        <label class="label" for="callerId">Caller ID (ANI)</label>
-        <input class="input mono" id="callerId" placeholder="+15555550100" />
-      </div>
-      <div class="field">
-        <label class="label" for="ivrNumber">IVR number (DID to dial)</label>
-        <input class="input mono" id="ivrNumber" placeholder="+15555550123" />
-      </div>
-    </div>
-
-    <div class="grid-3" style="margin-top:10px">
-      <div class="field">
-        <label class="label" for="scenario">Scenario ID</label>
-        <input class="input" id="scenario" placeholder="vip / billing-delinquent / onboarding" />
-      </div>
-      <div class="field">
-        <label class="label" for="dtmf">Auto DTMF (optional)</label>
-        <input class="input mono" id="dtmf" placeholder="1-2-1" />
-      </div>
-      <div class="field">
-        <label class="label" for="locale">Language</label>
-        <input class="input" id="locale" placeholder="en-US / es-CR" />
-      </div>
     </div>
 
     <div class="row" style="margin-top:12px; flex-wrap:wrap">
-      <button class="btn" id="launchSoftphone" type="button">Launch softphone</button>
       <button class="btn primary" id="startCall" type="button">Start call</button>
-      <span class="small">The call is triggered via <span class="mono">POST /demo/call/start</span> on your server.</span>
+      <span class="small">The call uses your configured IVR DID and demo caller ID.</span>
     </div>
   </div>
 </div>
@@ -46,11 +25,9 @@
     <h3>Embedded softphone</h3>
     <div class="iframe-shell">
       <div id="softphoneWrap" class="iframe-placeholder">
-        Set <span class="mono">DEMO.softphoneUrl</span> to load your webphone here.
+        Your softphone appears here during calls.
       </div>
     </div>
-    <div class="callout small" style="margin-top:12px">
-      If your softphone supports <i>postMessage</i>, we’ll send <span class="mono">{type: 'call', to, from, profile}</span> on start.
-    </div>
+    <div class="callout small" style="margin-top:12px">We auto-scroll here when you click <b>Start call</b>.</div>
   </div>
 </div>

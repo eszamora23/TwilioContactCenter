@@ -48,7 +48,14 @@ section.chat { display:grid; gap:18px; }
   background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,0));
   backdrop-filter: var(--glass);
 }
-.chip { display:inline-grid; place-items:center; width:40px; height:40px; border-radius:12px; border:1px solid var(--stroke); background: var(--card); }
+
+/* ⬇️  Scoped sólo al botón de adjuntar del composer
+      (evita afectar los chips del Agent Portal) */
+.composer label.chip {
+  display:inline-grid; place-items:center; width:40px; height:40px;
+  border-radius:12px; border:1px solid var(--stroke); background: var(--card);
+}
+
 #message-input {
   flex:1; padding:12px 14px; border-radius:999px; border:1px solid var(--stroke);
   background: rgba(255,255,255,.05); outline:0; color: var(--text);

@@ -27,4 +27,6 @@ taskrouter.post('/taskrouter/tasks/:taskSid/complete', requireAuth, completeTask
 
 taskrouter.get('/taskrouter/available-workers', requireAuth, availableWorkers);
 taskrouter.get('/taskrouter/presence', requireAuth, presence);
+// Public demo (sin JWT) para el KPI del sitio
+taskrouter.get('/taskrouter/presence/public', presence);
 taskrouter.get('/events/recent', requireAuth, recent);

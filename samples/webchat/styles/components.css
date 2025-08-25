@@ -31,6 +31,8 @@
 }
 .btn.ghost { border-color: var(--chip-br); background: var(--chip-bg); }
 .btn.icon { width:40px; height:40px; padding:0; display:grid; place-items:center; border-radius:10px; }
+/* variante compacta para el botón “copiar” del portal */
+.btn.icon.sm { width:36px; height:36px; padding:0; display:grid; place-items:center; }
 
 .card { border:1px solid var(--stroke); border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); overflow:hidden; }
 .card .card-body { padding:22px; }
@@ -73,19 +75,36 @@
 .callout { padding:14px; border:1px dashed var(--stroke); border-radius:12px; background: rgba(255,255,255,.04); }
 
 /* Portal responsive helpers */
-.portal-forms { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+.portal-forms {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
 @media (max-width:920px){ .portal-forms { grid-template-columns: 1fr; } }
 .portal-forms .form-block { display:grid; gap:10px; }
 
-.input-group { display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center; }
+.input-group {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto; /* botón compacto a la derecha */
+  gap:10px;
+  align-items:center;
+}
 @media (max-width:480px) {
   .input-group { grid-template-columns: 1fr; }
   .input-group .open-btn { width:100%; }
 }
 
 .chip-list { display:grid; gap:10px; }
-.chip-row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+.chip-row {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto; /* izquierda flexible, botón fijo */
+  gap:8px;
+  align-items:center;
+}
+.chip-row > div { min-width: 0; }            /* permite elipsis correctamente */
 .chip { display:block; padding:10px 12px; border:1px solid var(--chip-br); background: var(--chip-bg); border-radius:12px; }
+.chip-row .chip { width: 100%; }             /* estirar chip al ancho de su columna */
 .chip.trunc { overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width:420px) { .chip.trunc { white-space: normal; word-break: break-all; } }
 

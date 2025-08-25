@@ -1,4 +1,5 @@
-﻿﻿import { requireAuth } from 'shared/auth';
+﻿﻿// TwilioContactCenter/apps/server/src/controllers/taskrouter.js
+import { requireAuth } from 'shared/auth';
 import {
   listActivities,
   listWorkerReservations,
@@ -11,18 +12,50 @@ import {
   axios,
   env
 } from '../services/taskrouter.js';
+import { rest } from '../twilio.js'; // REST client for TaskRouter ops
 
+/* ---------------------------
+ * Helpers
+ * --------------------------- */
+
+// Normalize to a Twilio Client "contact_uri"
+function toContactUri(raw) {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+  if (val.startsWith('client:')) return val;
+  if (val.startsWith('agent:')) return `client:${val}`;
+  return `client:agent:${val}`;
+}
+
+function safeJson(x) {
+  try { return x ? JSON.parse(x) : {}; } catch { return {}; }
+}
+
+function safeParseJson(str) {
+  try { return JSON.parse(str || '{}'); } catch { return {}; }
+}
+
+/* ---------------------------
+ * Assignment Callback
+ * ---------------------------
+ * Uses the TaskRouter "conference" instruction with **camelCase**
+ * participant/conference parameters (per Twilio docs).
+ * - Removes deprecated/invalid fields (post_work_activity_sid, end_conference_on_customer_exit, snake_case keys)
+ * - Adds optional status callbacks for better observability
+ */
 export function assignment(req, res) {
   try {
     const taskSid = String(req.body.TaskSid || '').trim();
 
     const channelName = String(req.body.TaskChannelUniqueName || '').toLowerCase();
-    let attrs = {};
-    try {
-      attrs = req.body.TaskAttributes ? JSON.parse(req.body.TaskAttributes) : {};
-    } catch {
-      attrs = {};
-    }
+    const attrs = safeJson(req.body.TaskAttributes);
+    const workerAttrs = safeJson(req.body.WorkerAttributes);
+
+    // Prefer an explicit selected_contact_uri (e.g., set when agent joined a chat),
+    // fall back to Worker's attributes.contact_uri
+    const selected = String(attrs.selected_contact_uri || '').trim();
+    const workerContact = String(workerAttrs.contact_uri || '').trim();
+    const dialTarget = toContactUri(selected || workerContact);
 
     const isChat =
       channelName === 'chat' ||
@@ -36,24 +69,58 @@ export function assignment(req, res) {
     if (!env.callerId) {
       return res.status(200).json({ instruction: 'reject', reason: 'missing callerId' });
     }
+
+    if (!dialTarget) {
+      // No agent contact: reject so TaskRouter offers the reservation to the next eligible Worker
+      return res.status(200).json({ instruction: 'reject', reason: 'no contact_uri' });
+    }
+
+    // We keep the conference name aligned with the TaskSid for easier tracing
     const conferenceName = taskSid || `task-${Date.now()}`;
+
+    // ✅ Correct, doc-accurate conference payload (camelCase keys)
     const payload = {
       instruction: 'conference',
-      from: env.callerId,
-      conference_name: conferenceName,
-      end_conference_on_exit: false,
+      from: env.callerId,          // Twilio-verified caller ID or owned number
+      to: dialTarget,              // e.g. "client:agent:demo-agent-1"
+      timeout: 18,                 // quick requeue if agent doesn't pick up
+
+      // Participant/Conference params (apply to the agent leg)
+      startConferenceOnEnter: true,
+      endConferenceOnExit: false,
       beep: 'onEnter',
-      wait_url: env.holdMusicUrl,
-      post_work_activity_sid: env.wrapActivitySid,
+      // Optional: queue/hold music while waiting (if you want it)
+      ...(env.holdMusicUrl ? { waitUrl: env.holdMusicUrl } : {}),
+
+      // Agent call status callbacks (progress of the agent leg)
+      ...(env.publicBaseUrl ? {
+        statusCallback: `${env.publicBaseUrl}/api/voice/agent-call-events`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+      } : {}),
+
+      // Conference lifecycle callbacks (start/end/join/leave/hold/mute)
+      ...(env.publicBaseUrl ? {
+        conferenceStatusCallback: `${env.publicBaseUrl}/api/voice/conference-events`,
+        conferenceStatusCallbackEvent: ['start', 'end', 'join', 'leave', 'mute', 'hold']
+      } : {})
     };
+
     return res.status(200).json(payload);
   } catch {
     return res.status(200).json({ instruction: 'reject', reason: 'assignment error' });
   }
 }
 
+/* ---------------------------
+ * Events Webhook (TaskRouter)
+ * ---------------------------
+ * - Push presence updates to Socket.IO
+ * - Auto-reject reservations lacking a dialable contact or availability
+ */
 export async function events(req, res) {
   console.log('TR event', req.body.EventType, req.body.TaskSid || '', req.body.ReservationSid || '');
+
+  // Presence update
   if (req.body.EventType === 'worker.activity.update') {
     const presenceData = await listWorkers();
     const formatted = presenceData.map(w => {
@@ -70,9 +137,46 @@ export async function events(req, res) {
     });
     req.app.get('io')?.emit('presence_update', { data: formatted });
   }
+
+  // Guard: reject reservation if the agent cannot be dialed or is not truly available
+  if (req.body.EventType === 'reservation.created') {
+    try {
+      const workspaceSid = env.workspaceSid;
+      const workerSid = req.body.WorkerSid;
+      const reservationSid = req.body.ReservationSid;
+
+      const workerAttrs = safeJson(req.body.WorkerAttributes);
+      const contactUriRaw = workerAttrs.contact_uri || null;
+      const contactUri = toContactUri(contactUriRaw);
+
+      // Some accounts send this flag as string
+      const availableFlag = String(req.body.WorkerActivityAvailable ?? '').toLowerCase();
+      const available = availableFlag === 'true' || req.body.WorkerActivityAvailable === true;
+
+      if (!contactUri || !available) {
+        await rest.taskrouter.v1
+          .workspaces(workspaceSid)
+          .workers(workerSid)
+          .reservations(reservationSid)
+          .update({ reservationStatus: 'rejected' });
+
+        pushEvent('RESERVATION_REJECTED_AUTOGUARD', {
+          workerSid,
+          reservationSid,
+          reason: !contactUri ? 'no_contact_uri' : 'not_available'
+        });
+      }
+    } catch (e) {
+      console.warn('[reservation.guard] skipped', e?.message || e);
+    }
+  }
+
   res.sendStatus(200);
 }
 
+/* ---------------------------
+ * Activities list
+ * --------------------------- */
 export async function activities(_req, res) {
   try {
     const list = await listActivities();
@@ -82,17 +186,24 @@ export async function activities(_req, res) {
   }
 }
 
+/* ---------------------------
+ * My Tasks (for the Agent)
+ * --------------------------- */
 export async function myTasks(req, res) {
   try {
     const { workerSid } = req.claims;
     if (!workerSid) return res.status(400).json({ error: 'missing workerSid in claims' });
+
     const statuses = (req.query.statuses || 'wrapping,assigned,reserved')
       .split(',').map(s => s.trim().toLowerCase());
+
     const reservations = await listWorkerReservations(workerSid);
     const uniqueTaskSids = [...new Set(reservations.map(r => r.taskSid).filter(Boolean))];
+
     const fetchedTasks = await Promise.all(
       uniqueTaskSids.map(taskSid => fetchTask(taskSid).catch(() => null))
     );
+
     const tasks = fetchedTasks
       .filter(t => t && statuses.includes(String(t.assignmentStatus).toLowerCase()))
       .map(t => ({
@@ -102,6 +213,7 @@ export async function myTasks(req, res) {
         reason: t.reason || null,
         attributes: safeParseJson(t.attributes),
       }));
+
     const resvByTask = {};
     for (const r of reservations) {
       if (!resvByTask[r.taskSid]) resvByTask[r.taskSid] = [];
@@ -119,9 +231,9 @@ export async function myTasks(req, res) {
   }
 }
 
-/**
- * NUEVO: Forzar WRAPPING (pensado para chat).
- */
+/* ---------------------------
+ * Force WRAPPING (chat-centric)
+ * --------------------------- */
 export async function wrapTask(req, res) {
   try {
     const { taskSid } = req.params;
@@ -164,6 +276,9 @@ export async function wrapTask(req, res) {
   }
 }
 
+/* ---------------------------
+ * Complete Task
+ * --------------------------- */
 export async function completeTask(req, res) {
   try {
     const { taskSid } = req.params;
@@ -230,6 +345,9 @@ export async function completeTask(req, res) {
   }
 }
 
+/* ---------------------------
+ * Available Workers (for transfer lists)
+ * --------------------------- */
 export async function availableWorkers(_req, res) {
   try {
     const acts = await listActivities();
@@ -252,9 +370,20 @@ export async function availableWorkers(_req, res) {
   }
 }
 
+/* ---------------------------
+ * Presence (with tiny cache to avoid thundering-herd)
+ * --------------------------- */
+let _presenceCache = { at: 0, data: [] };
+
 export async function presence(_req, res) {
   try {
-    const workers = await listWorkersWithRetry();
+    // 2s soft TTL cache
+    if (Date.now() - _presenceCache.at > 2000) {
+      const workers = await listWorkersWithRetry();
+      _presenceCache = { at: Date.now(), data: workers };
+    }
+
+    const workers = _presenceCache.data;
     const out = workers.map(w => {
       let contact = null;
       try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch {}
@@ -274,10 +403,9 @@ export async function presence(_req, res) {
   }
 }
 
-export function recent(req, res) {
+/* ---------------------------
+ * Recent in-memory events (debug)
+ * --------------------------- */
+export function recent(_req, res) {
   res.json(recentEvents());
-}
-
-function safeParseJson(str) {
-  try { return JSON.parse(str || '{}'); } catch { return {}; }
 }

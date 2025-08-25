@@ -3,6 +3,7 @@ import { byId, scrollToBottom } from './dom.js';
 import { SessionStore } from '../services/session.store.js';
 
 function getMessagesEl() { return byId('messages'); }
+const seen = new Set(); // clientMsgId seen to avoid duplicates
 
 function appendMessage(author, body){
   const el = getMessagesEl();
@@ -24,10 +25,22 @@ bus.on('messages:reset', (items=[]) => {
   const el = getMessagesEl();
   if (!el) return;
   el.innerHTML = '';
-  items.forEach(m => appendMessage(m.author || 'system', m.body || ''));
+  items.forEach(m => {
+    const cid = m?.attributes?.clientMsgId;
+    if (cid) seen.add(cid);
+    appendMessage(m.author || 'system', m.body || '');
+  });
 });
-bus.on('messages:added', (m) => appendMessage(m.author || 'system', m.body || ''));
-bus.on('messages:echo',  (m) => appendMessage(m.author || 'me',     m.body || ''));
+bus.on('messages:added', (m) => {
+  const cid = m?.attributes?.clientMsgId;
+  if (cid && seen.has(cid)) return;
+  if (cid) seen.add(cid);
+  appendMessage(m.author || 'system', m.body || '');
+});
+bus.on('messages:echo',  (m) => {
+  if (m?.clientMsgId) seen.add(m.clientMsgId);
+  appendMessage(m.author || 'me', m.body || '');
+});
 bus.on('chat:ended', () => {
   const el = getMessagesEl();
   if (el) el.innerHTML = '';

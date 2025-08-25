@@ -1,24 +1,28 @@
 <div class="card">
   <div class="card-body">
     <h2>Agent Portal — Access</h2>
-    <p class="helper">Log in as an <b>agent</b> to receive chats and calls from this demo.</p>
+    <p class="helper">Open the portal as an <b>agent</b>. Keep this page open as the <b>customer</b>.</p>
 
-    <div class="portal-forms">
+    <!-- Todo en lista (una sola columna) para evitar competencia de espacio -->
+    <ul class="portal-forms" style="grid-template-columns:1fr; list-style:none; padding:0; margin:0">
       <!-- Portal URL -->
-      <div class="form-block">
+      <li class="form-block">
         <label class="label" for="agentPortalUrl">Portal URL</label>
         <div class="input-group">
-          <input class="input" id="agentPortalUrl" placeholder="https://portal.agents.demo" />
+          <input class="input mono" id="agentPortalUrl" type="url" placeholder="https://portal.agents.demo" />
           <button class="btn open-btn" type="button" id="openPortal" title="Open Agent Portal">Open</button>
         </div>
-      </div>
+      </li>
 
       <!-- Demo fields -->
-      <div class="form-block">
-        <label class="label">Demo fields (copy to the Portal)</label>
+      <li class="form-block">
+        <label class="label">Demo login values (click the copy buttons)</label>
         <div class="chip-list">
           <div class="chip-row">
-            <span class="chip mono trunc" id="agentId-pill" title="Agent ID">agent-id: demo-agent-1</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Agent ID</span>
+              <span class="chip mono trunc" id="agentId-pill" title="Agent ID">demo-agent-1</span>
+            </div>
             <button class="btn icon sm" data-copy="#agentId-pill" aria-label="Copy Agent ID" title="Copy Agent ID">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -28,7 +32,10 @@
           </div>
 
           <div class="chip-row">
-            <span class="chip mono trunc" id="workerSid-pill" title="TaskRouter Worker SID">WKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Worker SID</span>
+              <span class="chip mono trunc" id="workerSid-pill" title="TaskRouter Worker SID">WKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</span>
+            </div>
             <button class="btn icon sm" data-copy="#workerSid-pill" aria-label="Copy Worker SID" title="Copy Worker SID">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -38,7 +45,10 @@
           </div>
 
           <div class="chip-row">
-            <span class="chip mono trunc" id="identity-pill" title="Identity (must equal Worker attributes.contact_uri)">client:agent:demo-agent-1</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Identity (must equal Worker <span class="mono">attributes.contact_uri</span>)</span>
+              <span class="chip mono trunc" id="identity-pill" title="Identity (must equal Worker attributes.contact_uri)">client:agent:demo-agent-1</span>
+            </div>
             <button class="btn icon sm" data-copy="#identity-pill" aria-label="Copy Identity" title="Copy Identity">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -48,16 +58,16 @@
           </div>
         </div>
 
-        <div class="callout small portal-note">
+        <div class="callout small portal-note" style="margin-top:10px">
           <b>Important:</b> In TaskRouter, set the Worker’s <span class="mono">attributes.contact_uri</span>
           to exactly match the Identity you enter above. The portal login checks this match.
         </div>
-      </div>
-    </div>
+      </li>
 
-    <div class="callout small" style="margin-top:12px">
-      Tip: keep the portal open while placing calls from <b>Phone Lab</b>.
-    </div>
+      <li>
+        <div class="callout small">Tip: keep the portal open while calling from <b>Phone Lab</b>.</div>
+      </li>
+    </ul>
   </div>
 </div>
 

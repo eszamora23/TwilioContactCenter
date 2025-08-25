@@ -1,7 +1,14 @@
 import { API_BASE } from './config.js';
 import { SessionStore } from './session.store.js';
+import { loadScriptOnce } from './script.loader.js';
 
 async function waitForVideoSDK(maxWaitMs = 7000) {
+  if (!(window.Twilio?.Video)) {
+    await loadScriptOnce(
+      'https://media.twiliocdn.com/sdk/js/video/releases/2.27.0/twilio-video.min.js',
+      { crossorigin: true }
+    );
+  }
   const start = Date.now();
   while (!(window.Twilio?.Video)) {
     if (Date.now() - start > maxWaitMs) {
@@ -35,7 +42,13 @@ export class VideoService {
     const { token } = await tokRes.json();
 
     // Preview tracks (permiso + preview inmediato)
-    const previewTracks = await Video.createLocalTracks({ audio: true, video: { width: 640 } });
+    let previewTracks = [];
+    try {
+      previewTracks = await Video.createLocalTracks({ audio: true, video: { width: 640 } });
+    } catch {
+      // Si cam es bloqueada, intenta sólo audio
+      previewTracks = await Video.createLocalTracks({ audio: true });
+    }
     previewTracksCb?.(previewTracks);
 
     // Conectar usando los mismos tracks
@@ -44,7 +57,12 @@ export class VideoService {
   }
 
   end() {
-    try { this.room?.disconnect(); } catch {}
+    try {
+      if (this.room) {
+        try { this.room.localParticipant.tracks.forEach(pub => pub.track?.stop?.()); } catch {}
+        this.room.disconnect();
+      }
+    } catch {}
     this.room = null;
   }
 }

@@ -1,14 +1,12 @@
 <div class="card" aria-label="How it works">
   <div class="card-body">
-    <h3>How it works — under the hood</h3>
+    <h3>How it works — plain English</h3>
     <ul class="small" style="margin:8px 0 0 18px; line-height:1.7">
-      <li><b>Conversations (chat):</b> guest tokens (<span class="mono">/api/chat/token/guest</span>),
-        per-conversation webhooks create a chat task automatically.</li>
-      <li><b>TaskRouter (routing):</b> assignment callback (<span class="mono">/api/taskrouter/assignment</span>) accepts chat or sets up voice conferences.</li>
-      <li><b>Voice & Softphone:</b> WebRTC device tokens (<span class="mono">/api/token/voice</span>);
-        hold/record/transfer endpoints control calls.</li>
-      <li><b>Video (optional):</b> <span class="mono">/api/video/ensure-room</span> + agent/guest tokens for a room tied to the chat.</li>
-      <li><b>CRM (demo):</b> the portal shows customer/vehicle/appointments/finance data and logs interactions.</li>
+      <li><b>Start:</b> You type here as a customer. The next available agent sees it instantly.</li>
+      <li><b>Routing:</b> The system automatically sends each chat or call to the right agent.</li>
+      <li><b>Calls:</b> Phone Lab places a test call through your IVR and into the agent’s softphone.</li>
+      <li><b>Video (optional):</b> You can promote a chat to a video call when enabled.</li>
+      <li><b>Agent Portal:</b> The agent replies, views customer context, and handles the conversation end-to-end.</li>
     </ul>
   </div>
 </div>

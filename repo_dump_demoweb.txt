@@ -8,6 +8,7 @@ import { bus } from '../services/bus.js';
 export class ChatController {
   convo = null;
   svc = new ConversationsService();
+  _seenMsgIds = new Set();
 
   async resumeOrStart(storedSid) {
     await this.svc.init();
@@ -15,7 +16,11 @@ export class ChatController {
     if (!sid) return null;
 
     const convo = await this.svc.getConversationBySidWithRetry(sid);
-    if (!convo) return null;
+    if (!convo) {
+      // <- Conversación inválida (ej. 403 “not participant”): limpia el SID
+      try { SessionStore.convoSid = null; } catch {}
+      return null;
+    }
 
     this.convo = convo;
     SessionStore.convoSid = this.convo.sid;
@@ -28,8 +33,13 @@ export class ChatController {
       console.warn('Failed to load message history', e);
     }
 
-    // Eventos de mensajes
-    this.convo.on('messageAdded', (msg) => bus.emit('messages:added', msg));
+    // Eventos de mensajes (de-dupe por clientMsgId si llega)
+    this.convo.on('messageAdded', (msg) => {
+      const cid = msg?.attributes?.clientMsgId;
+      if (cid && this._seenMsgIds.has(cid)) return;
+      if (cid) this._seenMsgIds.add(cid);
+      bus.emit('messages:added', msg);
+    });
 
     // Mostrar UI de chat
     bus.emit('chat:ready', { sid: this.convo.sid });
@@ -47,10 +57,7 @@ export class ChatController {
   }
 
   async startNew({ name, email }) {
-    // 1) Guest token (setea identity si es necesario)
-    await fetchGuestToken();
-
-    // 2) Crear/fetch conversación
+    // NO hacemos fetchGuestToken aquí: init() ya lo maneja
     const convoRes = await fetch(`${API_BASE}/api/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,7 +71,6 @@ export class ChatController {
     }
     const convoData = await convoRes.json();
 
-    // 3) Asegurar participant membership
     try {
       const addRes = await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
         method: 'POST',
@@ -87,14 +93,32 @@ export class ChatController {
       if (err.status !== 409 && err.code !== 50433) throw err;
     }
 
-    // 4) Abrir conversación
     return this.resumeOrStart(convoData.sid);
   }
 
   async send(body) {
     if (!this.convo || !body) return;
-    await this.convo.sendMessage(body);
-    bus.emit('messages:echo', { author: SessionStore.identity || 'me', body });
+    const clientMsgId = (globalThis.crypto?.randomUUID?.()) || (String(Date.now()) + Math.random().toString(36).slice(2,8));
+    try {
+      if (this.convo.prepareMessage) {
+        await this.convo.prepareMessage().setBody(body).setAttributes({ clientMsgId }).build().send();
+      } else {
+        await this.convo.sendMessage(body, { clientMsgId });
+      }
+      this._seenMsgIds.add(clientMsgId);
+      bus.emit('messages:echo', { author: SessionStore.identity || 'me', body, clientMsgId });
+    } catch (e) {
+      // retry simple
+      try {
+        await new Promise(r => setTimeout(r, 300));
+        await this.convo.sendMessage(body, { clientMsgId });
+        this._seenMsgIds.add(clientMsgId);
+        bus.emit('messages:echo', { author: SessionStore.identity || 'me', body, clientMsgId });
+      } catch (err2) {
+        console.error('send failed', err2);
+        throw err2;
+      }
+    }
   }
 
   async end() {
@@ -121,7 +145,7 @@ import { initFormsUI } from '../ui/forms.view.js';
 import '../ui/shell.ui.js';
 import { bus } from '../services/bus.js';
 
-const chat  = new ChatController();
+const chat = new ChatController();
 const video = new VideoController();
 
 initFormsUI({ chat, video });
@@ -129,26 +153,26 @@ initFormsUI({ chat, video });
 // Enviar mensajes de sistema por eventos de video
 let suppressVideoStartMessageOnce = false;
 
-bus.on('video:started', () => {
+bus.on('video:started', async () => {
   if (suppressVideoStartMessageOnce) { suppressVideoStartMessageOnce = false; return; }
-  try { chat.send('[system] Video call started'); } catch {}
+  try { await chat.send('[system] Video call started'); } catch { }
 });
-bus.on('video:ended', () => {
-  try { chat.send('[system] Video call ended'); } catch {}
+bus.on('video:ended', async () => {
+  try { await chat.send('[system] Video call ended'); } catch { }
 });
 
 // Boot: reanudar conversación (y video si estaba activo)
-(async function boot(){
+(async function boot() {
   const convo = await chat.resumeOrStart(SessionStore.convoSid);
   if (convo && SessionStore.videoActive) {
     suppressVideoStartMessageOnce = true; // no reenviar mensaje al reanudar
-    setTimeout(() => video.start(convo.sid, undefined, { auto:true }).catch(console.error), 400);
+    setTimeout(() => video.start(convo.sid, undefined, { auto: true }).catch(console.error), 400);
   }
 })();
 
 // Desconectar video al navegar fuera
 window.addEventListener('beforeunload', () => {
-  try { video.end(); } catch {}
+  try { video.end(); } catch { }
 });
 
 ==== /webchat\app\main.js ====
@@ -197,6 +221,12 @@ export class VideoController {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Website X — Concierge Support (Twilio)</title>
 
+  <!-- Networking hints -->
+  <link rel="preconnect" href="http://localhost:4000" crossorigin>
+  <link rel="preconnect" href="https://media.twiliocdn.com" crossorigin>
+  <link rel="dns-prefetch" href="https://tsock.us1.twilio.com">
+  <link rel="modulepreload" href="./app/main.js" />
+
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -214,19 +244,19 @@ export class VideoController {
   <div class="backdrop" id="backdrop"></div>
 
   <div class="page">
-    <aside class="sidebar" id="drawer" data-include="./partials/sidebar.html"></aside>
+    <aside class="sidebar" id="drawer" data-include="./partials/sidebar"></aside>
 
     <div class="content" id="contentRoot">
-      <header class="topbar" data-include="./partials/topbar.html"></header>
+      <header class="topbar" data-include="./partials/topbar"></header>
 
       <main>
-        <section class="hero" id="kb" aria-label="Hero" data-include="./partials/hero.html"></section>
-        <section class="grid" id="chat" aria-label="Start chat" data-include="./partials/grid-start-chat.html"></section>
-        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat" data-include="./partials/chat-shell.html"></section>
-        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal.html"></section>
-        <section class="grid" id="phone-lab" aria-label="Phone Lab" data-include="./partials/phone-lab.html"></section>
-        <section class="grid" id="status" aria-label="Service Status" data-include="./partials/status.html"></section>
-        <section class="grid" id="how" aria-label="How it works" data-include="./partials/how.html"></section>
+        <section class="hero" id="kb" aria-label="Hero" data-include="./partials/hero"></section>
+        <section class="grid" id="chat" aria-label="Start chat" data-include="./partials/grid-start-chat"></section>
+        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat" data-include="./partials/chat-shell"></section>
+        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal"></section>
+        <section class="grid" id="phone-lab" aria-label="Phone Lab" data-include="./partials/phone-lab"></section>
+        <section class="grid" id="status" aria-label="Service Status" data-include="./partials/status"></section>
+        <section class="grid" id="how" aria-label="How it works" data-include="./partials/how"></section>
       </main>
 
       <footer>
@@ -235,32 +265,27 @@ export class VideoController {
     </div>
   </div>
 
-  <nav class="bottombar" aria-label="Bottom navigation" data-include="./partials/bottombar.html"></nav>
-  <div class="fab" data-include="./partials/fab.html"></div>
-
-  <!-- SDKs (order matters) -->
-  <script src="https://media.twiliocdn.com/sdk/js/conversations/v2.4/twilio-conversations.min.js" defer></script>
-  <script src="https://media.twiliocdn.com/sdk/js/video/releases/2.27.0/twilio-video.min.js" defer></script>
-  <!-- Voice: ya no hay CDN oficial; usamos unpkg para v2.x -->
-  <script src="https://unpkg.com/@twilio/voice-sdk@2.10.1/dist/twilio.min.js" defer></script>
+  <nav class="bottombar" aria-label="Bottom navigation" data-include="./partials/bottombar"></nav>
+  <div class="fab" data-include="./partials/fab"></div>
 
   <!-- Config inicial: EXACTO al monolítico -->
-  <script>
-    window.API_BASE = 'http://localhost:4000';
-    window.DEMO = {
-      agentPortalUrl: 'https://agents.demo.example.com',
-      agentId: 'demo-agent-1',
-      workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      identity: 'client:agent:demo-agent-1',
-      softphoneUrl: '',
-      ivrNumber: '+12058275832',
-      outboundFromNumber: '+19793416695',
-      customerProfiles: [
-        { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695', scenario: 'vip', dtmf: '1-2', locale: 'en-US', notes: 'VIP · vehicle on file' },
-      ]
-    };
-    try { document.getElementById('year').textContent = new Date().getFullYear(); } catch {}
-  </script>
+<script>
+  window.API_BASE = 'http://localhost:4000';
+  window.DEMO = {
+    agentPortalUrl: 'https://agents.demo.example.com',
+    agentId: 'demo-agent-1',
+    workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    identity: 'client:agent:demo-agent-1',
+    softphoneUrl: '',
+    ivrNumber: '+12058275832',
+    outboundFromNumber: '+19793416695',
+    customerProfiles: [
+      { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695' }
+    ]
+  };
+  try { document.getElementById('year').textContent = new Date().getFullYear(); } catch {}
+</script>
+
 
   <!-- Cargador de parciales y arranque -->
   <script type="module">
@@ -269,12 +294,16 @@ export class VideoController {
       await Promise.all(nodes.map(async el => {
         const res = await fetch(el.dataset.include);
         el.innerHTML = await res.text();
-        // el.removeAttribute('data-include'); // opcional
       }));
     }
+
+    // 1) Inyecta parciales
     await includePartials();
-    // Toda la UI está en el DOM → ahora sí, importa la app
-    import './app/main.js';
+    // 2) Señaliza que el DOM ya tiene TODOS los IDs necesarios
+    window.__partialsReady = true;
+    window.dispatchEvent(new Event('partials:ready'));
+    // 3) Ahora sí: carga la app (los módulos enganchan listeners con los nodos presentes)
+    await import('./app/main.js');
   </script>
 </body>
 </html>
@@ -285,24 +314,28 @@ export class VideoController {
 <div class="card">
   <div class="card-body">
     <h2>Agent Portal — Access</h2>
-    <p class="helper">Log in as an <b>agent</b> to receive chats and calls from this demo.</p>
+    <p class="helper">Open the portal as an <b>agent</b>. Keep this page open as the <b>customer</b>.</p>
 
-    <div class="portal-forms">
+    <!-- Todo en lista (una sola columna) para evitar competencia de espacio -->
+    <ul class="portal-forms" style="grid-template-columns:1fr; list-style:none; padding:0; margin:0">
       <!-- Portal URL -->
-      <div class="form-block">
+      <li class="form-block">
         <label class="label" for="agentPortalUrl">Portal URL</label>
         <div class="input-group">
-          <input class="input" id="agentPortalUrl" placeholder="https://portal.agents.demo" />
+          <input class="input mono" id="agentPortalUrl" type="url" placeholder="https://portal.agents.demo" />
           <button class="btn open-btn" type="button" id="openPortal" title="Open Agent Portal">Open</button>
         </div>
-      </div>
+      </li>
 
       <!-- Demo fields -->
-      <div class="form-block">
-        <label class="label">Demo fields (copy to the Portal)</label>
+      <li class="form-block">
+        <label class="label">Demo login values (click the copy buttons)</label>
         <div class="chip-list">
           <div class="chip-row">
-            <span class="chip mono trunc" id="agentId-pill" title="Agent ID">agent-id: demo-agent-1</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Agent ID</span>
+              <span class="chip mono trunc" id="agentId-pill" title="Agent ID">demo-agent-1</span>
+            </div>
             <button class="btn icon sm" data-copy="#agentId-pill" aria-label="Copy Agent ID" title="Copy Agent ID">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -312,7 +345,10 @@ export class VideoController {
           </div>
 
           <div class="chip-row">
-            <span class="chip mono trunc" id="workerSid-pill" title="TaskRouter Worker SID">WKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Worker SID</span>
+              <span class="chip mono trunc" id="workerSid-pill" title="TaskRouter Worker SID">WKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</span>
+            </div>
             <button class="btn icon sm" data-copy="#workerSid-pill" aria-label="Copy Worker SID" title="Copy Worker SID">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -322,7 +358,10 @@ export class VideoController {
           </div>
 
           <div class="chip-row">
-            <span class="chip mono trunc" id="identity-pill" title="Identity (must equal Worker attributes.contact_uri)">client:agent:demo-agent-1</span>
+            <div style="display:grid;gap:4px;min-width:0">
+              <span class="label small">Identity (must equal Worker <span class="mono">attributes.contact_uri</span>)</span>
+              <span class="chip mono trunc" id="identity-pill" title="Identity (must equal Worker attributes.contact_uri)">client:agent:demo-agent-1</span>
+            </div>
             <button class="btn icon sm" data-copy="#identity-pill" aria-label="Copy Identity" title="Copy Identity">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -332,16 +371,16 @@ export class VideoController {
           </div>
         </div>
 
-        <div class="callout small portal-note">
+        <div class="callout small portal-note" style="margin-top:10px">
           <b>Important:</b> In TaskRouter, set the Worker’s <span class="mono">attributes.contact_uri</span>
           to exactly match the Identity you enter above. The portal login checks this match.
         </div>
-      </div>
-    </div>
+      </li>
 
-    <div class="callout small" style="margin-top:12px">
-      Tip: keep the portal open while placing calls from <b>Phone Lab</b>.
-    </div>
+      <li>
+        <div class="callout small">Tip: keep the portal open while calling from <b>Phone Lab</b>.</div>
+      </li>
+    </ul>
   </div>
 </div>
 
@@ -488,7 +527,11 @@ export class VideoController {
 <div class="card">
   <div class="card-body">
     <h2>Start a new chat</h2>
-    <p class="helper">This is the customer-side chat. Conversations are routed to agents via TaskRouter.</p>
+    <p class="helper">
+      This is the customer view. Your message goes straight to the next available agent.
+      For the demo, keep this page open as the <b>customer</b> and open the <b>Agent Portal</b> in another window as the agent.
+      From this chat you can also start a <b>video call</b> if it’s enabled.
+    </p>
     <form id="start-form" aria-label="Start form">
       <div class="split">
         <div class="field">
@@ -500,28 +543,12 @@ export class VideoController {
           <input class="input" id="email" type="email" placeholder="you@company.com" required />
         </div>
       </div>
-      <div class="split">
-        <div class="field">
-          <label class="label" for="topic">Topic</label>
-          <select id="topic" aria-label="Topic">
-            <option value="support">Technical support</option>
-            <option value="billing">Billing</option>
-            <option value="sales">Sales</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="label" for="priority">Priority</label>
-          <select id="priority" aria-label="Priority">
-            <option>Standard</option>
-            <option>High</option>
-            <option>Urgent</option>
-          </select>
-        </div>
-      </div>
+
       <div class="start-actions">
         <button class="btn primary" type="submit">Start chat</button>
         <span class="helper">By starting, you accept our <a href="#" style="color:var(--accent)">Terms</a>.</span>
       </div>
+
       <div class="callout small" style="margin-top:10px">
         Video is optional and depends on backend feature flag <span class="mono">ENABLE_VIDEO=true</span>.
       </div>
@@ -531,26 +558,14 @@ export class VideoController {
 
 <div class="card">
   <div class="card-body">
-    <h3>Demo flow (customer ↔ agent)</h3>
+    <h3>How the demo works (simple)</h3>
     <ol class="small" style="margin:10px 0 0 18px; line-height:1.6">
-      <li>Start the <b>customer chat</b> here.</li>
-      <li>Open the <b>Agent Portal</b>, log in with the demo fields, and <i>receive</i> chats/calls.</li>
-      <li>Use <b>Phone Lab (IVR)</b> to pick a customer profile and place a simulated call to test IVR and routing.</li>
+      <li><b>Start the chat</b> here as the customer. It routes to the next available agent.</li>
+      <li>Open the <b>Agent Portal</b> (below) in another window and log in with the demo values.</li>
+      <li>Reply to yourself from the portal to see the real-time conversation.</li>
+      <li>If enabled, click <b>Video</b> in the chat toolbar to switch to a video call.</li>
+      <li>Use <b>Phone Lab</b> to place a test phone call that follows your IVR and routes to the agent.</li>
     </ol>
-    <div class="kpis">
-      <div class="kpi">
-        <div class="label">Urgent SLA</div>
-        <div class="value">&lt; 60s</div>
-      </div>
-      <div class="kpi">
-        <div class="label">CSAT</div>
-        <div class="value">98.6%</div>
-      </div>
-      <div class="kpi">
-        <div class="label">Avg. Time to Resolve</div>
-        <div class="value">7m 42s</div>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -572,15 +587,13 @@ export class VideoController {
 ==== webchat\partials\how.html ====
 <div class="card" aria-label="How it works">
   <div class="card-body">
-    <h3>How it works — under the hood</h3>
+    <h3>How it works — plain English</h3>
     <ul class="small" style="margin:8px 0 0 18px; line-height:1.7">
-      <li><b>Conversations (chat):</b> guest tokens (<span class="mono">/api/chat/token/guest</span>),
-        per-conversation webhooks create a chat task automatically.</li>
-      <li><b>TaskRouter (routing):</b> assignment callback (<span class="mono">/api/taskrouter/assignment</span>) accepts chat or sets up voice conferences.</li>
-      <li><b>Voice & Softphone:</b> WebRTC device tokens (<span class="mono">/api/token/voice</span>);
-        hold/record/transfer endpoints control calls.</li>
-      <li><b>Video (optional):</b> <span class="mono">/api/video/ensure-room</span> + agent/guest tokens for a room tied to the chat.</li>
-      <li><b>CRM (demo):</b> the portal shows customer/vehicle/appointments/finance data and logs interactions.</li>
+      <li><b>Start:</b> You type here as a customer. The next available agent sees it instantly.</li>
+      <li><b>Routing:</b> The system automatically sends each chat or call to the right agent.</li>
+      <li><b>Calls:</b> Phone Lab places a test call through your IVR and into the agent’s softphone.</li>
+      <li><b>Video (optional):</b> You can promote a chat to a video call when enabled.</li>
+      <li><b>Agent Portal:</b> The agent replies, views customer context, and handles the conversation end-to-end.</li>
     </ul>
   </div>
 </div>
@@ -591,42 +604,21 @@ export class VideoController {
 <div class="card">
   <div class="card-body">
     <h2>Phone Lab — Customer Simulator + IVR</h2>
-    <p class="helper">Pick a <b>customer profile</b>, launch the softphone (iframe), and hit <b>Start call</b>. We set the caller ID to trigger the correct IVR path.</p>
+    <p class="helper">
+      Pick a <b>customer profile</b> and hit <b>Start call</b>. The IVR number and caller ID are preconfigured for the demo.
+      The softphone is embedded below — when the call starts, we’ll scroll you to it automatically.
+    </p>
 
     <div class="grid-3" style="margin-top:10px">
       <div class="field">
         <label class="label" for="customerProfile">Customer profile</label>
         <select id="customerProfile"></select>
       </div>
-      <div class="field">
-        <label class="label" for="callerId">Caller ID (ANI)</label>
-        <input class="input mono" id="callerId" placeholder="+15555550100" />
-      </div>
-      <div class="field">
-        <label class="label" for="ivrNumber">IVR number (DID to dial)</label>
-        <input class="input mono" id="ivrNumber" placeholder="+15555550123" />
-      </div>
-    </div>
-
-    <div class="grid-3" style="margin-top:10px">
-      <div class="field">
-        <label class="label" for="scenario">Scenario ID</label>
-        <input class="input" id="scenario" placeholder="vip / billing-delinquent / onboarding" />
-      </div>
-      <div class="field">
-        <label class="label" for="dtmf">Auto DTMF (optional)</label>
-        <input class="input mono" id="dtmf" placeholder="1-2-1" />
-      </div>
-      <div class="field">
-        <label class="label" for="locale">Language</label>
-        <input class="input" id="locale" placeholder="en-US / es-CR" />
-      </div>
     </div>
 
     <div class="row" style="margin-top:12px; flex-wrap:wrap">
-      <button class="btn" id="launchSoftphone" type="button">Launch softphone</button>
       <button class="btn primary" id="startCall" type="button">Start call</button>
-      <span class="small">The call is triggered via <span class="mono">POST /demo/call/start</span> on your server.</span>
+      <span class="small">The call uses your configured IVR DID and demo caller ID.</span>
     </div>
   </div>
 </div>
@@ -636,12 +628,10 @@ export class VideoController {
     <h3>Embedded softphone</h3>
     <div class="iframe-shell">
       <div id="softphoneWrap" class="iframe-placeholder">
-        Set <span class="mono">DEMO.softphoneUrl</span> to load your webphone here.
+        Your softphone appears here during calls.
       </div>
     </div>
-    <div class="callout small" style="margin-top:12px">
-      If your softphone supports <i>postMessage</i>, we’ll send <span class="mono">{type: 'call', to, from, profile}</span> on start.
-    </div>
+    <div class="callout small" style="margin-top:12px">We auto-scroll here when you click <b>Start call</b>.</div>
   </div>
 </div>
 
@@ -808,26 +798,49 @@ export const LS = {
 
 ==== webchat\services\conversations.service.js ====
 import { fetchGuestToken } from './token.service.js';
+import { loadScriptOnce } from './script.loader.js';
+
+async function waitForConversationsSDK(maxWaitMs = 7000) {
+  if (!(window.Twilio?.Conversations?.Client)) {
+    await loadScriptOnce(
+      'https://media.twiliocdn.com/sdk/js/conversations/releases/2.4.1/twilio-conversations.min.js',
+      { crossorigin: true }
+    );
+  }
+  const start = Date.now();
+  while (!(window.Twilio?.Conversations?.Client)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error('Twilio Conversations SDK failed to load.');
+    }
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return window.Twilio.Conversations.Client;
+}
 
 export class ConversationsService {
   client = null;
 
   async init() {
+    // Asegura SDK presente antes de crear el cliente
+    const TwClient = await waitForConversationsSDK();
+
     const token = await fetchGuestToken();
-    const TwClient = window.Twilio?.Conversations?.Client;
-    if (!TwClient) throw new Error('Twilio Conversations SDK failed to load.');
     this.client = new TwClient(token);
 
     // Token refresh
     this.client.on('tokenAboutToExpire', async () => {
-      try { await this.client.updateToken(await fetchGuestToken()); } catch (e) { console.error('Guest token refresh failed', e); }
+      try { await this.client.updateToken(await fetchGuestToken()); }
+      catch (e) { console.error('Guest token refresh failed', e); }
     });
     this.client.on('tokenExpired', async () => {
-      try { await this.client.updateToken(await fetchGuestToken()); } catch (e) { console.error('Guest token refresh (expired) failed', e); }
+      try { await this.client.updateToken(await fetchGuestToken()); }
+      catch (e) { console.error('Guest token refresh (expired) failed', e); }
     });
 
     if (this.client.state !== 'initialized') {
-      await new Promise((resolve) => this.client.on('stateChanged', (state) => state === 'initialized' && resolve()));
+      await new Promise((resolve) =>
+        this.client.on('stateChanged', (state) => state === 'initialized' && resolve())
+      );
     }
     return this.client;
   }
@@ -844,6 +857,11 @@ export class ConversationsService {
           await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
+        if (msg.includes('not initialized') && i < maxTries - 1) {
+          try { await this.init(); } catch {}
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
         throw err;
       }
     }
@@ -852,6 +870,27 @@ export class ConversationsService {
 }
 
 ==== /webchat\services\conversations.service.js ====
+
+==== webchat\services\script.loader.js ====
+// Small, cached script loader for on-demand SDKs
+const _loaded = new Map();
+
+export async function loadScriptOnce(src, { crossorigin } = {}) {
+  if (_loaded.has(src)) return _loaded.get(src);
+  const p = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    if (crossorigin) s.crossOrigin = 'anonymous';
+    s.onload = () => resolve();
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  _loaded.set(src, p);
+  return p;
+}
+
+==== /webchat\services\script.loader.js ====
 
 ==== webchat\services\session.store.js ====
 import { LS } from './config.js';
@@ -887,15 +926,33 @@ export const SessionStore = {
 import { API_BASE } from './config.js';
 import { SessionStore } from './session.store.js';
 
+async function fetchWithTimeout(url, opts={}, timeoutMs=7000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal });
+    return res;
+  } finally { clearTimeout(t); }
+}
+
 export async function fetchGuestToken() {
   const identity = SessionStore.identity;
   const identityQs = identity ? `?identity=${encodeURIComponent(identity)}` : '';
   const url = `${API_BASE}/api/chat/${identity ? 'refresh' : 'token'}/guest${identityQs}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Token error: ${res.status}`);
-  const data = await res.json();
-  if (data.identity) SessionStore.identity = data.identity; // e.g., guest:uuid
-  return data.token;
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetchWithTimeout(url, {}, 7000);
+      if (!res.ok) throw new Error(`Token http ${res.status}`);
+      const data = await res.json();
+      if (data.identity) SessionStore.identity = data.identity; // e.g., guest:uuid
+      return data.token;
+    } catch (e) {
+      lastErr = e;
+      await new Promise(r => setTimeout(r, 200 * (2 ** i)));
+    }
+  }
+  throw lastErr || new Error('Token error');
 }
 
 ==== /webchat\services\token.service.js ====
@@ -903,13 +960,30 @@ export async function fetchGuestToken() {
 ==== webchat\services\video.service.js ====
 import { API_BASE } from './config.js';
 import { SessionStore } from './session.store.js';
+import { loadScriptOnce } from './script.loader.js';
+
+async function waitForVideoSDK(maxWaitMs = 7000) {
+  if (!(window.Twilio?.Video)) {
+    await loadScriptOnce(
+      'https://media.twiliocdn.com/sdk/js/video/releases/2.27.0/twilio-video.min.js',
+      { crossorigin: true }
+    );
+  }
+  const start = Date.now();
+  while (!(window.Twilio?.Video)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error('Twilio Video SDK is not loaded.');
+    }
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return window.Twilio.Video;
+}
 
 export class VideoService {
   room = null;
 
   async start(conversationSid, previewTracksCb) {
-    const Video = window.Twilio?.Video;
-    if (!Video) throw new Error('Twilio Video SDK is not loaded.');
+    const Video = await waitForVideoSDK();
 
     // Ensure room in backend
     const ensureRes = await fetch(`${API_BASE}/api/video/ensure-room`, {
@@ -927,8 +1001,14 @@ export class VideoService {
     if (!tokRes.ok) throw new Error(`video token failed: ${tokRes.status}`);
     const { token } = await tokRes.json();
 
-    // Preview tracks (prompt permiso)
-    const previewTracks = await Video.createLocalTracks({ audio: true, video: { width: 640 } });
+    // Preview tracks (permiso + preview inmediato)
+    let previewTracks = [];
+    try {
+      previewTracks = await Video.createLocalTracks({ audio: true, video: { width: 640 } });
+    } catch {
+      // Si cam es bloqueada, intenta sólo audio
+      previewTracks = await Video.createLocalTracks({ audio: true });
+    }
     previewTracksCb?.(previewTracks);
 
     // Conectar usando los mismos tracks
@@ -937,7 +1017,12 @@ export class VideoService {
   }
 
   end() {
-    try { this.room?.disconnect(); } catch {}
+    try {
+      if (this.room) {
+        try { this.room.localParticipant.tracks.forEach(pub => pub.track?.stop?.()); } catch {}
+        this.room.disconnect();
+      }
+    } catch {}
     this.room = null;
   }
 }
@@ -1089,7 +1174,14 @@ section.chat { display:grid; gap:18px; }
   background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,0));
   backdrop-filter: var(--glass);
 }
-.chip { display:inline-grid; place-items:center; width:40px; height:40px; border-radius:12px; border:1px solid var(--stroke); background: var(--card); }
+
+/* ⬇️  Scoped sólo al botón de adjuntar del composer
+      (evita afectar los chips del Agent Portal) */
+.composer label.chip {
+  display:inline-grid; place-items:center; width:40px; height:40px;
+  border-radius:12px; border:1px solid var(--stroke); background: var(--card);
+}
+
 #message-input {
   flex:1; padding:12px 14px; border-radius:999px; border:1px solid var(--stroke);
   background: rgba(255,255,255,.05); outline:0; color: var(--text);
@@ -1142,6 +1234,8 @@ section.chat { display:grid; gap:18px; }
 }
 .btn.ghost { border-color: var(--chip-br); background: var(--chip-bg); }
 .btn.icon { width:40px; height:40px; padding:0; display:grid; place-items:center; border-radius:10px; }
+/* variante compacta para el botón “copiar” del portal */
+.btn.icon.sm { width:36px; height:36px; padding:0; display:grid; place-items:center; }
 
 .card { border:1px solid var(--stroke); border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); overflow:hidden; }
 .card .card-body { padding:22px; }
@@ -1184,19 +1278,36 @@ section.chat { display:grid; gap:18px; }
 .callout { padding:14px; border:1px dashed var(--stroke); border-radius:12px; background: rgba(255,255,255,.04); }
 
 /* Portal responsive helpers */
-.portal-forms { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+.portal-forms {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
 @media (max-width:920px){ .portal-forms { grid-template-columns: 1fr; } }
 .portal-forms .form-block { display:grid; gap:10px; }
 
-.input-group { display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center; }
+.input-group {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto; /* botón compacto a la derecha */
+  gap:10px;
+  align-items:center;
+}
 @media (max-width:480px) {
   .input-group { grid-template-columns: 1fr; }
   .input-group .open-btn { width:100%; }
 }
 
 .chip-list { display:grid; gap:10px; }
-.chip-row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+.chip-row {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto; /* izquierda flexible, botón fijo */
+  gap:8px;
+  align-items:center;
+}
+.chip-row > div { min-width: 0; }            /* permite elipsis correctamente */
 .chip { display:block; padding:10px 12px; border:1px solid var(--chip-br); background: var(--chip-bg); border-radius:12px; }
+.chip-row .chip { width: 100%; }             /* estirar chip al ancho de su columna */
 .chip.trunc { overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width:420px) { .chip.trunc { white-space: normal; word-break: break-all; } }
 
@@ -1436,42 +1547,39 @@ export function initFormsUI({ chat, video }){
   // Prefill name/email
   const nameEl  = byId('name');
   const emailEl = byId('email');
-  if (nameEl && SessionStore.name)  nameEl.value  = SessionStore.name;
+  if (nameEl && SessionStore.name)   nameEl.value  = SessionStore.name;
   if (emailEl && SessionStore.email) emailEl.value = SessionStore.email;
 
   let currentSid = null;
 
-  // Submit start form
+  // Start form
   startForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name  = (byId('name')?.value || '').trim();
     const email = (byId('email')?.value || '').trim().toLowerCase();
 
     try {
-      // Persistir UX
       SessionStore.name = name;
       SessionStore.email = email;
 
-      // Crear conversación + join + abrir (controller maneja todo)
       const convo = await chat.startNew({ name, email });
-      if (!convo) {
-        alert('Could not open the conversation yet. Please retry.');
-        return;
-      }
+      if (!convo) { alert('Could not open the conversation yet. Please retry.'); return; }
 
-      // Seed message (no bloqueante)
+      // Set our local sid immediately (don’t wait only on bus)
+      currentSid = convo.sid;
+
+      // Seed message (non-blocking)
       fetch(`${API_BASE}/api/conversations/${convo.sid}/messages`, {
         method: 'POST', headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({ author: 'system', body: 'Thanks! An agent will join shortly.' })
       }).catch(()=>{});
-
     } catch (err) {
       console.error(err);
       alert('Unexpected error starting chat.');
     }
   });
 
-  // Enviar mensaje
+  // Send message
   messageForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = (messageInput?.value || '').trim();
@@ -1492,35 +1600,30 @@ export function initFormsUI({ chat, video }){
       alert('Could not start the video call. Check console and server vars.');
     }
   });
-
   endVideoBtn?.addEventListener('click', () => {
     try { video.end(); } catch {}
-    // Mensaje lo mandamos vía main.js hook
   });
 
   // End chat
   endChatBtn?.addEventListener('click', async () => {
     try { video.end(); } catch {}
-    await chat.end();
+    await chat.end();      // emits chat:ended
+    currentSid = null;     // also drop our local copy
   });
 
-  // Copiar transcript (simple)
+  // Copy transcript
   copyBtn?.addEventListener('click', async () => {
     const nodes = document.querySelectorAll('#messages li .bubble, #messages li .time');
     const lines = [];
     let current = '';
     nodes.forEach(n => {
-      if (n.classList.contains('time')) {
-        current = `[${n.textContent}] `;
-      } else {
-        lines.push(`${current}${n.textContent}`);
-        current = '';
-      }
+      if (n.classList.contains('time')) current = `[${n.textContent}] `;
+      else { lines.push(`${current}${n.textContent}`); current = ''; }
     });
     try { await navigator.clipboard.writeText(lines.join('\n')); toast('Copied'); } catch {}
   });
 
-  // Eventos del bus (UI high-level)
+  // BUS → UI
   bus.on('chat:ready', ({ sid }) => {
     currentSid = sid;
     hide(startForm);
@@ -1547,36 +1650,45 @@ import { bus } from '../services/bus.js';
 import { byId, scrollToBottom } from './dom.js';
 import { SessionStore } from '../services/session.store.js';
 
-// Búsqueda perezosa (el parcial puede tardar milisegundos en insertarse)
-function getMessagesEl() {
-  return byId('messages');
-}
+function getMessagesEl() { return byId('messages'); }
+const seen = new Set(); // clientMsgId seen to avoid duplicates
 
-function appendMessage(author, body) {
+function appendMessage(author, body){
   const el = getMessagesEl();
-  if (!el) return; // UI aún no montada
+  if (!el) return;
   const li = document.createElement('li');
   const bubble = document.createElement('div');
   bubble.className = 'bubble' + (author === (SessionStore.identity || 'me') ? ' me' : '');
   bubble.textContent = body || '';
   const time = document.createElement('span');
   time.className = 'time';
-  time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  time.textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   if (author === SessionStore.identity) { li.appendChild(time); li.appendChild(bubble); }
   else { li.appendChild(bubble); li.appendChild(time); }
   el.appendChild(li);
   scrollToBottom(el);
 }
 
-bus.on('messages:reset', (items = []) => {
+bus.on('messages:reset', (items=[]) => {
   const el = getMessagesEl();
   if (!el) return;
   el.innerHTML = '';
-  items.forEach(m => appendMessage(m.author || 'system', m.body || ''));
+  items.forEach(m => {
+    const cid = m?.attributes?.clientMsgId;
+    if (cid) seen.add(cid);
+    appendMessage(m.author || 'system', m.body || '');
+  });
 });
-
-bus.on('messages:added', (m) => appendMessage(m.author || 'system', m.body || ''));
-bus.on('messages:echo',  (m) => appendMessage(m.author || 'me',     m.body || ''));
+bus.on('messages:added', (m) => {
+  const cid = m?.attributes?.clientMsgId;
+  if (cid && seen.has(cid)) return;
+  if (cid) seen.add(cid);
+  appendMessage(m.author || 'system', m.body || '');
+});
+bus.on('messages:echo',  (m) => {
+  if (m?.clientMsgId) seen.add(m.clientMsgId);
+  appendMessage(m.author || 'me', m.body || '');
+});
 bus.on('chat:ended', () => {
   const el = getMessagesEl();
   if (el) el.innerHTML = '';
@@ -1588,28 +1700,26 @@ bus.on('chat:ended', () => {
 import { byId, qs, qsa } from './dom.js';
 import { toast } from './toast.js';
 import { API_BASE, DEMO, LS } from '../services/config.js';
+import { loadScriptOnce } from '../services/script.loader.js';
 
 // Footer year
-try { byId('year').textContent = new Date().getFullYear(); } catch {}
+try { byId('year').textContent = new Date().getFullYear(); } catch { }
 
 // Theme toggle
 byId('toggle-theme')?.addEventListener('click', () => {
   document.body.classList.toggle('light');
-  try { localStorage.setItem(LS.THEME, document.body.classList.contains('light') ? 'light' : 'dark'); } catch {}
+  try { localStorage.setItem(LS.THEME, document.body.classList.contains('light') ? 'light' : 'dark'); } catch { }
 });
-(function(){
-  try {
-    const t = localStorage.getItem(LS.THEME);
-    if (t === 'light') document.body.classList.add('light');
-  } catch {}
+(function () {
+  try { const t = localStorage.getItem(LS.THEME); if (t === 'light') document.body.classList.add('light'); } catch { }
 })();
 
 // Drawer mobile
-const drawer   = byId('drawer');
+const drawer = byId('drawer');
 const backdrop = byId('backdrop');
-const menuBtn  = byId('menuBtn');
-function openDrawer(){ drawer?.classList.add('open'); backdrop?.classList.add('show'); }
-function closeDrawer(){ drawer?.classList.remove('open'); backdrop?.classList.remove('show'); }
+const menuBtn = byId('menuBtn');
+function openDrawer() { drawer?.classList.add('open'); backdrop?.classList.add('show'); }
+function closeDrawer() { drawer?.classList.remove('open'); backdrop?.classList.remove('show'); }
 menuBtn?.addEventListener('click', openDrawer);
 backdrop?.addEventListener('click', closeDrawer);
 
@@ -1620,33 +1730,33 @@ byId('fabStart')?.addEventListener('click', () => {
 });
 
 // Copy pills (portal)
-function hookCopyButtons(){
+function hookCopyButtons() {
   qsa('[data-copy]').forEach(btn => {
     btn.addEventListener('click', () => {
       const sel = btn.getAttribute('data-copy');
       const node = document.querySelector(sel);
-      if(node){ navigator.clipboard.writeText(node.textContent).then(()=> toast('Copied')); }
+      if (node) { navigator.clipboard.writeText(node.textContent).then(() => toast('Copied')); }
     });
   });
 }
 
 // Portal fields
-(function(){
+(function () {
   const portalInput = byId('agentPortalUrl');
-  const openPortal  = byId('openPortal');
-  const agentIdPill   = byId('agentId-pill');
+  const openPortal = byId('openPortal');
+  const agentIdPill = byId('agentId-pill');
   const workerSidPill = byId('workerSid-pill');
-  const identityPill  = byId('identity-pill');
+  const identityPill = byId('identity-pill');
 
-  if(portalInput){ portalInput.value = DEMO.agentPortalUrl || portalInput.value; }
-  if(agentIdPill){   agentIdPill.textContent   = DEMO.agentId; }
-  if(workerSidPill){ workerSidPill.textContent = DEMO.workerSid; }
-  if(identityPill){  identityPill.textContent  = DEMO.identity; }
+  if (portalInput) { portalInput.value = DEMO.agentPortalUrl || portalInput.value; }
+  if (agentIdPill) { agentIdPill.textContent = DEMO.agentId; }
+  if (workerSidPill) { workerSidPill.textContent = DEMO.workerSid; }
+  if (identityPill) { identityPill.textContent = DEMO.identity; }
 
-  if(openPortal){
+  if (openPortal) {
     openPortal.addEventListener('click', () => {
       const url = portalInput.value.trim() || DEMO.agentPortalUrl;
-      if(!url) return toast('Set the Agent Portal URL first');
+      if (!url) return toast('Set the Agent Portal URL first');
       window.open(url, '_blank', 'noopener');
     });
   }
@@ -1654,18 +1764,18 @@ function hookCopyButtons(){
 })();
 
 // Tabs / Sidebar active
-const sections = ['#kb','#chat','#agent-portal','#phone-lab','#status','#how'];
+const sections = ['#kb', '#chat', '#agent-portal', '#phone-lab', '#status', '#how'];
 const allTargets = sections.map(id => document.querySelector(id)).filter(Boolean);
-const sideLinks  = qsa('.menu .nav-link');
-const tabLinks   = qsa('.bottombar .tab');
+const sideLinks = qsa('.menu .nav-link');
+const tabLinks = qsa('.bottombar .tab');
 
-function setActive(href){
+function setActive(href) {
   sideLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === href));
   tabLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === href));
 }
 const io = new IntersectionObserver((entries) => {
-  entries.filter(e => e.isIntersecting).forEach(e => setActive('#'+e.target.id));
-},{
+  entries.filter(e => e.isIntersecting).forEach(e => setActive('#' + e.target.id));
+}, {
   root: null,
   rootMargin: `-${parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) + 24}px 0px -40% 0px`,
   threshold: 0.3
@@ -1677,27 +1787,36 @@ tabLinks.forEach(a => a.addEventListener('click', () => setActive(a.getAttribute
 /* ======================================================
    Phone Lab + Softphone (Twilio Voice WebRTC)
    ====================================================== */
-const profileSelect   = byId('customerProfile');
-const callerId        = byId('callerId');
-const ivrNumber       = byId('ivrNumber');
-const scenario        = byId('scenario');
-const dtmf            = byId('dtmf');
-const locale          = byId('locale');
-const launchSoftphone = byId('launchSoftphone');
-const startCallBtn    = byId('startCall');
+let profileSelect = null;
+let launchSoftphone = null; // removed button
+let startCallBtn = null;
+let softWrap = null;
 
-const softWrap = byId('softphoneWrap');
-
-// Estado Voice
 let voiceDevice = null;
 let voiceConn = null;
 let voiceIdentity = null;
 let callTimerInt = null;
 let callStartTs = 0;
 
-// ===== UI Softphone Inline =====
+function regrabPhoneLabNodes() {
+  profileSelect = byId('customerProfile');
+  launchSoftphone = byId('launchSoftphone'); // not present; kept for no-op compat
+  startCallBtn = byId('startCall');
+  softWrap = byId('softphoneWrap');
+}
+
+function getSelectedProfile() {
+  const list = Array.isArray(DEMO.customerProfiles) ? DEMO.customerProfiles : [];
+  if (!list.length) return null;
+  const selId = profileSelect?.value;
+  return list.find(p => p.id === selId) || list[0];
+}
+
 function mountInlineSoftphoneUI() {
   if (!softWrap) return;
+  // If already mounted, don't duplicate
+  if (softWrap.querySelector('#softphonePanel')) return;
+
   const html = `
     <div id="softphonePanel" style="display:grid;gap:12px;padding:12px">
       <div class="row wrap" style="justify-content:space-between;align-items:center">
@@ -1707,13 +1826,12 @@ function mountInlineSoftphoneUI() {
       <div class="row wrap" style="gap:8px">
         <button class="btn" id="sp-call" type="button">Call</button>
         <button class="btn" id="sp-hang" type="button" disabled>Hang up</button>
-        <button class="btn" id="sp-mute" type="button" disabled>Mute</button>
-        <button class="btn" id="sp-unmute" type="button" disabled>Unmute</button>
+        <button class="btn" id="sp-mute-toggle" type="button" disabled>Mute</button>
         <button class="btn" id="sp-keypad-toggle" type="button">Keypad</button>
       </div>
       <div id="sp-keypad" class="card" style="display:none;padding:12px;border:1px solid var(--stroke);border-radius:12px;background:var(--card)">
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-          ${['1','2','3','4','5','6','7','8','9','*','0','#'].map(d => `<button class="btn" data-digit="${d}" type="button">${d}</button>`).join('')}
+          ${['1','2','3','4','5','6','7','8','9','*','0','#'].map(d=>`<button class="btn" data-digit="${d}" type="button">${d}</button>`).join('')}
         </div>
       </div>
       <div class="row wrap" style="gap:8px">
@@ -1733,190 +1851,177 @@ function mountInlineSoftphoneUI() {
     const btn = e.target.closest('button[data-digit]');
     if (!btn) return;
     const d = btn.getAttribute('data-digit');
-    try { voiceConn?.sendDigits?.(d); } catch {}
+    try { voiceConn?.sendDigits?.(d); } catch { }
   });
   byId('sp-call')?.addEventListener('click', startCallFromUI);
   byId('sp-hang')?.addEventListener('click', endWebRTCCall);
-  byId('sp-mute')?.addEventListener('click', () => voiceConn?.mute?.(true));
-  byId('sp-unmute')?.addEventListener('click', () => voiceConn?.mute?.(false));
+  byId('sp-mute-toggle')?.addEventListener('click', () => voiceConn?.mute?.(!isMuted));
 }
-mountInlineSoftphoneUI();
 
-// Perfiles: asegura Alex seleccionado y campos pre-rellenados
-if(profileSelect){
-  (DEMO.customerProfiles || []).forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.id; opt.textContent = p.name;
-    profileSelect.appendChild(opt);
-  });
-  profileSelect.addEventListener('change', syncProfileToFields);
-  if (profileSelect.options.length) profileSelect.selectedIndex = 0; // Alex por defecto
+function syncProfileToFields() {
+  if (!profileSelect) return;
+  // Select first profile (e.g., Alex Johnson) if none selected yet
+  if (profileSelect.options.length && profileSelect.selectedIndex < 0) {
+    profileSelect.selectedIndex = 0;
+  }
+  const p = getSelectedProfile();
+  const spFrom = byId('sp-from'); const spTo = byId('sp-to');
+  if (spFrom) spFrom.textContent = (p?.callerId || DEMO.outboundFromNumber || '');
+  if (spTo) spTo.textContent = (DEMO.ivrNumber || '');
+}
+
+function ensureProfilesPopulated() {
+  if (!profileSelect) return;
+  // Populate from window.DEMO.customerProfiles (set in index.html)
+  if (!profileSelect.options.length) {
+    (DEMO.customerProfiles || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      profileSelect.appendChild(opt);
+    });
+  }
+  profileSelect.onchange = syncProfileToFields;
   syncProfileToFields();
 }
-function syncProfileToFields(){
-  const p = (DEMO.customerProfiles || []).find(x => x.id === profileSelect.value);
-  if(!p) return;
-  callerId.value = p.callerId || '';
-  ivrNumber.value = DEMO.ivrNumber || '';
-  scenario.value = p.scenario || '';
-  dtmf.value = p.dtmf || '';
-  locale.value = p.locale || 'en-US';
-  const spFrom = byId('sp-from'); const spTo = byId('sp-to');
-  if (spFrom) spFrom.textContent = callerId.value || DEMO.outboundFromNumber || '';
-  if (spTo) spTo.textContent = ivrNumber.value || DEMO.ivrNumber || '';
-}
 
-// Softphone externo opcional
-if(launchSoftphone){
-  launchSoftphone.addEventListener('click', () => {
-    const url = DEMO.softphoneUrl;
-    if(!url){ return toast('Set DEMO.softphoneUrl to load the softphone'); }
-    const wrap = byId('softphoneWrap');
-    if (!wrap) return;
-    const iframe = document.createElement('iframe');
-    iframe.className = 'softphone';
-    iframe.src = url;
-    wrap.replaceWith(iframe);
-    toast('Softphone loaded');
-  });
-}
+// External softphone launcher removed; keep no-op for compatibility
+function wireExternalSoftphone() { return; }
 
 // ===== Voice (Twilio Device) =====
-function hasVoiceSDK(){
-  return !!(window.Twilio?.Device || window.Twilio?.Voice?.Device || window.Device);
+function hasVoiceSDK() { return !!(window.Twilio?.Device || window.Twilio?.Voice?.Device || window.Device); }
+async function ensureVoiceSDKLoaded() {
+  if (!hasVoiceSDK()) {
+    await loadScriptOnce('https://unpkg.com/@twilio/voice-sdk@2.10.1/dist/twilio.min.js');
+  }
 }
-async function fetchVoiceToken(identityHint='softphone:alex'){
+async function fetchVoiceToken(identityHint = 'softphone:alex') {
   const r = await fetch(`${API_BASE}/demo/token/voice?identity=${encodeURIComponent(identityHint)}`);
-  if(!r.ok) throw new Error('voice token http '+r.status);
+  if (!r.ok) throw new Error('voice token http ' + r.status);
   return r.json(); // { token, identity }
 }
-async function ensureVoiceDevice(identityHint){
+async function ensureVoiceDevice(identityHint) {
+  await ensureVoiceSDKLoaded();
   const DeviceCtor = window.Twilio?.Device || window.Twilio?.Voice?.Device || window.Device;
-  if(!DeviceCtor) throw new Error('Twilio Voice SDK not loaded');
-  if(voiceDevice) return voiceDevice;
+  if (!DeviceCtor) throw new Error('Twilio Voice SDK not loaded');
+  if (voiceDevice) return voiceDevice;
 
   const { token, identity } = await fetchVoiceToken(identityHint);
   voiceIdentity = identity;
 
-  voiceDevice = new DeviceCtor(token, {
-    logLevel: 'error',
-    codecPreferences: ['opus','pcmu'],
-  });
-
+  voiceDevice = new DeviceCtor(token, { logLevel: 'error', codecPreferences: ['opus', 'pcmu'] });
   voiceDevice.on('registered', () => setStatus('Ready'));
   voiceDevice.on('error', (e) => { console.error('[Voice] error', e); setStatus('Error'); });
-
   voiceDevice.on('tokenWillExpire', async () => {
     try {
       const { token: next } = await fetchVoiceToken(identity);
       if (typeof voiceDevice.updateToken === 'function') voiceDevice.updateToken(next);
-    } catch (err) {
-      console.warn('[Voice] token refresh failed', err);
-    }
+    } catch (err) { console.warn('[Voice] token refresh failed', err); }
   });
 
-  if (typeof voiceDevice.register === 'function') {
-    await voiceDevice.register();
-  }
+  if (typeof voiceDevice.register === 'function') await voiceDevice.register();
   setStatus('Ready');
   return voiceDevice;
 }
 
-function setStatus(label){
-  const el = byId('sp-status');
-  if(el) el.textContent = label;
+function setStatus(label) { const el = byId('sp-status'); if (el) el.textContent = label; }
+function setButtons({ calling = false, inCall = false } = {}) {
+  const callBtn = byId('sp-call');
+  const hangBtn = byId('sp-hang');
+  const muteToggle = byId('sp-mute-toggle');
+  if (callBtn) callBtn.disabled = calling || inCall;
+  if (hangBtn) hangBtn.disabled = !(calling || inCall);
+  if (muteToggle) muteToggle.disabled = !inCall;
 }
-function setButtons({ calling=false, inCall=false } = {}){
-  const callBtn   = byId('sp-call');
-  const hangBtn   = byId('sp-hang');
-  const muteBtn   = byId('sp-mute');
-  const unmuteBtn = byId('sp-unmute');
-  if (callBtn)   callBtn.disabled   = calling || inCall;
-  if (hangBtn)   hangBtn.disabled   = !(calling || inCall);
-  if (muteBtn)   muteBtn.disabled   = !inCall;
-  if (unmuteBtn) unmuteBtn.disabled = !inCall;
+let isMuted = false;
+function setMuteLabel() {
+  const btn = byId('sp-mute-toggle');
+  if (!btn) return;
+  btn.textContent = isMuted ? 'Unmute' : 'Mute';
 }
-function startTimer(){
+function startTimer() {
   callStartTs = Date.now();
   const t = byId('sp-timer');
   clearInterval(callTimerInt);
   callTimerInt = setInterval(() => {
-    const s = Math.floor((Date.now()-callStartTs)/1000);
-    const mm = String(Math.floor(s/60)).padStart(2,'0');
-    const ss = String(s%60).padStart(2,'0');
-    if(t) t.textContent = `${mm}:${ss}`;
+    const s = Math.floor((Date.now() - callStartTs) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    if (t) t.textContent = `${mm}:${ss}`;
   }, 1000);
 }
-function stopTimer(){
-  clearInterval(callTimerInt);
-  const t = byId('sp-timer');
-  if(t) t.textContent = '00:00';
-}
+function stopTimer() { clearInterval(callTimerInt); const t = byId('sp-timer'); if (t) t.textContent = '00:00'; }
 
-function wireConnectionEvents(conn, autoDtmf){
+function wireConnectionEvents(conn) {
   conn.on('accept', () => {
-    setStatus('In call'); setButtons({ calling:false, inCall:true }); startTimer();
-    if (autoDtmf) {
-      const digits = String(autoDtmf).trim().replace(/[^\d\-w]/g,'').replace(/-+/g,'w');
-      if (digits) setTimeout(() => voiceConn?.sendDigits?.(digits), 1200);
-    }
+    setStatus('In call'); setButtons({ calling: false, inCall: true }); startTimer();
+    isMuted = typeof conn.isMuted === 'function' ? !!conn.isMuted() : false;
+    setMuteLabel();
   });
-  conn.on('mute', (isMuted) => setStatus(isMuted ? 'Muted' : 'In call'));
-  conn.on('reject', () => { setStatus('Rejected'); setButtons({ calling:false, inCall:false }); stopTimer(); voiceConn=null; });
-  conn.on('disconnect', () => { setStatus('Idle');     setButtons({ calling:false, inCall:false }); stopTimer(); voiceConn=null; });
-  conn.on('error', (e) => { console.error('[VoiceConn] error', e); setStatus('Error'); setButtons({ calling:false, inCall:false }); stopTimer(); });
+  conn.on('mute', (muted) => {
+    isMuted = !!muted;
+    setStatus(isMuted ? 'Muted' : 'In call');
+    setMuteLabel();
+  });
+  conn.on('reject', () => { setStatus('Rejected'); setButtons({ calling: false, inCall: false }); stopTimer(); voiceConn = null; });
+  conn.on('disconnect', () => { setStatus('Idle'); setButtons({ calling: false, inCall: false }); stopTimer(); voiceConn = null; });
+  conn.on('error', (e) => { console.error('[VoiceConn] error', e); setStatus('Error'); setButtons({ calling: false, inCall: false }); stopTimer(); });
 }
 
-async function startWebRTCCall({ to, from, autoDtmf }){
+async function startWebRTCCall({ to, from }) {
+  await ensureVoiceSDKLoaded();
   const DeviceCtor = window.Twilio?.Device || window.Twilio?.Voice?.Device || window.Device;
-  if(!DeviceCtor) throw new Error('Twilio Voice SDK not loaded');
+  if (!DeviceCtor) throw new Error('Twilio Voice SDK not loaded');
 
   const dev = await ensureVoiceDevice('softphone:alex');
-  setStatus('Calling…'); setButtons({ calling:true, inCall:false });
+  setStatus('Calling…'); setButtons({ calling: true, inCall: false });
 
-  // En v2, connect retorna Call sincronamente
-  const conn = dev.connect({ params: { To: to, callerId: from } });
+  const maybe = dev.connect({ params: { To: to, callerId: from } });
+  const conn = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+  if (!conn || typeof conn.on !== 'function') {
+    throw new Error('connect() did not return a Call instance');
+  }
   voiceConn = conn;
-  wireConnectionEvents(conn, autoDtmf);
+  wireConnectionEvents(conn);
 }
 
-function endWebRTCCall(){
+function endWebRTCCall() {
   try {
     if (voiceConn?.disconnect) voiceConn.disconnect();
     else if (voiceDevice?.disconnectAll) voiceDevice.disconnectAll();
-  } catch {}
+  } catch { }
   voiceConn = null;
-  setStatus('Idle'); setButtons({ calling:false, inCall:false }); stopTimer();
+  setStatus('Idle'); setButtons({ calling: false, inCall: false }); stopTimer();
 }
 
-async function startCallFromUI(){
-  const to   = (ivrNumber.value || DEMO.ivrNumber || '').trim();
-  const from = (callerId.value || DEMO.outboundFromNumber || '').trim();
-  const autoDtmf = (dtmf.value || '').trim();
+async function startCallFromUI() {
+  const p = getSelectedProfile();
+  const to = (DEMO.ivrNumber || '').trim();
+  const from = (p?.callerId || DEMO.outboundFromNumber || '').trim();
 
-  const ALLOWED_TO = ['+12058275832'];
+  const ALLOWED_TO = ['+12058275832']; // demo safeguard
   if (!ALLOWED_TO.includes(to)) return toast('Por ahora sólo: +12058275832');
 
-  // 1) Intentar WebRTC
-  try{
-    if (hasVoiceSDK()) {
-      await startWebRTCCall({ to, from, autoDtmf });
+  try {
+    if (await (async () => { await ensureVoiceSDKLoaded(); return true; })()) {
+      await startWebRTCCall({ to, from });
+      // Smooth-scroll the user to the embedded softphone
+      try { document.getElementById('softphoneWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
       return;
     }
   } catch (err) {
     console.error('[WebRTC] init/connect failed → falling back to REST', err);
   }
 
-  // 2) Fallback REST (server-side dial)
-  try{
+  try {
     const res = await fetch(`${API_BASE}/demo/call/start`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ to, from, dtmf: autoDtmf })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, from })
     });
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     toast(`Call started → ${to} as ${from}`);
     setStatus('Server call (no WebRTC)');
+    try { document.getElementById('softphoneWrap')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
   } catch (err) {
     console.error('[REST fallback] failed:', err);
     toast('Could not start the call');
@@ -1924,45 +2029,75 @@ async function startCallFromUI(){
   }
 }
 
-// Botón “Start call”
-if(startCallBtn){
-  startCallBtn.addEventListener('click', startCallFromUI);
+function hydratePhoneLab() {
+  regrabPhoneLabNodes();
+  mountInlineSoftphoneUI();
+  ensureProfilesPopulated();
+  // Wire Start call button once
+  if (startCallBtn && startCallBtn.dataset.wired !== '1') {
+    startCallBtn.dataset.wired = '1';
+    startCallBtn.addEventListener('click', startCallFromUI);
+  }
+  wireExternalSoftphone(); // no-op
 }
 
-// =========================
-// Service Status checks
-// =========================
+// Re-sync on anchor nav
+window.addEventListener('hashchange', () => {
+  if (location.hash === '#phone-lab') hydratePhoneLab();
+  if (location.hash === '#status') refreshStatus();
+});
 
-async function refreshStatus(){
-  const kHealth = byId('kpi-health');
-  const kAgents = byId('kpi-agents');
-  const kVideo  = byId('kpi-video');
-
-  if (!kHealth || !kAgents || !kVideo) return; // parcial aún no montado
-
-  try{
-    const h = await fetch(`${API_BASE}/api/health`).then(r=>r.json()).catch(()=>({ok:false}));
-    kHealth.textContent = h && h.ok ? 'OK' : 'Down';
-
-    const p = await fetch(`${API_BASE}/api/taskrouter/presence`).then(async r=>{
-      try { return await r.json(); } catch { return []; }
-    }).catch(()=>[]);
-    const online = Array.isArray(p) ? p.filter(x=>x.available).length : 0;
-    kAgents.textContent = String(online);
-
-    const v = await fetch(`${API_BASE}/api/video/enabled`).then(r=>r.json()).catch(()=>({enabled:false}));
-    kVideo.textContent = v && v.enabled ? 'Enabled' : 'Disabled';
-  }catch(e){
-    kHealth.textContent='—'; kAgents.textContent='—'; kVideo.textContent='—';
+/* =========================
+   Service Status checks
+   ========================= */
+function wireStatusButton() {
+  const btnRefresh = byId('refresh-status');
+  if (btnRefresh && btnRefresh.dataset.wired !== '1') {
+    btnRefresh.dataset.wired = '1';
+    btnRefresh.addEventListener('click', refreshStatus);
   }
 }
 
-// Enlazamos el botón cuando exista
-(function hookStatusUI(){
-  const btnRefresh = byId('refresh-status');
-  if (btnRefresh) btnRefresh.addEventListener('click', refreshStatus);
-})();
-refreshStatus();
+async function refreshStatus() {
+  const kHealth = byId('kpi-health');
+  const kAgents = byId('kpi-agents');
+  const kVideo = byId('kpi-video');
+  if (!kHealth || !kAgents || !kVideo) return;
+
+  try {
+    const h = await fetch(`${API_BASE}/api/health`).then(r => r.json()).catch(() => ({ ok: false }));
+    kHealth.textContent = h && h.ok ? 'OK' : 'Down';
+
+    // presence: try private then fallback to public if 401/403
+    let pres = [];
+    try {
+      let r = await fetch(`${API_BASE}/api/taskrouter/presence`, { credentials: 'include' });
+      if (r.status === 401 || r.status === 403) {
+        r = await fetch(`${API_BASE}/api/taskrouter/presence/public`);
+      }
+      pres = await r.json().catch(() => []);
+    } catch { }
+    const online = Array.isArray(pres) ? pres.filter(x => x.available).length : 0;
+    kAgents.textContent = String(online);
+
+    const v = await fetch(`${API_BASE}/api/video/enabled`).then(r => r.json()).catch(() => ({ enabled: false }));
+    kVideo.textContent = v && v.enabled ? 'Enabled' : 'Disabled';
+  } catch {
+    kHealth.textContent = '—'; kAgents.textContent = '—'; kVideo.textContent = '—';
+  }
+}
+
+// Partials ready (handle race where event fired before this script was loaded)
+function bootAfterPartials() {
+  hydratePhoneLab();
+  wireStatusButton();
+  refreshStatus();
+}
+if (window.__partialsReady) {
+  bootAfterPartials();
+} else {
+  window.addEventListener('partials:ready', bootAfterPartials);
+}
 
 ==== /webchat\ui\shell.ui.js ====
 

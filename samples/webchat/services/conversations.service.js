@@ -1,6 +1,13 @@
 import { fetchGuestToken } from './token.service.js';
+import { loadScriptOnce } from './script.loader.js';
 
 async function waitForConversationsSDK(maxWaitMs = 7000) {
+  if (!(window.Twilio?.Conversations?.Client)) {
+    await loadScriptOnce(
+      'https://media.twiliocdn.com/sdk/js/conversations/releases/2.4.1/twilio-conversations.min.js',
+      { crossorigin: true }
+    );
+  }
   const start = Date.now();
   while (!(window.Twilio?.Conversations?.Client)) {
     if (Date.now() - start > maxWaitMs) {
@@ -51,7 +58,6 @@ export class ConversationsService {
           await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
-        // Si el SDK llegó tarde por algún motivo, intenta 1 vez re-init (raro, pero seguro)
         if (msg.includes('not initialized') && i < maxTries - 1) {
           try { await this.init(); } catch {}
           await new Promise(r => setTimeout(r, delayMs));

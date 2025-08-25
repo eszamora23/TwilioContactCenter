@@ -7,6 +7,7 @@ import { bus } from '../services/bus.js';
 export class ChatController {
   convo = null;
   svc = new ConversationsService();
+  _seenMsgIds = new Set();
 
   async resumeOrStart(storedSid) {
     await this.svc.init();
@@ -14,7 +15,11 @@ export class ChatController {
     if (!sid) return null;
 
     const convo = await this.svc.getConversationBySidWithRetry(sid);
-    if (!convo) return null;
+    if (!convo) {
+      // <- Conversación inválida (ej. 403 “not participant”): limpia el SID
+      try { SessionStore.convoSid = null; } catch {}
+      return null;
+    }
 
     this.convo = convo;
     SessionStore.convoSid = this.convo.sid;
@@ -27,8 +32,13 @@ export class ChatController {
       console.warn('Failed to load message history', e);
     }
 
-    // Eventos de mensajes
-    this.convo.on('messageAdded', (msg) => bus.emit('messages:added', msg));
+    // Eventos de mensajes (de-dupe por clientMsgId si llega)
+    this.convo.on('messageAdded', (msg) => {
+      const cid = msg?.attributes?.clientMsgId;
+      if (cid && this._seenMsgIds.has(cid)) return;
+      if (cid) this._seenMsgIds.add(cid);
+      bus.emit('messages:added', msg);
+    });
 
     // Mostrar UI de chat
     bus.emit('chat:ready', { sid: this.convo.sid });
@@ -46,10 +56,7 @@ export class ChatController {
   }
 
   async startNew({ name, email }) {
-    // 1) Guest token (setea identity si es necesario)
-    await fetchGuestToken();
-
-    // 2) Crear/fetch conversación
+    // NO hacemos fetchGuestToken aquí: init() ya lo maneja
     const convoRes = await fetch(`${API_BASE}/api/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -63,7 +70,6 @@ export class ChatController {
     }
     const convoData = await convoRes.json();
 
-    // 3) Asegurar participant membership
     try {
       const addRes = await fetch(`${API_BASE}/api/conversations/${convoData.sid}/participants`, {
         method: 'POST',
@@ -86,14 +92,32 @@ export class ChatController {
       if (err.status !== 409 && err.code !== 50433) throw err;
     }
 
-    // 4) Abrir conversación
     return this.resumeOrStart(convoData.sid);
   }
 
   async send(body) {
     if (!this.convo || !body) return;
-    await this.convo.sendMessage(body);
-    bus.emit('messages:echo', { author: SessionStore.identity || 'me', body });
+    const clientMsgId = (globalThis.crypto?.randomUUID?.()) || (String(Date.now()) + Math.random().toString(36).slice(2,8));
+    try {
+      if (this.convo.prepareMessage) {
+        await this.convo.prepareMessage().setBody(body).setAttributes({ clientMsgId }).build().send();
+      } else {
+        await this.convo.sendMessage(body, { clientMsgId });
+      }
+      this._seenMsgIds.add(clientMsgId);
+      bus.emit('messages:echo', { author: SessionStore.identity || 'me', body, clientMsgId });
+    } catch (e) {
+      // retry simple
+      try {
+        await new Promise(r => setTimeout(r, 300));
+        await this.convo.sendMessage(body, { clientMsgId });
+        this._seenMsgIds.add(clientMsgId);
+        bus.emit('messages:echo', { author: SessionStore.identity || 'me', body, clientMsgId });
+      } catch (err2) {
+        console.error('send failed', err2);
+        throw err2;
+      }
+    }
   }
 
   async end() {

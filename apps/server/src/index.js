@@ -26,8 +26,9 @@ import demoRoutes from './routes/demo-routes.js';
 
 const app = express();
 validateEnv();
-app.set('trust proxy', true);
-
+// Si estás detrás de 1 proxy (ngrok, render, etc.), usa 1 o 'loopback'.
+// En local puedes usar false.
+app.set('trust proxy', 'loopback'); // o 1
 // --- CORS config (HTTP & Socket.IO) ---
 const corsOrigins = (env.corsOrigin || '')
   .split(',')
