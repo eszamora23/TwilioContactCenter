@@ -22,6 +22,7 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
   const { t } = useTranslation();
   const [agentCallSid, setAgentCallSid] = useState(null);
   const [customerCallSid, setCustomerCallSid] = useState(null);
+  const [taskSid, setTaskSid] = useState(null);
 
   const {
     callStatus,
@@ -53,6 +54,8 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
         setCustomerCallSid(
           picked?.attributes?.callSid || picked?.attributes?.call_sid || null,
         );
+        setTaskSid(picked?.sid || null);
+
       } catch (err) {
         console.error(err);
       }
@@ -120,14 +123,30 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
               hangup();
               onDismiss?.();
             }}
-            toggleMute={toggleMute}
-            holdStart={holdStart}
-            holdStop={holdStop}
+
+            holdStart={async () => {
+              if (!agentCallSid || !customerCallSid) return;
+              await Api.holdStart({
+                taskSid,
+                agentCallSid,
+                customerCallSid,
+                who: 'customer'
+              });
+            }}
+            holdStop={async () => {
+              if (!agentCallSid || !customerCallSid) return;
+              await Api.holdStop({
+                taskSid,
+                agentCallSid,
+                customerCallSid,
+                who: 'customer'
+              });
+            }}
             recStart={recStart}
             recPause={recPause}
             recResume={recResume}
             recStop={recStop}
-            onOpenDtmf={() => {}}
+            onOpenDtmf={() => { }}
           />
 
           <Separator orientation="horizontal" />

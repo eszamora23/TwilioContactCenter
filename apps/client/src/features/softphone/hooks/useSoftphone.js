@@ -311,8 +311,8 @@ export default function useSoftphone(remoteOnly = false) {
         if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
         if (payload.action === 'accept') success = await acceptIncoming();
         if (payload.action === 'reject') success = await rejectIncoming();
-        if (payload.action === 'hold') await holdStart();
-        if (payload.action === 'unhold') await holdStop();
+        if (payload.action === 'hold') await holdStart(payload);    // ← accept optional overrides
+        if (payload.action === 'unhold') await holdStop(payload);   // ← accept optional overrides
         if (payload.action === 'recStart') await recStart();
         if (payload.action === 'recPause') await recPause();
         if (payload.action === 'recResume') await recResume();
@@ -448,18 +448,67 @@ export default function useSoftphone(remoteOnly = false) {
     setTimeout(() => publishStateRef.current(), 0);
   }
 
-  async function holdStart() {
+  /**
+   * Try to derive a proper hold context from current Tasks if caller didn't pass overrides.
+   * Returns { taskSid, customerCallSid, agentCallSid } or null.
+   */
+  async function _deriveHoldContext() {
+    try {
+      const list = await Api.myTasks('assigned,reserved,wrapping');
+      // Prefer voice tasks
+      const pick = list.find((t) => (t?.attributes?.channel || 'voice') !== 'chat') || list[0];
+      if (!pick) return null;
+
+      const a = pick.attributes || {};
+      const taskSid = pick.sid;
+      const customerCallSid =
+        a?.conference?.participants?.customer ||
+        a?.customer?.callSid ||
+        a?.callSid ||
+        a?.call_sid ||
+        null;
+
+      const agentCallSid =
+        getCallSid() ||
+        a?.conference?.participants?.worker ||
+        a?.conference?.participants?.agent ||
+        null;
+
+      if (!agentCallSid || !customerCallSid) return null;
+      return { taskSid, customerCallSid, agentCallSid };
+    } catch {
+      return null;
+    }
+  }
+
+  async function holdStart(override) {
     if (isPopup) {
-      sendCmd('hold');
+      sendCmd('hold', override || {});
       setHolding(true);
       return;
     }
     try {
       setError('');
-      const sid = getCallSid();
-      if (sid) {
-        await Api.holdStart({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      const baseAgentSid = getCallSid();
+      const ctx = override && (override.taskSid || override.customerCallSid)
+        ? {
+            taskSid: override.taskSid || undefined,
+            customerCallSid: override.customerCallSid || undefined,
+            agentCallSid: override.agentCallSid || baseAgentSid || undefined,
+          }
+        : await _deriveHoldContext();
+
+      if (!ctx?.agentCallSid || !ctx?.customerCallSid) {
+        setError(t('holdError'));
+        return;
       }
+
+      await Api.holdStart({
+        taskSid: ctx.taskSid,
+        agentCallSid: ctx.agentCallSid,
+        customerCallSid: ctx.customerCallSid,
+        who: (override && override.who) || 'customer',
+      });
       setHolding(true);
     } catch {
       setError(t('holdError'));
@@ -467,18 +516,34 @@ export default function useSoftphone(remoteOnly = false) {
     setTimeout(() => publishStateRef.current(), 0);
   }
 
-  async function holdStop() {
+  async function holdStop(override) {
     if (isPopup) {
-      sendCmd('unhold');
+      sendCmd('unhold', override || {});
       setHolding(false);
       return;
     }
     try {
       setError('');
-      const sid = getCallSid();
-      if (sid) {
-        await Api.holdStop({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      const baseAgentSid = getCallSid();
+      const ctx = override && (override.taskSid || override.customerCallSid)
+        ? {
+            taskSid: override.taskSid || undefined,
+            customerCallSid: override.customerCallSid || undefined,
+            agentCallSid: override.agentCallSid || baseAgentSid || undefined,
+          }
+        : await _deriveHoldContext();
+
+      if (!ctx?.agentCallSid || !ctx?.customerCallSid) {
+        setError(t('unholdError'));
+        return;
       }
+
+      await Api.holdStop({
+        taskSid: ctx.taskSid,
+        agentCallSid: ctx.agentCallSid,
+        customerCallSid: ctx.customerCallSid,
+        who: (override && override.who) || 'customer',
+      });
       setHolding(false);
     } catch {
       setError(t('unholdError'));
