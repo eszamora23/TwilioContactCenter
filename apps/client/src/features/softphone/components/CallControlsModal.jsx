@@ -51,11 +51,11 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
           list.find((t) => t?.attributes?.callSid || t?.attributes?.call_sid) ||
           list[0] ||
           null;
+
         setCustomerCallSid(
           picked?.attributes?.callSid || picked?.attributes?.call_sid || null,
         );
         setTaskSid(picked?.sid || null);
-
       } catch (err) {
         console.error(err);
       }
@@ -68,6 +68,27 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
       'softphone_popup',
       SOFTPHONE_POPUP_FEATURES,
     );
+  };
+
+  const doHoldStart = async () => {
+    if (!agentCallSid || !customerCallSid) return;
+    // Use the hook method so local "holding" state stays in sync, but pass correct targets
+    await holdStart({
+      taskSid,
+      agentCallSid,
+      customerCallSid,
+      who: 'customer',
+    });
+  };
+
+  const doHoldStop = async () => {
+    if (!agentCallSid || !customerCallSid) return;
+    await holdStop({
+      taskSid,
+      agentCallSid,
+      customerCallSid,
+      who: 'customer',
+    });
   };
 
   return (
@@ -109,6 +130,11 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
                   {t('customerCall')}: {customerCallSid}
                 </Badge>
               ) : null}
+              {taskSid ? (
+                <Badge as="span" variant="neutral">
+                  Task: {taskSid}
+                </Badge>
+              ) : null}
             </Stack>
           </Box>
 
@@ -123,30 +149,14 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
               hangup();
               onDismiss?.();
             }}
-
-            holdStart={async () => {
-              if (!agentCallSid || !customerCallSid) return;
-              await Api.holdStart({
-                taskSid,
-                agentCallSid,
-                customerCallSid,
-                who: 'customer'
-              });
-            }}
-            holdStop={async () => {
-              if (!agentCallSid || !customerCallSid) return;
-              await Api.holdStop({
-                taskSid,
-                agentCallSid,
-                customerCallSid,
-                who: 'customer'
-              });
-            }}
+            toggleMute={toggleMute}
+            holdStart={doHoldStart}
+            holdStop={doHoldStop}
             recStart={recStart}
             recPause={recPause}
             recResume={recResume}
             recStop={recStop}
-            onOpenDtmf={() => { }}
+            onOpenDtmf={() => {}}
           />
 
           <Separator orientation="horizontal" />

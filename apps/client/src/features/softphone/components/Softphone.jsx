@@ -23,9 +23,20 @@ import { WarningIcon } from '@twilio-paste/icons/esm/WarningIcon';
 import { ErrorIcon } from '@twilio-paste/icons/esm/ErrorIcon';
 import styles from './Softphone.module.css';
 
+/**
+ * Siempre montamos el hook para que el Device exista en la ventana principal.
+ * Si popupOpen === true (y no es remoteOnly), ocultamos la UI inline
+ * pero mantenemos el estado y el canal para el popup.
+ */
 export default function Softphone({ remoteOnly = false, popupOpen = false }) {
-  const isPopup = remoteOnly === true; // full-height only inside the popup
+  return <SoftphoneInner remoteOnly={remoteOnly} hiddenInline={!remoteOnly && popupOpen} />;
+}
+
+function SoftphoneInner({ remoteOnly, hiddenInline }) {
+  const isPopup = remoteOnly === true; // diseño full-height dentro del popup
   const { t } = useTranslation();
+
+  // Hook SIEMPRE montado en main; en popup (remoteOnly) no crea Device
   const softphone = useSoftphone(remoteOnly);
   const {
     ready,
@@ -40,6 +51,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
     rejectIncoming,
     sendDtmf,
   } = softphone;
+
   const {
     callStatus,
     isMuted,
@@ -54,11 +66,15 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
     recResume,
     recStop,
   } = useCallControls(softphone);
+
   const [isDtmfOpen, setIsDtmfOpen] = useState(false);
 
-  // Hide inline softphone if popup is pinned/open
-  if (!remoteOnly && popupOpen) return null;
-  if (!ready) return <SkeletonLoader />;
+  // Si aún no está listo, mostramos skeleton (sólo cuando debería verse UI)
+  if (!ready && !hiddenInline) return <SkeletonLoader />;
+
+  // Si UI inline está oculta porque el popup está ON, no renderizamos UI,
+  // pero el hook ya quedó montado y el Device activo en esta ventana.
+  if (hiddenInline) return null;
 
   return (
     <Box
@@ -67,7 +83,6 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
       boxShadow="shadow"
       padding="space70"
       className={styles.layout}
-      // in main app: let card size naturally; in popup: keep immersive height
       minHeight={isPopup ? '100vh' : undefined}
     >
       {error ? (
@@ -140,6 +155,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
               {t('call')}
             </Button>
           </Flex>
+
           <CallControlBar
             callStatus={callStatus}
             isMuted={isMuted}
@@ -155,6 +171,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
             recStop={recStop}
             onOpenDtmf={() => setIsDtmfOpen(true)}
           />
+
           <Stack orientation="vertical" spacing="space30">
             <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
             <HelpText variant="default">

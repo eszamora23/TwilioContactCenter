@@ -68,6 +68,7 @@ import i18n from './i18n.js';
 import Api from './features/index.js';
 import Login from './features/auth/components/Login.jsx';
 import AgentApp from './features/tasks/components/AgentApp.jsx';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -78,19 +79,39 @@ const queryClient = new QueryClient({
     },
   },
 });
+
 export default function App() {
-  const [ctx, setCtx] = useState(null);
+  // 1) Hidrata desde localStorage inmediatamente (evita flash del login)
+  const [ctx, setCtx] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('agent_ctx') || 'null');
+      return saved && saved.agent ? saved : null;
+    } catch { return null; }
+  });
+
+  // 2) Valida sesión con el backend y refresca el ctx guardado
   useEffect(() => {
     Api.me()
-      .then(data => {
-        if (data?.agent) setCtx({ agent: data.agent });
+      .then((data) => {
+        if (data?.agent) {
+          const next = { agent: data.agent };
+          setCtx(next);
+          try { localStorage.setItem('agent_ctx', JSON.stringify(next)); } catch {}
+        }
       })
-      .catch(() => { });
+      .catch(() => {
+        // Si hay ctx local lo mantenemos; si no, se verá el login.
+      });
   }, []);
-  if (!ctx) return <Login onReady={setCtx} />;
+
+  if (!ctx) return <Login onReady={(data) => {
+    setCtx(data);
+    try { localStorage.setItem('agent_ctx', JSON.stringify(data)); } catch {}
+  }} />;
 
   const onIdle = async () => {
     await Api.logout();
+    try { localStorage.removeItem('agent_ctx'); } catch {}
     window.location.reload();
   };
 
@@ -929,10 +950,13 @@ import { Callout, CalloutHeading, CalloutText } from '@twilio-paste/core/callout
 import { FormControl } from '@twilio-paste/core/form';
 import { HelpText } from '@twilio-paste/core/help-text';
 import { Spinner } from '@twilio-paste/core/spinner';
+
 export default function Login({ onReady }) {
-  const [agentId, setAgentId] = useState('');
-  const [workerSid, setWorkerSid] = useState('');
-  const [identity, setIdentity] = useState('');
+  // Defaults for demo
+  const [agentId, setAgentId] = useState('42');
+  const [workerSid, setWorkerSid] = useState('WK7e59fecd3f4064d7b1bd8cb9e7e7c49c');
+  const [identity, setIdentity] = useState('client:agent:42');
+
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -952,6 +976,8 @@ export default function Login({ onReady }) {
     setLoading(true);
     try {
       const data = await Api.login(agentId, workerSid, identity);
+      // ★ Persistir el contexto para evitar re-login tras recargar
+      try { localStorage.setItem('agent_ctx', JSON.stringify({ agent: data.agent })); } catch {}
       onReady({ agent: data.agent });
     } catch (err) {
       setError(err?.response?.data?.error || 'Login failed');
@@ -968,6 +994,15 @@ export default function Login({ onReady }) {
           <CalloutText>{error}</CalloutText>
         </Callout>
       ) : null}
+
+      {/* Demo note */}
+      <Callout variant="neutral" marginBottom="space60">
+        <CalloutHeading>Demo note</CalloutHeading>
+        <CalloutText>
+          In a real deployment, agents would sign in with their own credentials.
+          For this demo, fields are pre-filled so you can just click “Login”.
+        </CalloutText>
+      </Callout>
 
       <Card padding="space70">
         <Heading as="h3" variant="heading30" marginBottom="space70">Sign in</Heading>
@@ -1221,6 +1256,7 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
   const { t } = useTranslation();
   const [agentCallSid, setAgentCallSid] = useState(null);
   const [customerCallSid, setCustomerCallSid] = useState(null);
+  const [taskSid, setTaskSid] = useState(null);
 
   const {
     callStatus,
@@ -1249,9 +1285,11 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
           list.find((t) => t?.attributes?.callSid || t?.attributes?.call_sid) ||
           list[0] ||
           null;
+
         setCustomerCallSid(
           picked?.attributes?.callSid || picked?.attributes?.call_sid || null,
         );
+        setTaskSid(picked?.sid || null);
       } catch (err) {
         console.error(err);
       }
@@ -1264,6 +1302,27 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
       'softphone_popup',
       SOFTPHONE_POPUP_FEATURES,
     );
+  };
+
+  const doHoldStart = async () => {
+    if (!agentCallSid || !customerCallSid) return;
+    // Use the hook method so local "holding" state stays in sync, but pass correct targets
+    await holdStart({
+      taskSid,
+      agentCallSid,
+      customerCallSid,
+      who: 'customer',
+    });
+  };
+
+  const doHoldStop = async () => {
+    if (!agentCallSid || !customerCallSid) return;
+    await holdStop({
+      taskSid,
+      agentCallSid,
+      customerCallSid,
+      who: 'customer',
+    });
   };
 
   return (
@@ -1305,6 +1364,11 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
                   {t('customerCall')}: {customerCallSid}
                 </Badge>
               ) : null}
+              {taskSid ? (
+                <Badge as="span" variant="neutral">
+                  Task: {taskSid}
+                </Badge>
+              ) : null}
             </Stack>
           </Box>
 
@@ -1320,8 +1384,8 @@ export default function CallControlsModal({ isOpen, onDismiss }) {
               onDismiss?.();
             }}
             toggleMute={toggleMute}
-            holdStart={holdStart}
-            holdStop={holdStop}
+            holdStart={doHoldStart}
+            holdStop={doHoldStop}
             recStart={recStart}
             recPause={recPause}
             recResume={recResume}
@@ -1471,9 +1535,20 @@ import { WarningIcon } from '@twilio-paste/icons/esm/WarningIcon';
 import { ErrorIcon } from '@twilio-paste/icons/esm/ErrorIcon';
 import styles from './Softphone.module.css';
 
+/**
+ * Siempre montamos el hook para que el Device exista en la ventana principal.
+ * Si popupOpen === true (y no es remoteOnly), ocultamos la UI inline
+ * pero mantenemos el estado y el canal para el popup.
+ */
 export default function Softphone({ remoteOnly = false, popupOpen = false }) {
-  const isPopup = remoteOnly === true; // full-height only inside the popup
+  return <SoftphoneInner remoteOnly={remoteOnly} hiddenInline={!remoteOnly && popupOpen} />;
+}
+
+function SoftphoneInner({ remoteOnly, hiddenInline }) {
+  const isPopup = remoteOnly === true; // diseño full-height dentro del popup
   const { t } = useTranslation();
+
+  // Hook SIEMPRE montado en main; en popup (remoteOnly) no crea Device
   const softphone = useSoftphone(remoteOnly);
   const {
     ready,
@@ -1488,6 +1563,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
     rejectIncoming,
     sendDtmf,
   } = softphone;
+
   const {
     callStatus,
     isMuted,
@@ -1502,11 +1578,15 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
     recResume,
     recStop,
   } = useCallControls(softphone);
+
   const [isDtmfOpen, setIsDtmfOpen] = useState(false);
 
-  // Hide inline softphone if popup is pinned/open
-  if (!remoteOnly && popupOpen) return null;
-  if (!ready) return <SkeletonLoader />;
+  // Si aún no está listo, mostramos skeleton (sólo cuando debería verse UI)
+  if (!ready && !hiddenInline) return <SkeletonLoader />;
+
+  // Si UI inline está oculta porque el popup está ON, no renderizamos UI,
+  // pero el hook ya quedó montado y el Device activo en esta ventana.
+  if (hiddenInline) return null;
 
   return (
     <Box
@@ -1515,7 +1595,6 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
       boxShadow="shadow"
       padding="space70"
       className={styles.layout}
-      // in main app: let card size naturally; in popup: keep immersive height
       minHeight={isPopup ? '100vh' : undefined}
     >
       {error ? (
@@ -1588,6 +1667,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
               {t('call')}
             </Button>
           </Flex>
+
           <CallControlBar
             callStatus={callStatus}
             isMuted={isMuted}
@@ -1603,6 +1683,7 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
             recStop={recStop}
             onOpenDtmf={() => setIsDtmfOpen(true)}
           />
+
           <Stack orientation="vertical" spacing="space30">
             <HelpText variant="default">{isMuted ? t('micMuted') : t('micLive')}</HelpText>
             <HelpText variant="default">
@@ -1774,7 +1855,23 @@ export default function useCallControls(softphone) {
 
 ==== src\features\softphone\constants.js ====
 export const SOFTPHONE_CHANNEL_KEY = 'softphone-control';
-export const SOFTPHONE_POPUP_FEATURES = 'width=420,height=640,menubar=no,toolbar=no,resizable=yes,status=no,scrollbars=yes,noopener,noreferrer';
+
+// Forzar ventana (no pestaña) en la mayoría de navegadores.
+// Nota: algunos user settings siguen prefiriendo pestaña, pero el contenido
+// SIEMPRE abrirá en la URL correcta del popup.
+export const SOFTPHONE_POPUP_FEATURES = [
+  'popup=yes',
+  'width=420',
+  'height=640',
+  'left=120',
+  'top=80',
+  'menubar=no',
+  'toolbar=no',
+  'location=no',
+  'status=no',
+  'scrollbars=yes',
+  'resizable=yes'
+].join(',');
 
 ==== /src\features\softphone\constants.js ====
 
@@ -2092,8 +2189,8 @@ export default function useSoftphone(remoteOnly = false) {
         if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
         if (payload.action === 'accept') success = await acceptIncoming();
         if (payload.action === 'reject') success = await rejectIncoming();
-        if (payload.action === 'hold') await holdStart();
-        if (payload.action === 'unhold') await holdStop();
+        if (payload.action === 'hold') await holdStart(payload);    // ← accept optional overrides
+        if (payload.action === 'unhold') await holdStop(payload);   // ← accept optional overrides
         if (payload.action === 'recStart') await recStart();
         if (payload.action === 'recPause') await recPause();
         if (payload.action === 'recResume') await recResume();
@@ -2229,18 +2326,67 @@ export default function useSoftphone(remoteOnly = false) {
     setTimeout(() => publishStateRef.current(), 0);
   }
 
-  async function holdStart() {
+  /**
+   * Try to derive a proper hold context from current Tasks if caller didn't pass overrides.
+   * Returns { taskSid, customerCallSid, agentCallSid } or null.
+   */
+  async function _deriveHoldContext() {
+    try {
+      const list = await Api.myTasks('assigned,reserved,wrapping');
+      // Prefer voice tasks
+      const pick = list.find((t) => (t?.attributes?.channel || 'voice') !== 'chat') || list[0];
+      if (!pick) return null;
+
+      const a = pick.attributes || {};
+      const taskSid = pick.sid;
+      const customerCallSid =
+        a?.conference?.participants?.customer ||
+        a?.customer?.callSid ||
+        a?.callSid ||
+        a?.call_sid ||
+        null;
+
+      const agentCallSid =
+        getCallSid() ||
+        a?.conference?.participants?.worker ||
+        a?.conference?.participants?.agent ||
+        null;
+
+      if (!agentCallSid || !customerCallSid) return null;
+      return { taskSid, customerCallSid, agentCallSid };
+    } catch {
+      return null;
+    }
+  }
+
+  async function holdStart(override) {
     if (isPopup) {
-      sendCmd('hold');
+      sendCmd('hold', override || {});
       setHolding(true);
       return;
     }
     try {
       setError('');
-      const sid = getCallSid();
-      if (sid) {
-        await Api.holdStart({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      const baseAgentSid = getCallSid();
+      const ctx = override && (override.taskSid || override.customerCallSid)
+        ? {
+            taskSid: override.taskSid || undefined,
+            customerCallSid: override.customerCallSid || undefined,
+            agentCallSid: override.agentCallSid || baseAgentSid || undefined,
+          }
+        : await _deriveHoldContext();
+
+      if (!ctx?.agentCallSid || !ctx?.customerCallSid) {
+        setError(t('holdError'));
+        return;
       }
+
+      await Api.holdStart({
+        taskSid: ctx.taskSid,
+        agentCallSid: ctx.agentCallSid,
+        customerCallSid: ctx.customerCallSid,
+        who: (override && override.who) || 'customer',
+      });
       setHolding(true);
     } catch {
       setError(t('holdError'));
@@ -2248,18 +2394,34 @@ export default function useSoftphone(remoteOnly = false) {
     setTimeout(() => publishStateRef.current(), 0);
   }
 
-  async function holdStop() {
+  async function holdStop(override) {
     if (isPopup) {
-      sendCmd('unhold');
+      sendCmd('unhold', override || {});
       setHolding(false);
       return;
     }
     try {
       setError('');
-      const sid = getCallSid();
-      if (sid) {
-        await Api.holdStop({ agentCallSid: sid, customerCallSid: sid, who: 'customer' });
+      const baseAgentSid = getCallSid();
+      const ctx = override && (override.taskSid || override.customerCallSid)
+        ? {
+            taskSid: override.taskSid || undefined,
+            customerCallSid: override.customerCallSid || undefined,
+            agentCallSid: override.agentCallSid || baseAgentSid || undefined,
+          }
+        : await _deriveHoldContext();
+
+      if (!ctx?.agentCallSid || !ctx?.customerCallSid) {
+        setError(t('unholdError'));
+        return;
       }
+
+      await Api.holdStop({
+        taskSid: ctx.taskSid,
+        agentCallSid: ctx.agentCallSid,
+        customerCallSid: ctx.customerCallSid,
+        who: (override && override.who) || 'customer',
+      });
       setHolding(false);
     } catch {
       setError(t('unholdError'));
@@ -2822,19 +2984,16 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Button } from '@twilio-paste/core/button';
 import { Toaster, useToaster } from '@twilio-paste/core/toast';
 import { Tabs, TabList, Tab, TabPanels, TabPanel } from '@twilio-paste/core/tabs';
-import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
 import { Badge } from '@twilio-paste/core/badge';
 import { Box as PBox } from '@twilio-paste/core/box';
+import { Switch } from '@twilio-paste/core/switch';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
-import {
-  SOFTPHONE_CHANNEL_KEY,
-  SOFTPHONE_POPUP_FEATURES,
-} from '../../softphone/constants.js';
+import { SOFTPHONE_CHANNEL_KEY, SOFTPHONE_POPUP_FEATURES } from '../../softphone/constants.js';
 
 import ChatPanel from '../../../chat/ChatPanel.jsx';
 import StatusBar from './StatusBar.jsx';
@@ -2844,52 +3003,210 @@ import Customer360 from './Customer360.jsx';
 import TasksPanel from './TasksPanel.jsx';
 import Reservations from './Reservations.jsx';
 import AgentDesktopShell from './AgentDesktopShell.jsx';
-import ActivityQuickSwitch from './ActivityQuickSwitch.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
 
+const SOFTPHONE_WINDOW_NAME = 'softphone_popup';
+const SOFTPHONE_URL = () => `${window.location.origin}?popup=softphone`;
+
 export default function AgentApp() {
   const queryClient = useQueryClient();
+  const toaster = useToaster();
 
-  // invalida listas y el “current task” que usa Customer360
   const invalidateTasks = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['myTasks'] });
     queryClient.invalidateQueries({ queryKey: ['myTask'] });
   }, [queryClient]);
 
   const { worker, activity, reservations, setAvailable } = useWorker();
-  const toaster = useToaster();
 
-  // Mode: 'voice' | 'chat'
+  // Mode: 'voice' | 'chat' | 'supervisor'
   const [mode, setMode] = useLocalStorage('desktop_mode', 'voice');
 
   // Chat sessions (tabs)
   const [chatSessions, setChatSessions] = useState([]); // [{ sid, label, unread }]
   const chatJoinedRef = useRef(new Set());
-  const joinPendingRef = useRef(new Set()); // evita reintentos concurrentes
+  const joinPendingRef = useRef(new Set());
   const [chatPanelKey, setChatPanelKey] = useState(0);
 
-  // UI badge for CHAT tab
+  // CHAT badge
   const [chatBadge, setChatBadge] = useState(0);
-  useEffect(() => { if (mode === 'chat') setChatBadge(0); }, [mode]);
+  useEffect(() => {
+    if (mode === 'chat') setChatBadge(0);
+  }, [mode]);
 
-  // Voice / popout state
+  // Softphone / popout
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
   const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
+
   const softphoneWinRef = useRef(null);
   const prevCallStatusRef = useRef('Idle');
+  const reopenBackoffRef = useRef(0);
+  const lastOpenAttemptRef = useRef(0);
 
-  // Dedupe helpers
-  const notifiedConvosRef = useRef(new Set());       // evita toasts duplicados
-  const processedTaskCreatedRef = useRef(new Set()); // evita task_created duplicados
+  /* =========================
+   * Popup helpers (ventana única y URL correcta)
+   * ========================= */
+  const getExistingSoftphoneWindow = useCallback(() => {
+    try {
+      const w = window.open('', SOFTPHONE_WINDOW_NAME);
+      if (w && !w.closed) return w;
+    } catch {}
+    return null;
+  }, []);
 
-  /* --------------------------------
-   * Helpers
-   * -------------------------------- */
+  const openSoftphoneWindow = useCallback(() => {
+    // Reutiliza ventana por nombre si ya existe
+    let w = getExistingSoftphoneWindow();
+
+    if (!w) {
+      // Evita ráfagas
+      const now = Date.now();
+      if (now - lastOpenAttemptRef.current < 600) return softphoneWinRef.current || null;
+      lastOpenAttemptRef.current = now;
+
+      // Abre about:blank con features de popup y navega a la URL del softphone
+      w = window.open('about:blank', SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
+      if (!w) return null;
+      try {
+        w.location.replace(SOFTPHONE_URL());
+      } catch {
+        try {
+          w.location.href = SOFTPHONE_URL();
+        } catch {}
+      }
+    } else {
+      // Asegura que navega al popup si por alguna razón quedó en otra URL
+      try {
+        const href = w.location?.href || '';
+        if (!href.includes('?popup=softphone')) {
+          w.location.replace(SOFTPHONE_URL());
+        }
+      } catch {}
+    }
+
+    try {
+      w.focus();
+    } catch {}
+    try {
+      // aísla el opener
+      w.opener = null;
+    } catch {}
+
+    softphoneWinRef.current = w;
+    return w;
+  }, [getExistingSoftphoneWindow]);
+
+  const closeSoftphoneWindow = useCallback(() => {
+    try {
+      softphoneWinRef.current?.close();
+    } catch {}
+    softphoneWinRef.current = null;
+  }, []);
+
+  /* =========================
+   * Voice state via BroadcastChannel
+   * ========================= */
+  useEffect(() => {
+    let channel;
+    const onMsg = (evt) => {
+      const { type, payload } = evt.data || {};
+
+      if (type === 'state') {
+        const status = payload?.callStatus || 'Idle';
+        setHasCall(status === 'In Call' || status === 'Incoming');
+        if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
+          toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
+        }
+        prevCallStatusRef.current = status;
+      } else if (type === 'popup-closed') {
+        // El popup se cerró (por el usuario o por el propio popup).
+        softphoneWinRef.current = null;
+
+        if (isSoftphonePopout) {
+          // Si el toggle sigue ON, intenta reabrir con backoff suave (sin loops).
+          const now = Date.now();
+          if (now - reopenBackoffRef.current > 800) {
+            reopenBackoffRef.current = now;
+            const w = openSoftphoneWindow();
+            if (!w) setSoftphonePopout(false); // bloqueado → sincroniza OFF
+          }
+        } else {
+          setSoftphonePopout(false);
+        }
+      }
+      // Nota: NO encendemos el toggle por pings o mensajes del popup.
+    };
+
+    if (typeof BroadcastChannel === 'function') {
+      channel = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
+      channel.onmessage = onMsg;
+    } else {
+      const storageHandler = (e) => {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
+          try {
+            onMsg({ data: JSON.parse(e.newValue) });
+          } catch {}
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      channel = { close: () => window.removeEventListener('storage', storageHandler) };
+    }
+
+    return () => {
+      try {
+        channel?.close?.();
+      } catch {}
+    };
+  }, [isSoftphonePopout, openSoftphoneWindow, setSoftphonePopout, toaster]);
+
+  /* =========================
+   * Toggle ON/OFF
+   * ========================= */
+  const handleSoftphoneToggle = useCallback(
+    (checked) => {
+      if (checked) {
+        const w = openSoftphoneWindow();
+        setSoftphonePopout(!!w); // ON solo si realmente existe la ventana
+      } else {
+        closeSoftphoneWindow();
+        setSoftphonePopout(false);
+      }
+    },
+    [openSoftphoneWindow, closeSoftphoneWindow, setSoftphonePopout]
+  );
+
+  /* =========================
+   * Sync inicial (si toggle estaba ON)
+   * ========================= */
+  useEffect(() => {
+    if (!isSoftphonePopout) return;
+
+    // Ya hay referencia válida
+    if (softphoneWinRef.current && !softphoneWinRef.current.closed) return;
+
+    // Reutiliza si existe por nombre
+    const existing = getExistingSoftphoneWindow();
+    if (existing) {
+      softphoneWinRef.current = existing;
+      try {
+        existing.focus();
+      } catch {}
+      return;
+    }
+
+    // Intenta abrir (si el navegador bloquea, sincroniza OFF)
+    const w = openSoftphoneWindow();
+    if (!w) setSoftphonePopout(false);
+  }, [isSoftphonePopout, getExistingSoftphoneWindow, openSoftphoneWindow, setSoftphonePopout]);
+
+  /* =========================
+   * Chats: ensure & select
+   * ========================= */
   const prioritizeChat = useCallback((sid) => {
     setChatSessions((prev) => {
       const idx = prev.findIndex((s) => s.sid === sid);
@@ -2904,7 +3221,7 @@ export default function AgentApp() {
   const ensureChatSession = useCallback(async (conversationSid, labelHint) => {
     if (!conversationSid) return false;
 
-    // ya unido o ya en pantalla
+    // si ya está unido / mostrado
     if (chatJoinedRef.current.has(conversationSid)) {
       setChatSessions((prev) => {
         if (prev.some((s) => s.sid === conversationSid)) return prev;
@@ -2913,17 +3230,16 @@ export default function AgentApp() {
       return true;
     }
 
-    // evita que diferentes fuentes (socket/TR/poll) se solapen
     if (joinPendingRef.current.has(conversationSid)) return true;
     joinPendingRef.current.add(conversationSid);
 
     try {
-      // 1) identity (cookie session)
+      // identidad por cookie
       const tokenResp = await fetch(`${baseURL}/api/chat/token`, { credentials: 'include' });
       if (!tokenResp.ok) throw new Error(`chat token: ${tokenResp.status}`);
       const { identity } = await tokenResp.json();
 
-      // 2) ensure participant
+      // ensure participant
       const joinResp = await fetch(`${baseURL}/api/conversations/${conversationSid}/participants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2938,7 +3254,6 @@ export default function AgentApp() {
       }
       if (!ok) return false;
 
-      // 3) add to panel
       setChatSessions((prev) => {
         if (prev.some((s) => s.sid === conversationSid)) return prev;
         return [...prev, { sid: conversationSid, label: labelHint || conversationSid, unread: 0 }];
@@ -2962,120 +3277,17 @@ export default function AgentApp() {
       setMode('chat');
       setChatPanelKey((k) => k + 1);
       requestAnimationFrame(() => {
-        document.getElementById('main-chat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document
+          .getElementById('main-chat-panel')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     },
     [ensureChatSession, prioritizeChat, setMode]
   );
 
-  const popoutChat = useCallback((sid) => {
-    const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
-    window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
-  }, []);
-
-  /* --------------------------------
-   * Notify helpers (toast + OS Notification + chime)
-   * -------------------------------- */
-  const playChime = useCallback(() => {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.value = 880;
-      o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.0001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
-      o.start();
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
-      o.stop(ctx.currentTime + 0.34);
-    } catch { }
-  }, []);
-
-  const notifyChatAssigned = useCallback((convoSid, label) => {
-    if (!convoSid) return;
-    // evita notificaciones repetidas del mismo chat
-    if (notifiedConvosRef.current.has(convoSid)) return;
-    notifiedConvosRef.current.add(convoSid);
-
-    const title = 'New chat assigned';
-    toaster.push({
-      message: label ? `${title}: ${label}` : title,
-      variant: 'warning',
-      dismissAfter: 6000
-    });
-
-    // System notification (click switches to chat)
-    try {
-      if ('Notification' in window) {
-        const openIt = () => {
-          window.focus();
-          selectChatFromTasks(convoSid);
-        };
-        if (Notification.permission === 'granted') {
-          const n = new Notification(title, { body: label || '' });
-          n.onclick = openIt;
-        } else if (Notification.permission !== 'denied') {
-          Notification.requestPermission().then((perm) => {
-            if (perm === 'granted') {
-              const n = new Notification(title, { body: label || '' });
-              n.onclick = openIt;
-            }
-          });
-        }
-      }
-    } catch { }
-
-    playChime();
-    setChatBadge((c) => c + 1);
-  }, [playChime, selectChatFromTasks, toaster]);
-
-  /* --------------------------------
-   * Voice state via BroadcastChannel
-   * -------------------------------- */
-  useEffect(() => {
-    let channel;
-    const onMsg = (evt) => {
-      const { type, payload } = evt.data || {};
-      if (type === 'state') {
-        const status = payload?.callStatus || 'Idle';
-        setHasCall(status === 'In Call' || status === 'Incoming');
-        if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
-          toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
-        }
-        prevCallStatusRef.current = status;
-      } else if (type === 'popup-closed') {
-        setSoftphonePopout(false);
-        softphoneWinRef.current = null;
-      }
-    };
-
-    if (typeof BroadcastChannel === 'function') {
-      channel = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
-      channel.onmessage = onMsg;
-    } else {
-      const storageHandler = (e) => {
-        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
-          try { onMsg({ data: JSON.parse(e.newValue) }); } catch { }
-        }
-      };
-      window.addEventListener('storage', storageHandler);
-      channel = { close: () => window.removeEventListener('storage', storageHandler) };
-    }
-
-    return () => { try { channel?.close?.(); } catch { } };
-  }, [setSoftphonePopout, toaster]);
-
-  /* --------------------------------
-   * Worker signals → ensure chat joins + notify when ASSIGNED
-   * (evita memory leak: depend only on worker; use refs for callbacks)
-   * -------------------------------- */
-  const ensureChatSessionRef = useRef(ensureChatSession);
-  const notifyChatAssignedRef = useRef(notifyChatAssigned);
-  useEffect(() => { ensureChatSessionRef.current = ensureChatSession; }, [ensureChatSession]);
-  useEffect(() => { notifyChatAssignedRef.current = notifyChatAssigned; }, [notifyChatAssigned]);
+  // Notificaciones simples de chat asignado
+  const notifiedConvosRef = useRef(new Set());
+  const processedTaskCreatedRef = useRef(new Set());
 
   useEffect(() => {
     if (!worker) return;
@@ -3086,10 +3298,9 @@ export default function AgentApp() {
         if (a.channel === 'chat') {
           const sid = a.conversationSid || a.conversation_sid;
           const label = a.customerName || a.from || a.name || sid;
-          if (sid) await ensureChatSessionRef.current?.(sid, label);
+          if (sid) await ensureChatSession(sid, label);
         }
         invalidateTasks();
-
       } catch (e) {
         console.warn('[worker reservation.created handler]', e);
       }
@@ -3101,9 +3312,14 @@ export default function AgentApp() {
         if (a.channel !== 'chat') return;
         const sid = a.conversationSid || a.conversation_sid;
         const label = a.customerName || a.from || a.name || sid;
-        if (sid) {
-          await ensureChatSessionRef.current?.(sid, label);
-          notifyChatAssignedRef.current?.(sid, label);
+        if (sid && !notifiedConvosRef.current.has(sid)) {
+          notifiedConvosRef.current.add(sid);
+          await ensureChatSession(sid, label);
+          toaster.push({
+            message: label ? `New chat assigned: ${label}` : 'New chat assigned',
+            variant: 'warning',
+            dismissAfter: 6000,
+          });
         }
         invalidateTasks();
       } catch (e) {
@@ -3111,19 +3327,26 @@ export default function AgentApp() {
       }
     };
 
-    // Limpia posibles escuchas previas con mismas referencias
-    try { worker.off('reservation.created', onCreated); } catch { }
-    try { worker.off('reservation.accepted', onAccepted); } catch { }
+    try {
+      worker.off('reservation.created', onCreated);
+    } catch {}
+    try {
+      worker.off('reservation.accepted', onAccepted);
+    } catch {}
 
     worker.on('reservation.created', onCreated);
     worker.on('reservation.accepted', onAccepted);
 
     return () => {
-      try { worker.off('reservation.created', onCreated); } catch { }
-      try { worker.off('reservation.accepted', onAccepted); } catch { }
+      try {
+        worker.off('reservation.created', onCreated);
+      } catch {}
+      try {
+        worker.off('reservation.accepted', onAccepted);
+      } catch {}
     };
-  }, [worker, invalidateTasks]);
-  // Cualquier cambio de reserva que cambie el estado visible -> refetch
+  }, [worker, ensureChatSession, invalidateTasks, toaster]);
+
   useEffect(() => {
     if (!worker) return;
     const refresh = () => invalidateTasks();
@@ -3132,41 +3355,20 @@ export default function AgentApp() {
       'reservation.timeout',
       'reservation.canceled',
       'reservation.completed',
-      // opcional: cuando cambie la actividad, a veces llegan tareas nuevas
       'activity.update',
     ];
-    evs.forEach((e) => { try { worker.on(e, refresh); } catch { } });
-    return () => evs.forEach((e) => { try { worker.off(e, refresh); } catch { } });
-  }, [worker, invalidateTasks]);
-  // Safety-net polling to join sessions
-  useEffect(() => {
-    if (!worker) return;
-    let cancelled = false;
-
-    const poll = async () => {
+    evs.forEach((e) => {
       try {
-        const tasks = await Api.myTasks('assigned,reserved');
-        for (const t of tasks) {
-          const a = t.attributes || {};
-          if (a.channel === 'chat') {
-            const sid = a.conversationSid || a.conversation_sid;
-            const label = a.customerName || a.from || a.name || sid;
-            if (!cancelled && sid) await ensureChatSessionRef.current?.(sid, label);
-          }
-        }
-      } catch (e) { console.error('[task poll]', e); }
-    };
+        worker.on(e, refresh);
+      } catch {}
+    });
+    return () => evs.forEach((e) => {
+      try {
+        worker.off(e, refresh);
+      } catch {}
+    });
+  }, [worker, invalidateTasks]);
 
-    poll();
-    const it = setInterval(poll, 5000);
-    return () => { cancelled = true; clearInterval(it); };
-  }, [worker]);
-  useEffect(() => {
-    const onFocus = () => invalidateTasks();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [invalidateTasks]);
-  // Realtime “task_created” (first inbound message) — dedupe por SID
   useEffect(() => {
     const socket = io(socketBase, {
       transports: ['websocket', 'polling'],
@@ -3181,7 +3383,7 @@ export default function AgentApp() {
         if (!conversationSid) return;
         if (processedTaskCreatedRef.current.has(conversationSid)) return;
         processedTaskCreatedRef.current.add(conversationSid);
-        await ensureChatSessionRef.current?.(conversationSid);
+        await ensureChatSession(conversationSid);
         invalidateTasks();
       } catch (e) {
         console.warn('[socket task_created handler]', e);
@@ -3193,108 +3395,117 @@ export default function AgentApp() {
     );
 
     return () => socket.disconnect();
-  }, []);
-
-  /* --------------------------------
-   * Softphone popout
-   * -------------------------------- */
-  const openSoftphoneWindow = useCallback(() => {
-    const url = `${window.location.origin}?popup=softphone`;
-    const w = window.open(url, 'softphone_popup', SOFTPHONE_POPUP_FEATURES);
-    if (w) softphoneWinRef.current = w;
-  }, []);
-
-  const toggleSoftphonePopout = useCallback(() => {
-    if (isSoftphonePopout) {
-      try { softphoneWinRef.current?.close(); } catch { }
-      softphoneWinRef.current = null;
-      setSoftphonePopout(false);
-    } else {
-      openSoftphoneWindow();
-      setSoftphonePopout(true);
-    }
-  }, [isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
-
-  // Auto-open popout when becoming Available (optional behavior preserved)
-  useEffect(() => {
-    if (/available/i.test(activity || '') && !isSoftphonePopout) {
-      openSoftphoneWindow();
-      setSoftphonePopout(true);
-    }
-  }, [activity, isSoftphonePopout, setSoftphonePopout, openSoftphoneWindow]);
+  }, [ensureChatSession, invalidateTasks]);
 
   const logout = useCallback(async () => {
     await Api.logout();
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: replace with real Activity SID if needed
-    try { await setAvailable(offlineSid); } catch { }
+    try {
+      localStorage.removeItem('agent_ctx');
+    } catch {}
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: reemplazar por actividad Offline real
+    try {
+      await setAvailable(offlineSid);
+    } catch {}
     window.location.reload();
   }, [setAvailable]);
 
-  /* --------------------------------
-   * Header actions & quick actions
-   * -------------------------------- */
-  const headerActions = useMemo(() => (
-    <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
-      <ActivityQuickSwitch label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
-      <Button
-        variant={isSoftphonePopout ? 'primary' : 'secondary'}
-        onClick={toggleSoftphonePopout}
-        aria-pressed={isSoftphonePopout}
-        aria-label={isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'}
-        title={isSoftphonePopout ? 'Close softphone pop-out' : 'Open softphone pop-out'}
+  /* =========================
+   * Header actions
+   * ========================= */
+  const headerActions = useMemo(
+    () => (
+      <Stack
+        orientation="horizontal"
+        spacing="space30"
+        style={{ flexWrap: 'wrap' }}
+        alignment="center"
       >
-        <CallIcon decorative color={isSoftphonePopout ? 'colorTextInverse' : undefined} />
-      </Button>
-      {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
-      <Button variant="destructive" onClick={logout}>Logout</Button>
-    </Stack>
-  ), [activity, setAvailable, isSoftphonePopout, toggleSoftphonePopout, hasCall, logout]);
+        {/* Activity en header: única fuente de verdad */}
+        <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
 
-  const voiceSections = useMemo(() => ([
-    { id: 'softphone', label: 'Softphone' },
-    { id: 'customer360', label: 'Customer 360' },
-    { id: 'reservations', label: 'Reservations' },
-    { id: 'voiceTasks', label: 'Voice Tasks' },
-    { id: 'presence', label: 'Presence' },
-  ]), []);
+        {/* Toggle ventana del softphone */}
+        <Switch
+          checked={isSoftphonePopout}
+          onChange={(e) => handleSoftphoneToggle(e.target.checked)}
+          aria-label="Softphone pop-out"
+        >
+          Softphone window
+        </Switch>
 
-  const chatSections = useMemo(() => ([
-    { id: 'mainChat', label: 'Main Chat' },
-    { id: 'chatTasks', label: 'Chat Tasks' },
-    { id: 'customer360-chat', label: 'Customer 360' },
-  ]), []);
+        {hasCall && (
+          <Button variant="primary" onClick={() => setControlsOpen(true)}>
+            Call controls
+          </Button>
+        )}
+        <Button variant="destructive" onClick={logout}>
+          Logout
+        </Button>
+      </Stack>
+    ),
+    [activity, setAvailable, isSoftphonePopout, handleSoftphoneToggle, hasCall, logout]
+  );
 
-  const shellQuickActions = useMemo(() => ({
-    voice: [
-      { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
-      { label: isSoftphonePopout ? 'Close Popout' : 'Open Popout', onClick: toggleSoftphonePopout, variant: isSoftphonePopout ? 'destructive' : 'primary' },
-      ...(hasCall ? [{ label: 'Call controls', onClick: () => setControlsOpen(true), variant: 'primary' }] : []),
-      { label: 'Voice Tasks', targetId: 'voiceTasks' },
-      { label: 'Customer 360', targetId: 'customer360' },
+  /* =========================
+   * Secciones por modo
+   * ========================= */
+  const voiceSections = useMemo(
+    () => [
+      { id: 'softphone', label: 'Softphone' },
+      { id: 'customer360', label: 'Customer 360' },
+      { id: 'voiceTasks', label: 'Voice Tasks' }, // ahora en VOICE
     ],
-    chat: [
-      { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
-      { label: 'Chat Tasks', targetId: 'chatTasks' },
-      { label: 'Customer 360', targetId: 'customer360-chat' },
-    ],
-  }), [isSoftphonePopout, toggleSoftphonePopout, hasCall]);
+    []
+  );
 
-  /* --------------------------------
+  const supervisorSections = useMemo(
+    () => [
+      { id: 'reservations', label: 'Reservations' },
+      { id: 'presence', label: 'Presence' },
+    ],
+    []
+  );
+
+  const chatSections = useMemo(
+    () => [
+      { id: 'mainChat', label: 'Main Chat' },
+      { id: 'chatTasks', label: 'Chat Tasks' },
+      { id: 'customer360-chat', label: 'Customer 360' },
+    ],
+    []
+  );
+
+  const shellQuickActions = useMemo(
+    () => ({
+      voice: [
+        { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
+        { label: 'Customer 360', targetId: 'customer360' },
+        { label: 'Voice Tasks', targetId: 'voiceTasks' },
+      ],
+      chat: [
+        { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
+        { label: 'Chat Tasks', targetId: 'chatTasks' },
+        { label: 'Customer 360', targetId: 'customer360-chat' },
+      ],
+      supervisor: [
+        { label: 'Reservations', targetId: 'reservations' },
+        { label: 'Presence', targetId: 'presence' },
+      ],
+    }),
+    []
+  );
+
+  /* =========================
    * Render
-   * -------------------------------- */
+   * ========================= */
   return (
     <Box minHeight="100vh" width="100%">
       <Toaster {...toaster} />
 
-      {/* Sticky global bar */}
-      <Box marginBottom="space70">
-        <StatusBar label={activity || '…'} onChange={(sid) => setAvailable(sid)} />
-      </Box>
-
+      {/* Modal de controles de llamada */}
       <CallControlsModal isOpen={controlsOpen} onDismiss={() => setControlsOpen(false)} />
 
       <AgentDesktopShell
-        sections={mode === 'voice' ? voiceSections : chatSections}
+        sections={mode === 'voice' ? voiceSections : mode === 'chat' ? chatSections : supervisorSections}
         title="Agent Desktop"
         actions={headerActions}
         mode={mode}
@@ -3307,11 +3518,10 @@ export default function AgentApp() {
               <Tab id="chat">
                 <PBox display="inline-flex" alignItems="center" columnGap="space20">
                   CHAT
-                  {chatBadge > 0 && (
-                    <Badge as="span" variant="new">{chatBadge}</Badge>
-                  )}
+                  {chatBadge > 0 && <Badge as="span" variant="new">{chatBadge}</Badge>}
                 </PBox>
               </Tab>
+              <Tab id="supervisor">SUPERVISOR</Tab>
             </TabList>
 
             <TabPanels>
@@ -3319,31 +3529,29 @@ export default function AgentApp() {
               <TabPanel id="voice">
                 <Stack orientation="vertical" spacing="space70">
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Call Handling</Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">
+                      Active Call Handling
+                    </Heading>
+
                     <CardSection id="softphone" title="Softphone">
+                      {/* Cuando toggle = OFF: UI inline visible. ON: oculta UI (hook sigue montado). */}
                       <Softphone popupOpen={isSoftphonePopout} />
                     </CardSection>
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+
+                    <Box marginY="space40">
+                      <Separator orientation="horizontal" />
+                    </Box>
+
                     <CardSection id="customer360" title="Customer 360">
                       <Customer360 />
                     </CardSection>
-                  </Box>
 
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Incoming</Heading>
-                    <CardSection id="reservations" title="Reservations">
-                      <Reservations items={reservations} standalone />
-                    </CardSection>
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    <Box marginY="space40">
+                      <Separator orientation="horizontal" />
+                    </Box>
+
                     <CardSection id="voiceTasks" title="Voice Tasks">
                       <TasksPanel channel="voice" setAvailable={setAvailable} />
-                    </CardSection>
-                  </Box>
-
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Team Presence</Heading>
-                    <CardSection id="presence" title="Presence">
-                      <Presence />
                     </CardSection>
                   </Box>
                 </Stack>
@@ -3353,17 +3561,23 @@ export default function AgentApp() {
               <TabPanel id="chat">
                 <Stack orientation="vertical" spacing="space70">
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Conversations</Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">
+                      Active Conversations
+                    </Heading>
                     <CardSection id="mainChat" title="Main Chat">
                       <Box id="main-chat-panel" minHeight="60vh">
                         {chatSessions.length ? (
                           <ChatPanel
                             key={chatPanelKey}
                             sessions={chatSessions}
-                            onClose={(sid) => setChatSessions((prev) => prev.filter((s) => s.sid !== sid))}
+                            onClose={(sid) =>
+                              setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
+                            }
                             onIncrementUnread={(sid) =>
                               setChatSessions((prev) =>
-                                prev.map((s) => (s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s))
+                                prev.map((s) =>
+                                  s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
+                                )
                               )
                             }
                             onClearUnread={(sid) =>
@@ -3376,7 +3590,12 @@ export default function AgentApp() {
                                 prev.map((s) => (s.sid === sid ? { ...s, label } : s))
                               )
                             }
-                            onPopout={popoutChat}
+                            onPopout={(sid) => {
+                              const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(
+                                sid
+                              )}`;
+                              window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
+                            }}
                           />
                         ) : (
                           <Box color="colorTextWeak">No active chats</Box>
@@ -3386,13 +3605,53 @@ export default function AgentApp() {
                   </Box>
 
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Customer Info</Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">
+                      Tasks & Customer Info
+                    </Heading>
                     <CardSection id="chatTasks" title="Chat Tasks">
-                      <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
+                      <TasksPanel channel="chat" onOpenChat={(sid) => {
+                        if (!sid) return;
+                        ensureChatSession(sid).then((ok) => {
+                          if (!ok) return;
+                          prioritizeChat(sid);
+                          setMode('chat');
+                          setChatPanelKey((k) => k + 1);
+                          requestAnimationFrame(() => {
+                            document
+                              .getElementById('main-chat-panel')
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          });
+                        });
+                      }} />
                     </CardSection>
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    <Box marginY="space40">
+                      <Separator orientation="horizontal" />
+                    </Box>
                     <CardSection id="customer360-chat" title="Customer 360">
                       <Customer360 />
+                    </CardSection>
+                  </Box>
+                </Stack>
+              </TabPanel>
+
+              {/* SUPERVISOR (solo Reservations + Presence) */}
+              <TabPanel id="supervisor">
+                <Stack orientation="vertical" spacing="space70">
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">
+                      Tasks & Incoming
+                    </Heading>
+                    <CardSection id="reservations" title="Reservations">
+                      <Reservations items={reservations} standalone />
+                    </CardSection>
+                  </Box>
+
+                  <Box>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">
+                      Team Presence
+                    </Heading>
+                    <CardSection id="presence" title="Presence">
+                      <Presence />
                     </CardSection>
                   </Box>
                 </Stack>
@@ -3409,66 +3668,73 @@ export default function AgentApp() {
 
 ==== src\features\tasks\components\AgentDesktopShell.jsx ====
 // contact-center/client/src/components/AgentDesktopShell.jsx
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 import { Box } from '@twilio-paste/core/box';
-import { Button } from '@twilio-paste/core/button';
 import { Input } from '@twilio-paste/core/input';
 import { Stack } from '@twilio-paste/core/stack';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
+import { TextArea } from '@twilio-paste/core/textarea';
 import {
   Sidebar,
   SidebarHeader,
   SidebarHeaderLabel,
   SidebarBody,
-  SidebarNavigation,
-  SidebarNavigationItem,
   SidebarCollapseButton,
 } from '@twilio-paste/core/sidebar';
-
-import { ArrowForwardIcon } from '@twilio-paste/icons/esm/ArrowForwardIcon';
 
 const SIDEBAR_W = 288;
 const SHELL_HEADER_H = 68;
 
-/* Responsive */
+/* Responsive breakpoint hook */
 function useIsDesktop() {
   const mq = '(min-width: 1024px)';
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.matchMedia(mq).matches : true
   );
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const mql = window.matchMedia(mq);
+
     const onChange = (e) => setIsDesktop(e.matches);
-    try { mql.addEventListener('change', onChange); } catch { mql.addListener(onChange); }
+    try {
+      mql.addEventListener('change', onChange);
+    } catch {
+      // Safari
+      mql.addListener(onChange);
+    }
+
     return () => {
-      try { mql.removeEventListener('change', onChange); } catch { mql.removeListener(onChange); }
+      try {
+        mql.removeEventListener('change', onChange);
+      } catch {
+        // Safari
+        mql.removeListener(onChange);
+      }
     };
   }, []);
+
   return isDesktop;
 }
 
-/* =========================
- *   AgentDesktopShell (compact & context-aware)
- * ========================= */
 export default function AgentDesktopShell({
-  sections,
+  sections, // interface legacy (no-op)
   title = 'Agent Desktop',
   actions,
   footer,
   children,
   topOffset = 0,
   measureTopFrom,
-  mode = 'voice',                             // 'voice' | 'chat'
-  quickActions = { voice: [], chat: [] },    // { voice: [{label, targetId?, onClick?, disabled?, variant?}], chat: [...] }
+  mode = 'voice', // interface legacy (no-op)
+  quickActions, // interface legacy (no-op)
 }) {
   const isDesktop = useIsDesktop();
 
-  // expose header height to the rest of the app (e.g., StatusBar)
+  // Expose header height CSS var
   useEffect(() => {
     try {
       document.documentElement.style.setProperty('--shell-header-h', `${SHELL_HEADER_H}px`);
@@ -3476,107 +3742,34 @@ export default function AgentDesktopShell({
   }, []);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeId, setActiveId] = useLocalStorage('shell_active', sections?.[0]?.id || '');
-  const [filter, setFilter] = useState('');
   const scrollRootRef = useRef(null);
 
-  // dynamic offset under external sticky bars
+  // Sticky offset under external headers
   const [offset, setOffset] = useState(topOffset);
   useEffect(() => setOffset(topOffset), [topOffset]);
 
-  // track another sticky element height (optional)
+  // Track another sticky element height (optional)
   useEffect(() => {
     if (!measureTopFrom) return;
     const el = document.getElementById(measureTopFrom);
     if (!el) return;
+
     const ro = new ResizeObserver(() => {
       const h = el.getBoundingClientRect().height || 0;
       setOffset(Math.round(h));
     });
+
     ro.observe(el);
     setOffset(Math.round(el.getBoundingClientRect().height || 0));
     return () => ro.disconnect();
   }, [measureTopFrom]);
 
-  // ensure active exists
-  useEffect(() => {
-    if (!sections?.length) return;
-    if (!sections.some((s) => s.id === activeId)) setActiveId(sections[0].id);
-  }, [sections, activeId, setActiveId]);
+  // Scratchpad (persistent)
+  const [pad, setPad] = useLocalStorage('agent_pad', '');
 
-  // filter
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return sections || [];
-    return (sections || []).filter(
-      (s) =>
-        s.label.toLowerCase().includes(q) ||
-        (s.hint && String(s.hint).toLowerCase().includes(q)) ||
-        (s.id && s.id.toLowerCase().includes(q))
-    );
-  }, [sections, filter]);
-
-  // keep active within filtered
-  useEffect(() => {
-    if (!filtered?.length) return;
-    if (!filtered.some((s) => s.id === activeId)) setActiveId(filtered[0].id);
-  }, [filtered, activeId, setActiveId]);
-
-  // scrollspy → update activeId
-  useEffect(() => {
-    const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
-    if (!root) return;
-
-    const ids = (sections || []).map((s) => s.id);
-    const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
-    if (!els.length) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const first = entries.find((e) => e.isIntersecting);
-        const topMost = first?.target?.id;
-        if (topMost) {
-          setActiveId(topMost);
-          if (history.replaceState) history.replaceState(null, '', `#${encodeURIComponent(topMost)}`);
-        }
-      },
-      { root, threshold: [0.25], rootMargin: `-${offset + SHELL_HEADER_H}px 0px 0px 0px` }
-    );
-
-    els.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [sections, children, offset]);
-
-  const scrollTo = useCallback((id) => {
-    const root = scrollRootRef.current || document.querySelector('#shell-scroll-root');
-    const target = document.getElementById(id);
-    if (!root || !target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (!isDesktop) setDrawerOpen(false);
-  }, [isDesktop]);
-
-  // hash navigation (first load & popstate)
-  useEffect(() => {
-    const go = () => {
-      const hash = decodeURIComponent((typeof window !== 'undefined' && window.location.hash) || '').replace('#', '');
-      if (hash && sections?.some((s) => s.id === hash)) setTimeout(() => scrollTo(hash), 0);
-    };
-    go();
-    window.addEventListener('popstate', go);
-    return () => window.removeEventListener('popstate', go);
-  }, [sections, scrollTo]);
-
-  // minimal keyboard support (Enter/Space)
-  const handleKeyDown = (e, id) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      scrollTo(id);
-    }
-  };
-
-  // contextual quick actions
-  const modeList = (quickActions?.[mode] || []).filter(Boolean);
-
+  /* =========================
+   * Sidebar (no navigation)
+   * ========================= */
   const SidebarInner = (
     <>
       <SidebarHeader
@@ -3589,78 +3782,92 @@ export default function AgentDesktopShell({
           backdropFilter: 'saturate(140%) blur(6px)',
         }}
       >
-        <SidebarHeaderLabel>Navigation</SidebarHeaderLabel>
+        <SidebarHeaderLabel>Help & Notes</SidebarHeaderLabel>
         {!isDesktop && (
           <SidebarCollapseButton
-            i18nCollapseLabel="Hide navigation"
-            i18nExpandLabel="Show navigation"
+            i18nCollapseLabel="Hide panel"
+            i18nExpandLabel="Show panel"
             onClick={() => setDrawerOpen(false)}
           />
         )}
       </SidebarHeader>
 
-      {/* Quick actions (VOICE / CHAT aware) */}
-      {modeList.length > 0 && (
-        <Box padding="space60" paddingBottom="space20">
-          <Stack orientation="vertical" spacing="space40">
-            <Heading as="h4" variant="heading40" margin="space0">Quick actions</Heading>
-            <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }}>
-              {modeList.map((a, i) => (
-                <Button
-                  key={`${mode}-qa-${i}`}
-                  size="small"
-                  variant={a.variant || 'secondary'}
-                  disabled={a.disabled}
-                  onClick={() => (a.targetId ? scrollTo(a.targetId) : a.onClick?.())}
-                >
-                  {a.label}
-                </Button>
-              ))}
-            </Stack>
-          </Stack>
-        </Box>
-      )}
-
-      {/* Finder */}
-      <Box padding="space60" paddingTop={modeList.length ? 'space20' : 'space60'} paddingBottom="space20">
-        <Input
-          id="shell-filter-input"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter sections…"
-          aria-label="Filter sections"
-        />
+      {/* Optional tiny input for a quick title */}
+      <Box padding="space60" paddingBottom="space20">
+        <Input id="shell-filter-input" placeholder="Quick note title…" aria-label="Sidebar input" />
       </Box>
 
       <SidebarBody>
-        <SidebarNavigation aria-label="Sections">
-          {!filtered.length ? (
-            <Box color="colorTextWeak" padding="space60">No matches</Box>
-          ) : (
-            filtered.map((s) => (
-              <SidebarNavigationItem
-                key={s.id}
-                as="button"
-                selected={activeId === s.id}
-                aria-label={s.label}
-                aria-current={activeId === s.id ? 'page' : undefined}
-                onClick={() => scrollTo(s.id)}
-                onKeyDown={(e) => handleKeyDown(e, s.id)}
-                style={{ outlineOffset: 2 }}
-              >
-                <Stack
-                  orientation="horizontal"
-                  spacing="space30"
-                  alignment="center"
-                  style={{ justifyContent: 'space-between', width: '100%' }}
-                >
-                  <span style={{ fontWeight: activeId === s.id ? 600 : 500 }}>{s.label}</span>
-                  {s.badge ? <span style={{ opacity: 0.75 }}>{s.badge}</span> : null}
-                </Stack>
-              </SidebarNavigationItem>
-            ))
-          )}
-        </SidebarNavigation>
+        {/* Scratchpad (big, high-contrast) */}
+        <Box padding="space60" paddingTop="space20">
+          <Heading as="h5" variant="heading50" margin="space0">
+            Scratchpad
+          </Heading>
+
+          <Box
+            marginTop="space40"
+            backgroundColor="colorBackgroundStrong"
+            padding="space60"
+            borderRadius="borderRadius30"
+          >
+            <TextArea
+              value={pad}
+              onChange={(e) => setPad(e.target.value)}
+              placeholder="Write down anything…"
+              rows={16}
+              style={{
+                color: 'var(--paste-color-text-inverse)',
+                background: 'transparent',
+              }}
+            />
+          </Box>
+        </Box>
+
+        {/* Usage guide */}
+        <Box padding="space60" paddingTop="space20">
+          <Heading as="h5" variant="heading50" margin="space0">
+            Guide
+          </Heading>
+
+          <Box
+            marginTop="space40"
+            backgroundColor="colorBackgroundStrong"
+            color="colorTextInverse"
+            padding="space60"
+            borderRadius="borderRadius30"
+            style={{ lineHeight: 1.5 }}
+          >
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <li>
+                <b>Modes:</b> usa las pestañas superiores para cambiar entre <i>VOICE</i>,{' '}
+                <i>CHAT</i> y <i>SUPERVISOR</i>.
+              </li>
+              <li>
+                <b>Voice:</b> Softphone dentro del card; el botón <i>Softphone window</i> abre una
+                ventana aparte. Si la cierras, el switch pasa a OFF y no se reabre solo.
+              </li>
+              <li>
+                <b>Voice Tasks:</b> ahora vive en VOICE, debajo de Customer 360.
+              </li>
+              <li>
+                <b>Supervisor:</b> muestra <i>Reservations</i> y <i>Presence</i> (sin{' '}
+                <i>Voice Tasks</i>).
+              </li>
+              <li>
+                <b>Activity:</b> el selector de estado del agente está en el header y es la única
+                fuente de verdad.
+              </li>
+              <li>
+                <b>Chats:</b> los chats asignados abren pestañas; puedes “pop-out” un chat
+                individual con ↗.
+              </li>
+              <li>
+                <b>Notas:</b> todo lo que escribas en el Scratchpad se guarda localmente (no se
+                envía al servidor).
+              </li>
+            </ul>
+          </Box>
+        </Box>
       </SidebarBody>
 
       {footer ? (
@@ -3672,6 +3879,9 @@ export default function AgentDesktopShell({
     </>
   );
 
+  /* =========================
+   * Layout
+   * ========================= */
   return (
     <Box height="100vh" width="100%" overflow="hidden" position="relative">
       {/* Desktop sidebar */}
@@ -3719,29 +3929,21 @@ export default function AgentDesktopShell({
             alignItems: 'center',
           }}
         >
-          <Stack orientation="horizontal" spacing="space60" alignment="center" distribution="spaceBetween" width="100%">
+          <Stack
+            orientation="horizontal"
+            spacing="space60"
+            alignment="center"
+            distribution="spaceBetween"
+            width="100%"
+          >
             <Heading as="h3" variant="heading30" margin="space0">
               {title}
             </Heading>
-            <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
-              {actions || null}
-              {!isDesktop && (
-                <Button
-                  aria-label="Show navigation"
-                  aria-controls="shell-drawer"
-                  aria-expanded={drawerOpen}
-                  variant="secondary"
-                  size="icon"
-                  onClick={() => setDrawerOpen(true)}
-                >
-                  <ArrowForwardIcon decorative />
-                </Button>
-              )}
-            </Stack>
+            {actions || null}
           </Stack>
         </Box>
 
-        {/* Scroll container */}
+        {/* Scroll area */}
         <Box
           id="shell-scroll-root"
           ref={scrollRootRef}
@@ -3756,14 +3958,14 @@ export default function AgentDesktopShell({
         </Box>
       </Box>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer (optional) */}
       {!isDesktop && drawerOpen && (
         <>
           <Box
             id="shell-drawer"
             role="dialog"
             aria-modal="true"
-            aria-label="Navigation"
+            aria-label="Help & Notes"
             position="fixed"
             top={`${offset}px`}
             left={0}
@@ -3798,38 +4000,15 @@ export default function AgentDesktopShell({
 }
 
 AgentDesktopShell.propTypes = {
-  sections: PropTypes.arrayOf(
-    PropTypes.shape({
-      id: PropTypes.string.isRequired,
-      label: PropTypes.string.isRequired,
-      badge: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
-      hint: PropTypes.string,
-      icon: PropTypes.node,
-    })
-  ).isRequired,
+  sections: PropTypes.array.isRequired,
   title: PropTypes.string,
   actions: PropTypes.node,
   footer: PropTypes.node,
   children: PropTypes.node.isRequired,
   topOffset: PropTypes.number,
   measureTopFrom: PropTypes.string,
-  mode: PropTypes.oneOf(['voice', 'chat']),
-  quickActions: PropTypes.shape({
-    voice: PropTypes.arrayOf(PropTypes.shape({
-      label: PropTypes.string.isRequired,
-      targetId: PropTypes.string,
-      onClick: PropTypes.func,
-      disabled: PropTypes.bool,
-      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
-    })),
-    chat: PropTypes.arrayOf(PropTypes.shape({
-      label: PropTypes.string.isRequired,
-      targetId: PropTypes.string,
-      onClick: PropTypes.func,
-      disabled: PropTypes.bool,
-      variant: PropTypes.oneOf(['primary','secondary','destructive','link']),
-    })),
-  }),
+  mode: PropTypes.oneOf(['voice', 'chat', 'supervisor']),
+  quickActions: PropTypes.object,
 };
 
 ==== /src\features\tasks\components\AgentDesktopShell.jsx ====
@@ -4819,7 +4998,7 @@ import { Stack } from '@twilio-paste/core/stack';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Label } from '@twilio-paste/core/label';
 
-export default function StatusBar({ label, onChange }) {
+export default function StatusBar({ label, onChange, inline = false }) {
   const [acts, setActs] = useState([]);
   const [loading, setLoading] = useState(true);
   const { t } = useTranslation();
@@ -4837,11 +5016,42 @@ export default function StatusBar({ label, onChange }) {
     txt.includes('offline')   ? 'error'   :
                                 'neutral';
 
+  /* Inline compact variant for header */
+  if (inline) {
+    return (
+      <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+        <Badge as="span" variant={variant}>
+          {label || '—'}
+        </Badge>
+        {loading ? (
+          <SkeletonLoader />
+        ) : (
+          <Select
+            onChange={(e) => onChange?.(e.target.value)}
+            defaultValue=""
+            size="small"
+            disabled={!acts.length}
+            style={{ minWidth: 200 }}
+          >
+            <Option value="" disabled>
+              {t('changeActivity')}
+            </Option>
+            {acts.map((a) => (
+              <Option key={a.sid} value={a.sid}>
+                {a.name}
+              </Option>
+            ))}
+          </Select>
+        )}
+      </Stack>
+    );
+  }
+
+  /* Default sticky bar */
   return (
     <Box
       as="section"
       width="100%"
-      // --- Anti-solape: sticky bajo el header del shell ---
       style={{
         position: 'sticky',
         top: 'var(--shell-header-h, 64px)',
@@ -4861,7 +5071,6 @@ export default function StatusBar({ label, onChange }) {
           distribution="spaceBetween"
           style={{ flexWrap: 'wrap' }}
         >
-          {/* Estado del agente */}
           <Box aria-live="polite" minWidth="0">
             {t('agentStatus')}{' '}
             {loading ? (
@@ -4873,7 +5082,6 @@ export default function StatusBar({ label, onChange }) {
             )}
           </Box>
 
-          {/* Selector de actividad (tamaño consistente) */}
           <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
             <Box>
               <Label htmlFor="activitySelect" margin="space0">

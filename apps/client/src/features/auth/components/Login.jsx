@@ -13,10 +13,13 @@ import { Callout, CalloutHeading, CalloutText } from '@twilio-paste/core/callout
 import { FormControl } from '@twilio-paste/core/form';
 import { HelpText } from '@twilio-paste/core/help-text';
 import { Spinner } from '@twilio-paste/core/spinner';
+
 export default function Login({ onReady }) {
-  const [agentId, setAgentId] = useState('');
-  const [workerSid, setWorkerSid] = useState('');
-  const [identity, setIdentity] = useState('');
+  // Defaults for demo
+  const [agentId, setAgentId] = useState('42');
+  const [workerSid, setWorkerSid] = useState('WK7e59fecd3f4064d7b1bd8cb9e7e7c49c');
+  const [identity, setIdentity] = useState('client:agent:42');
+
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -36,6 +39,8 @@ export default function Login({ onReady }) {
     setLoading(true);
     try {
       const data = await Api.login(agentId, workerSid, identity);
+      // ★ Persistir el contexto para evitar re-login tras recargar
+      try { localStorage.setItem('agent_ctx', JSON.stringify({ agent: data.agent })); } catch {}
       onReady({ agent: data.agent });
     } catch (err) {
       setError(err?.response?.data?.error || 'Login failed');
@@ -52,6 +57,15 @@ export default function Login({ onReady }) {
           <CalloutText>{error}</CalloutText>
         </Callout>
       ) : null}
+
+      {/* Demo note */}
+      <Callout variant="neutral" marginBottom="space60">
+        <CalloutHeading>Demo note</CalloutHeading>
+        <CalloutText>
+          In a real deployment, agents would sign in with their own credentials.
+          For this demo, fields are pre-filled so you can just click “Login”.
+        </CalloutText>
+      </Callout>
 
       <Card padding="space70">
         <Heading as="h3" variant="heading30" marginBottom="space70">Sign in</Heading>

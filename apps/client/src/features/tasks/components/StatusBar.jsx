@@ -10,7 +10,7 @@ import { Stack } from '@twilio-paste/core/stack';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Label } from '@twilio-paste/core/label';
 
-export default function StatusBar({ label, onChange }) {
+export default function StatusBar({ label, onChange, inline = false }) {
   const [acts, setActs] = useState([]);
   const [loading, setLoading] = useState(true);
   const { t } = useTranslation();
@@ -28,11 +28,42 @@ export default function StatusBar({ label, onChange }) {
     txt.includes('offline')   ? 'error'   :
                                 'neutral';
 
+  /* Inline compact variant for header */
+  if (inline) {
+    return (
+      <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
+        <Badge as="span" variant={variant}>
+          {label || '—'}
+        </Badge>
+        {loading ? (
+          <SkeletonLoader />
+        ) : (
+          <Select
+            onChange={(e) => onChange?.(e.target.value)}
+            defaultValue=""
+            size="small"
+            disabled={!acts.length}
+            style={{ minWidth: 200 }}
+          >
+            <Option value="" disabled>
+              {t('changeActivity')}
+            </Option>
+            {acts.map((a) => (
+              <Option key={a.sid} value={a.sid}>
+                {a.name}
+              </Option>
+            ))}
+          </Select>
+        )}
+      </Stack>
+    );
+  }
+
+  /* Default sticky bar */
   return (
     <Box
       as="section"
       width="100%"
-      // --- Anti-solape: sticky bajo el header del shell ---
       style={{
         position: 'sticky',
         top: 'var(--shell-header-h, 64px)',
@@ -52,7 +83,6 @@ export default function StatusBar({ label, onChange }) {
           distribution="spaceBetween"
           style={{ flexWrap: 'wrap' }}
         >
-          {/* Estado del agente */}
           <Box aria-live="polite" minWidth="0">
             {t('agentStatus')}{' '}
             {loading ? (
@@ -64,7 +94,6 @@ export default function StatusBar({ label, onChange }) {
             )}
           </Box>
 
-          {/* Selector de actividad (tamaño consistente) */}
           <Stack orientation="horizontal" spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
             <Box>
               <Label htmlFor="activitySelect" margin="space0">

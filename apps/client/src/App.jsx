@@ -8,6 +8,7 @@ import i18n from './i18n.js';
 import Api from './features/index.js';
 import Login from './features/auth/components/Login.jsx';
 import AgentApp from './features/tasks/components/AgentApp.jsx';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -18,19 +19,39 @@ const queryClient = new QueryClient({
     },
   },
 });
+
 export default function App() {
-  const [ctx, setCtx] = useState(null);
+  // 1) Hidrata desde localStorage inmediatamente (evita flash del login)
+  const [ctx, setCtx] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('agent_ctx') || 'null');
+      return saved && saved.agent ? saved : null;
+    } catch { return null; }
+  });
+
+  // 2) Valida sesión con el backend y refresca el ctx guardado
   useEffect(() => {
     Api.me()
-      .then(data => {
-        if (data?.agent) setCtx({ agent: data.agent });
+      .then((data) => {
+        if (data?.agent) {
+          const next = { agent: data.agent };
+          setCtx(next);
+          try { localStorage.setItem('agent_ctx', JSON.stringify(next)); } catch {}
+        }
       })
-      .catch(() => { });
+      .catch(() => {
+        // Si hay ctx local lo mantenemos; si no, se verá el login.
+      });
   }, []);
-  if (!ctx) return <Login onReady={setCtx} />;
+
+  if (!ctx) return <Login onReady={(data) => {
+    setCtx(data);
+    try { localStorage.setItem('agent_ctx', JSON.stringify(data)); } catch {}
+  }} />;
 
   const onIdle = async () => {
     await Api.logout();
+    try { localStorage.removeItem('agent_ctx'); } catch {}
     window.location.reload();
   };
 
