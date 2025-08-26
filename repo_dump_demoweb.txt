@@ -216,13 +216,14 @@ export class VideoController {
 ==== webchat\index.html ====
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Website X — Concierge Support (Twilio)</title>
 
   <!-- Networking hints -->
-  <link rel="preconnect" href="http://localhost:4000" crossorigin>
+  <link rel="preconnect" href="https://api.contactcenterdev.com" crossorigin>
   <link rel="preconnect" href="https://media.twiliocdn.com" crossorigin>
   <link rel="dns-prefetch" href="https://tsock.us1.twilio.com">
   <link rel="modulepreload" href="./app/main.js" />
@@ -230,7 +231,8 @@ export class VideoController {
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
 
   <!-- Styles modularizados -->
   <link rel="stylesheet" href="./styles/base.css" />
@@ -240,6 +242,7 @@ export class VideoController {
   <link rel="stylesheet" href="./styles/video.css" />
   <link rel="stylesheet" href="./styles/phone-lab.css" />
 </head>
+
 <body>
   <div class="backdrop" id="backdrop"></div>
 
@@ -252,15 +255,18 @@ export class VideoController {
       <main>
         <section class="hero" id="kb" aria-label="Hero" data-include="./partials/hero"></section>
         <section class="grid" id="chat" aria-label="Start chat" data-include="./partials/grid-start-chat"></section>
-        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat" data-include="./partials/chat-shell"></section>
-        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal"></section>
+        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat"
+          data-include="./partials/chat-shell"></section>
+        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal">
+        </section>
         <section class="grid" id="phone-lab" aria-label="Phone Lab" data-include="./partials/phone-lab"></section>
         <section class="grid" id="status" aria-label="Service Status" data-include="./partials/status"></section>
         <section class="grid" id="how" aria-label="How it works" data-include="./partials/how"></section>
       </main>
 
       <footer>
-        © <span id="year"></span> Website X • Premium Support — <a href="#" style="color:var(--accent)">Privacy</a> · <a href="#" style="color:var(--accent)">Terms</a>
+        © <span id="year"></span> Website X • Premium Support — <a href="#" style="color:var(--accent)">Privacy</a> · <a
+          href="#" style="color:var(--accent)">Terms</a>
       </footer>
     </div>
   </div>
@@ -269,22 +275,22 @@ export class VideoController {
   <div class="fab" data-include="./partials/fab"></div>
 
   <!-- Config inicial: EXACTO al monolítico -->
-<script>
-  window.API_BASE = 'http://localhost:4000';
-  window.DEMO = {
-    agentPortalUrl: 'https://agents.demo.example.com',
-    agentId: 'demo-agent-1',
-    workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    identity: 'client:agent:demo-agent-1',
-    softphoneUrl: '',
-    ivrNumber: '+12058275832',
-    outboundFromNumber: '+19793416695',
-    customerProfiles: [
-      { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695' }
-    ]
-  };
-  try { document.getElementById('year').textContent = new Date().getFullYear(); } catch {}
-</script>
+  <script>
+    window.API_BASE = 'https://api.contactcenterdev.com';
+    window.DEMO = {
+      agentPortalUrl: 'https://demo.contactcenterdev.com',
+      agentId: 'demo-agent-1',
+      workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      identity: 'client:agent:demo-agent-1',
+      softphoneUrl: '',
+      ivrNumber: '+12058275832',
+      outboundFromNumber: '+19793416695',
+      customerProfiles: [
+        { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695' }
+      ]
+    };
+    try { document.getElementById('year').textContent = new Date().getFullYear(); } catch { }
+  </script>
 
 
   <!-- Cargador de parciales y arranque -->
@@ -306,8 +312,8 @@ export class VideoController {
     await import('./app/main.js');
   </script>
 </body>
-</html>
 
+</html>
 ==== /webchat\index.html ====
 
 ==== webchat\partials\agent-portal.html ====
@@ -740,11 +746,13 @@ export const bus = new Bus();
 ==== /webchat\services\bus.js ====
 
 ==== webchat\services\config.js ====
-// Lee del window.* si existe para permitir overriding desde index.html
-export const API_BASE = typeof window !== 'undefined' && window.API_BASE
+// Base del API (origen). Acepta sin /api y le agregamos helpers ya normalizados.
+const RAW_BASE = (typeof window !== 'undefined' && window.API_BASE)
   ? window.API_BASE
   : 'http://localhost:4000';
-
+export const API_BASE = RAW_BASE.replace(/\/+$/, '');
+export const API_BASE_API = `${API_BASE}/api`;
+export const DEMO_BASE = `${API_BASE_API}/demo`; // <-- usamos /api/demo siempre
 export const DEMO = typeof window !== 'undefined' && window.DEMO
   ? window.DEMO
   : {
@@ -1868,8 +1876,10 @@ async function ensureVoiceSDKLoaded() {
     await loadScriptOnce('https://unpkg.com/@twilio/voice-sdk@2.10.1/dist/twilio.min.js');
   }
 }
+import { API_BASE, DEMO_BASE } from '../services/config.js';
 async function fetchVoiceToken(identityHint = 'softphone:alex') {
-  const r = await fetch(`${API_BASE}/demo/token/voice?identity=${encodeURIComponent(identityHint)}`);
+  const r = await fetch(`${DEMO_BASE}/token/voice?identity=${encodeURIComponent(identityHint)}`);
+
   if (!r.ok) throw new Error('voice token http ' + r.status);
   return r.json(); // { token, identity }
 }
@@ -1987,7 +1997,7 @@ async function startCallFromUI() {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/demo/call/start`, {
+    const res = await fetch(`${DEMO_BASE}/call/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to, from })
     });
