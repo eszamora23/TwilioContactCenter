@@ -95,12 +95,27 @@ if (env.publicBaseUrl) {
 
 // --- HTTP + Socket.IO con CORS ---
 const server = http.createServer(app);
+
+// Origins permitidos para Socket.IO (si origin == true o array, úsalo; si no, default a dominios públicos)
+const allowedOrigins = (Array.isArray(origin) || origin === true)
+  ? origin
+  : ['https://contactcenterdev.com', 'https://demo.contactcenterdev.com'];
+
 const io = new Server(server, {
+  path: '/socket.io',
   cors: {
-    origin,
+    origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  allowEIO3: true, // compatibilidad con clientes que aún negocian Engine.IO v3
+});
+
+// (opcional) Log simple para verificar Origin del handshake
+io.on('connection', (socket) => {
+  try {
+    console.log('[socket.io] connected:', socket.id, 'origin=', socket.handshake?.headers?.origin);
+  } catch {}
 });
 
 // comparte io con los routers para poder emitir eventos (p. ej. presence_update)
