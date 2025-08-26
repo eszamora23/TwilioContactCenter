@@ -60,6 +60,9 @@ export class VoiceDevice {
     this.device.on('unregistered', () => {
       console.log('[Voice] unregistered');
       this._status('Idle');
+      // Keep the device reachable for the next reservation
+      // (avoid small windows of undialable state after a call ends)
+      try { this.device?.register(); } catch {}
     });
 
     // Handle token errors gracefully (e.g., 401)
@@ -68,6 +71,9 @@ export class VoiceDevice {
       const msg = String(e?.message || '').toLowerCase();
       if (msg.includes('token')) {
         this.refreshToken().catch(console.error);
+      } else if (msg.includes('transport') || msg.includes('websocket') || msg.includes('disconnect')) {
+        // Reconnect path for transient signaling drops (e.g. 31205)
+        try { this.device?.register(); } catch {}
       }
     });
 
@@ -111,9 +117,18 @@ export class VoiceDevice {
 
     // Re-bind handlers after rebuild
     this.device.on('registered', () => this._status('Idle'));
-    this.device.on('unregistered', () => this._status('Idle'));
+    this.device.on('unregistered', () => {
+      this._status('Idle');
+      try { this.device?.register(); } catch {}
+    });
     this.device.on('error', (e) => {
       console.error('[Voice] device error (rebuilt)', e);
+      const msg = String(e?.message || '').toLowerCase();
+      if (msg.includes('token')) {
+        this.refreshToken().catch(console.error);
+      } else if (msg.includes('transport') || msg.includes('websocket') || msg.includes('disconnect')) {
+        try { this.device?.register(); } catch {}
+      }
     });
     this.device.on('incoming', (call) => {
       this.current = call;
