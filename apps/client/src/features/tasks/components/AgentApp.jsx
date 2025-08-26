@@ -1,4 +1,4 @@
-// contact-center/client/src/features/tasks/components/AgentApp.jsx
+// src/features/tasks/components/AgentApp.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io } from 'socket.io-client';
@@ -13,11 +13,18 @@ import { Separator } from '@twilio-paste/core/separator';
 import { Badge } from '@twilio-paste/core/badge';
 import { Box as PBox } from '@twilio-paste/core/box';
 import { Switch } from '@twilio-paste/core/switch';
+import {
+  Modal,
+  ModalHeader,
+  ModalHeading,
+  ModalBody,
+  ModalFooter,
+} from '@twilio-paste/core/modal';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
-import { SOFTPHONE_CHANNEL_KEY, SOFTPHONE_POPUP_FEATURES } from '../../softphone/constants.js';
+import { SOFTPHONE_POPUP_FEATURES } from '../../softphone/constants.js';
 
 import ChatPanel from '../../../chat/ChatPanel.jsx';
 import StatusBar from './StatusBar.jsx';
@@ -29,12 +36,18 @@ import Reservations from './Reservations.jsx';
 import AgentDesktopShell from './AgentDesktopShell.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
+import { useSoftphoneChannel } from '../../softphone/hooks/useSoftphoneChannel.js';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
 
 const SOFTPHONE_WINDOW_NAME = 'softphone_popup';
 const SOFTPHONE_URL = () => `${window.location.origin}?popup=softphone`;
+
+// Handshake timings
+const ACK_TIMEOUT_MS = 8000;   // extended to allow slow popup init
+const PING_INTERVAL_MS = 500;  // periodic pings during validation
+const FIRST_PING_DELAY_MS = 1000; // wait before first ping to let popup mount
 
 export default function AgentApp() {
   const queryClient = useQueryClient();
@@ -46,6 +59,29 @@ export default function AgentApp() {
   }, [queryClient]);
 
   const { worker, activity, reservations, setAvailable } = useWorker();
+
+  // ---- Safe worker event helpers (avoid .off which doesn't exist) ----
+  const attachWorkerListener = useCallback((eventName, handler) => {
+    if (!worker || !eventName || !handler) return;
+    if (typeof worker.on === 'function') {
+      worker.on(eventName, handler);
+    } else if (typeof worker.addListener === 'function') {
+      worker.addListener(eventName, handler);
+    }
+  }, [worker]);
+
+  const detachWorkerListener = useCallback((eventName, handler) => {
+    if (!worker || !eventName || !handler) return;
+    if (typeof worker.removeListener === 'function') {
+      worker.removeListener(eventName, handler);
+    } else if (typeof worker.off === 'function') {
+      // Some EventEmitter polyfills do offer off; use if present
+      worker.off(eventName, handler);
+    } else if (typeof worker.removeAllListeners === 'function') {
+      // Last resort: drop all listeners for the event (avoid misuse)
+      worker.removeAllListeners(eventName);
+    }
+  }, [worker]);
 
   // Tabs
   const [mode, setMode] = useLocalStorage('desktop_mode', 'voice');
@@ -59,136 +95,211 @@ export default function AgentApp() {
   const [chatBadge, setChatBadge] = useState(0);
   useEffect(() => { if (mode === 'chat') setChatBadge(0); }, [mode]);
 
-  // Softphone
+  // ================== Softphone / Popup ==================
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
 
-  // Default OFF; persisted when user turns it ON
-  const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
+  // Initialize directly from localStorage. Accept old string values; always write booleans.
+  const [softphonePrefRaw, setSoftphonePref] = useLocalStorage('softphone_popout', false);
+  const isSoftphonePopout = softphonePrefRaw === true || softphonePrefRaw === 'true';
 
+  // Briefly disable interactions while verifying an "ON" state after reload.
+  const [isSoftphoneValidating, setIsSoftphoneValidating] = useState(false);
+
+  // Window handle lives only for this tab lifetime.
   const softphoneWinRef = useRef(null);
+
   const prevCallStatusRef = useRef('Idle');
   const lastOpenAttemptRef = useRef(0);
 
-  /* ================================
-   * Single popup window (not a tab)
-   * ================================ */
-  const getExistingSoftphoneWindow = useCallback(() => {
-    try {
-      const w = window.open('', SOFTPHONE_WINDOW_NAME);
-      if (w && !w.closed) return w;
-    } catch {}
-    return null;
-  }, []);
+  const awaitingAckRef = useRef(false);
+  const ackTimerRef = useRef(null);
+  const pingIntervalRef = useRef(null);
+  const validationRunRef = useRef(0); // guard token to avoid re-entrancy
 
-  const openSoftphoneWindow = useCallback(() => {
-    // Avoid burst open
-    const now = Date.now();
-    if (now - lastOpenAttemptRef.current < 600) {
-      return softphoneWinRef.current || null;
-    }
-    lastOpenAttemptRef.current = now;
+  // Distinguish confirm vs. cancel modal close
+  const closingByConfirmRef = useRef(false);
 
-    // 1) Try to reuse by name
-    let w = getExistingSoftphoneWindow();
-
-    // 2) Open FINAL URL directly during the user gesture (more likely to be treated as a true popup)
-    if (!w) {
-      w = window.open(SOFTPHONE_URL(), SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
-      if (!w) return null; // blocked by the browser
-    } else {
-      try {
-        const href = w.location?.href || '';
-        if (!href.includes('?popup=softphone')) {
-          w.location.replace(SOFTPHONE_URL());
-        }
-      } catch {}
-    }
-
-    // Best effort focus and isolation
-    try { w.opener = null; } catch {}
-    try { w.focus(); } catch {}
-
-    softphoneWinRef.current = w;
-    return w;
-  }, [getExistingSoftphoneWindow]);
-
-  const closeSoftphoneWindow = useCallback(() => {
-    try { softphoneWinRef.current?.close(); } catch {}
-    softphoneWinRef.current = null;
-  }, []);
-
-  /* ================================
-   * Sync channel & close handling
-   * ================================ */
-  useEffect(() => {
-    let channel;
-    const onMsg = (evt) => {
-      const { type, payload } = evt.data || {};
-
-      if (type === 'state') {
-        const status = payload?.callStatus || 'Idle';
-        setHasCall(status === 'In Call' || status === 'Incoming');
-        if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
-          toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
-        }
-        prevCallStatusRef.current = status;
-      } else if (type === 'popup-closed') {
-        // User closed the popup → turn OFF toggle and show inline
-        softphoneWinRef.current = null;
-        setSoftphonePopout(false);
+  // Reusable channel (BroadcastChannel or storage fallback)
+  const { postToChannel } = useSoftphoneChannel({
+    isPopup: false,
+    onStateUpdate: (payload) => {
+      const status = payload?.callStatus || 'Idle';
+      setHasCall(status === 'In Call' || status === 'Incoming');
+      if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
+        toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
       }
-    };
+      prevCallStatusRef.current = status;
 
-    if (typeof BroadcastChannel === 'function') {
-      channel = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
-      channel.onmessage = onMsg;
-    } else {
-      const storageHandler = (e) => {
-        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
-          try { onMsg({ data: JSON.parse(e.newValue) }); } catch {}
-        }
-      };
-      window.addEventListener('storage', storageHandler);
-      channel = { close: () => window.removeEventListener('storage', storageHandler) };
-    }
+      // ✅ Any inbound state proves the popup is alive — stop validation loop.
+      if (awaitingAckRef.current) {
+        if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+        if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+        awaitingAckRef.current = false;
+        if (!isSoftphonePopout) setSoftphonePref(true);
+        setIsSoftphoneValidating(false);
+      }
+    },
+    onPopupClosed: () => {
+      softphoneWinRef.current = null;
+      setSoftphonePref(false); // keep storage in sync
+    },
+    onAckReceived: () => {
+      // Any 'pong' or 'ready' breaks validation
+      if (!awaitingAckRef.current) return;
+      if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+      if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+      awaitingAckRef.current = false;
+      // If it was turned ON programmatically by popup, ensure LS reflects ON
+      if (!isSoftphonePopout) setSoftphonePref(true);
+      setIsSoftphoneValidating(false);
+    },
+  });
 
-    return () => { try { channel?.close?.(); } catch {} };
-  }, [setSoftphonePopout, toaster]);
+  // Keep a stable reference to the channel function
+  const postToChannelRef = useRef(postToChannel);
+  useEffect(() => { postToChannelRef.current = postToChannel; }, [postToChannel]);
 
-  // Safety poll in case the close event doesn't arrive
+  const clearValidationTimers = useCallback(() => {
+    if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+    if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+    awaitingAckRef.current = false;
+  }, []);
+
+  // Stable probe (no deps) — uses refs so it doesn't retrigger endlessly
+  const beginValidationProbe = useCallback(() => {
+    // Prevent re-entrancy: if there's a probe running, don't start another
+    if (awaitingAckRef.current) return;
+
+    setIsSoftphoneValidating(true);
+    awaitingAckRef.current = true;
+
+    const myRun = ++validationRunRef.current; // token for this validation attempt
+
+    // Delay the first ping to give the popup time to mount listeners
+    setTimeout(() => {
+      if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+      try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+      // Continue pinging while we wait
+      pingIntervalRef.current = setInterval(() => {
+        if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+        try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+      }, PING_INTERVAL_MS);
+    }, FIRST_PING_DELAY_MS);
+
+    // Global ACK timeout
+    ackTimerRef.current = setTimeout(() => {
+      if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+      clearValidationTimers();
+      // No ACK — popup isn't alive; flip back to OFF and show inline.
+      setSoftphonePref(false);
+      setIsSoftphoneValidating(false);
+      toaster.push({
+        message: 'Softphone popup not detected. Returning inline.',
+        variant: 'neutral',
+        dismissAfter: 4000,
+      });
+    }, ACK_TIMEOUT_MS);
+  }, []); // intentionally empty deps for stability
+
+  // If stored preference is ON on mount/refresh, verify that a popup is truly alive.
+  useEffect(() => {
+    if (!isSoftphonePopout) return;
+    beginValidationProbe();
+    return () => clearValidationTimers();
+    // only depend on the boolean to avoid retriggers
+  }, [isSoftphonePopout]);
+
+  // Safety poll if we *do* have a handle
   useEffect(() => {
     if (!isSoftphonePopout) return;
     const it = setInterval(() => {
       if (softphoneWinRef.current && softphoneWinRef.current.closed) {
         softphoneWinRef.current = null;
-        setSoftphonePopout(false); // OFF → inline automatically
+        setSoftphonePref(false);
       }
     }, 700);
     return () => clearInterval(it);
-  }, [isSoftphonePopout, setSoftphonePopout]);
+  }, [isSoftphonePopout, setSoftphonePref]);
 
-  /* ================================
-   * Toggle (user gesture only)
-   * ================================ */
+  // Confirm modal
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  /* Open/close popup (only via user gesture) */
+  const openSoftphoneWindow = useCallback(() => {
+    const now = Date.now();
+    if (now - lastOpenAttemptRef.current < 600) {
+      if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
+        try { softphoneWinRef.current.focus(); } catch {}
+        return softphoneWinRef.current;
+      }
+    }
+    lastOpenAttemptRef.current = now;
+
+    if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
+      try { softphoneWinRef.current.focus(); } catch {}
+      return softphoneWinRef.current;
+    }
+
+    const w = window.open(SOFTPHONE_URL(), SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
+    // Some configs (e.g., noreferrer) can return null even when the popup opens; we do not assume block here.
+    if (!w) return null;
+    try { w.opener = null; } catch {}
+    try { w.focus(); } catch {}
+    softphoneWinRef.current = w;
+    return w;
+  }, []);
+
+  const closeSoftphoneWindow = useCallback(() => {
+    // Ask the popup to close itself (works even if handle is lost)
+    try { postToChannelRef.current?.('cmd', { action: 'close' }); } catch {}
+    try { softphoneWinRef.current?.close(); } catch {}
+    softphoneWinRef.current = null;
+  }, []);
+
+  /* Confirm flow */
+  const proceedOpenPopup = useCallback(() => {
+    closingByConfirmRef.current = true;
+    setConfirmOpen(false);
+
+    // Open or focus the popup
+    openSoftphoneWindow();
+
+    // Mark ON and validate; revert if no ACK arrives
+    setSoftphonePref(true);
+    beginValidationProbe();
+
+    // allow onDismiss to behave normally after this tick
+    setTimeout(() => { closingByConfirmRef.current = false; }, 0);
+  }, [openSoftphoneWindow, setSoftphonePref, beginValidationProbe]);
+
+  const cancelOpenPopup = useCallback(() => {
+    setConfirmOpen(false);
+    setSoftphonePref(false);
+  }, [setSoftphonePref]);
+
+  const handleModalDismiss = useCallback(() => {
+    if (closingByConfirmRef.current) {
+      closingByConfirmRef.current = false;
+      return;
+    }
+    cancelOpenPopup();
+  }, [cancelOpenPopup]);
+
   const handleSoftphoneToggle = useCallback((checked) => {
     if (checked) {
-      const w = openSoftphoneWindow(); // must be synchronous in the change handler
-      if (w) {
-        setSoftphonePopout(true);    // persist ON only if a real window exists
-      } else {
-        setSoftphonePopout(false);
-        setTimeout(() => toaster.push({ message: 'Popup blocked by browser', variant: 'error' }), 0);
-      }
+      // Ask for confirmation; ON will be set after confirm.
+      setConfirmOpen(true);
     } else {
+      setConfirmOpen(false);
+      clearValidationTimers();
       closeSoftphoneWindow();
-      setSoftphonePopout(false);     // OFF → inline
+      setSoftphonePref(false);
+      setIsSoftphoneValidating(false);
     }
-  }, [openSoftphoneWindow, closeSoftphoneWindow, setSoftphonePopout, toaster]);
+  }, [closeSoftphoneWindow, setSoftphonePref, clearValidationTimers]);
 
-  /* ================================
-   * CHAT helpers
-   * ================================ */
+  // ================== CHAT helpers ==================
   const prioritizeChat = useCallback((sid) => {
     setChatSessions((prev) => {
       const idx = prev.findIndex((s) => s.sid === sid);
@@ -256,68 +367,85 @@ export default function AgentApp() {
       setMode('chat');
       setChatPanelKey((k) => k + 1);
       requestAnimationFrame(() => {
-        document.getElementById('main-chat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document
+          .getElementById('main-chat-panel')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     },
     [ensureChatSession, prioritizeChat, setMode]
   );
 
-  // worker & sockets (same behavior as before)
+  // Notificaciones / worker bindings
   const notifiedConvosRef = useRef(new Set());
   const processedTaskCreatedRef = useRef(new Set());
 
-  useEffect(() => {
-    if (!worker) return;
-
-    const onCreated = async (r) => {
-      try {
-        const a = r?.task?.attributes || {};
-        if (a.channel === 'chat') {
-          const sid = a.conversationSid || a.conversation_sid;
-          const label = a.customerName || a.from || a.name || sid;
-          if (sid) await ensureChatSession(sid, label);
-        }
-        invalidateTasks();
-      } catch (e) {
-        console.warn('[worker reservation.created handler]', e);
-      }
-    };
-
-    const onAccepted = async (r) => {
-      try {
-        const a = r?.task?.attributes || {};
-        if (a.channel !== 'chat') return;
+  // Memoize handlers with useCallback
+  const onReservationCreated = useCallback(async (r) => {
+    try {
+      const a = r?.task?.attributes || {};
+      if (a.channel === 'chat') {
         const sid = a.conversationSid || a.conversation_sid;
         const label = a.customerName || a.from || a.name || sid;
-        if (sid && !notifiedConvosRef.current.has(sid)) {
-          notifiedConvosRef.current.add(sid);
-          await ensureChatSession(sid, label);
-          toaster.push({ message: label ? `New chat assigned: ${label}` : 'New chat assigned', variant: 'warning', dismissAfter: 6000 });
-        }
-        invalidateTasks();
-      } catch (e) {
-        console.warn('[worker reservation.accepted handler]', e);
+        if (sid) await ensureChatSession(sid, label);
       }
-    };
+      invalidateTasks();
+    } catch (e) {
+      console.warn('[worker reservation.created handler]', e);
+    }
+  }, [ensureChatSession, invalidateTasks]);
 
-    try { worker.off('reservation.created', onCreated); } catch {}
-    try { worker.off('reservation.accepted', onAccepted); } catch {}
-    worker.on('reservation.created', onCreated);
-    worker.on('reservation.accepted', onAccepted);
+  const onReservationAccepted = useCallback(async (r) => {
+    try {
+      const a = r?.task?.attributes || {};
+      if (a.channel !== 'chat') return;
+      const sid = a.conversationSid || a.conversation_sid;
+      const label = a.customerName || a.from || a.name || sid;
+      if (sid && !notifiedConvosRef.current.has(sid)) {
+        notifiedConvosRef.current.add(sid);
+        await ensureChatSession(sid, label);
+        toaster.push({
+          message: label ? `New chat assigned: ${label}` : 'New chat assigned',
+          variant: 'warning',
+          dismissAfter: 6000,
+        });
+      }
+      invalidateTasks();
+    } catch (e) {
+      console.warn('[worker reservation.accepted handler]', e);
+    }
+  }, [ensureChatSession, invalidateTasks, toaster]);
 
-    return () => {
-      try { worker.off('reservation.created', onCreated); } catch {}
-      try { worker.off('reservation.accepted', onAccepted); } catch {}
-    };
-  }, [worker, ensureChatSession, invalidateTasks, toaster]);
+  const onReservationEvent = useCallback(() => invalidateTasks(), [invalidateTasks]);
 
   useEffect(() => {
     if (!worker) return;
-    const refresh = () => invalidateTasks();
-    const evs = ['reservation.rejected','reservation.timeout','reservation.canceled','reservation.completed','activity.update'];
-    evs.forEach((e) => { try { worker.on(e, refresh); } catch {} });
-    return () => evs.forEach((e) => { try { worker.off(e, refresh); } catch {} });
-  }, [worker, invalidateTasks]);
+
+    attachWorkerListener('reservation.created', onReservationCreated);
+    attachWorkerListener('reservation.accepted', onReservationAccepted);
+
+    return () => {
+      detachWorkerListener('reservation.created', onReservationCreated);
+      detachWorkerListener('reservation.accepted', onReservationAccepted);
+    };
+  }, [worker, attachWorkerListener, detachWorkerListener, onReservationCreated, onReservationAccepted]);
+
+  useEffect(() => {
+    if (!worker) return;
+
+    const evs = [
+      'reservation.rejected',
+      'reservation.timeout',
+      'reservation.canceled',
+      'reservation.completed',
+      'activity.update',
+    ];
+
+    evs.forEach((e) => attachWorkerListener(e, onReservationEvent));
+
+    return () => {
+      evs.forEach((e) => detachWorkerListener(e, onReservationEvent));
+    };
+  }, [worker, attachWorkerListener, detachWorkerListener, onReservationEvent]);
 
   useEffect(() => {
     const socket = io(socketBase, {
@@ -340,9 +468,7 @@ export default function AgentApp() {
       }
     });
 
-    socket.on('connect_error', (err) =>
-      console.warn('[socket.io] connect_error', err?.message || err)
-    );
+    socket.on('connect_error', (err) => console.warn('[socket.io] connect_error', err?.message || err));
 
     return () => socket.disconnect();
   }, [ensureChatSession, invalidateTasks]);
@@ -350,32 +476,12 @@ export default function AgentApp() {
   const logout = useCallback(async () => {
     await Api.logout();
     try { localStorage.removeItem('agent_ctx'); } catch {}
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // Activity Offline real si aplica
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // replace with real "Offline" Activity SID if applicable
     try { await setAvailable(offlineSid); } catch {}
     window.location.reload();
   }, [setAvailable]);
 
-  /* ================================
-   * Header actions
-   * ================================ */
-  const headerActions = useMemo(() => (
-    <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }} alignment="center">
-      <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
-      <Switch
-        checked={isSoftphonePopout}
-        onChange={(e) => handleSoftphoneToggle(e.target.checked)}
-        aria-label="Softphone pop-out"
-      >
-        Softphone window
-      </Switch>
-      {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
-      <Button variant="destructive" onClick={logout}>Logout</Button>
-    </Stack>
-  ), [activity, setAvailable, isSoftphonePopout, handleSoftphoneToggle, hasCall, logout]);
-
-  /* ================================
-   * Sections per mode
-   * ================================ */
+  /* Secciones por modo */
   const voiceSections = useMemo(() => ([
     { id: 'softphone', label: 'Softphone' },
     { id: 'customer360', label: 'Customer 360' },
@@ -410,22 +516,55 @@ export default function AgentApp() {
     ],
   }), []);
 
-  /* ================================
-   * Render
-   * ================================ */
+  /* Render */
   return (
     <Box minHeight="100vh" width="100%">
       <Toaster {...toaster} />
 
-      {/* Call controls modal */}
+      {/* Modal de controles de llamada */}
       <CallControlsModal isOpen={controlsOpen} onDismiss={() => setControlsOpen(false)} />
+
+      {/* Modal de confirmación para abrir popup */}
+      <Modal
+        isOpen={confirmOpen}
+        onDismiss={handleModalDismiss}
+        size="default"
+        ariaLabel="confirm-open-softphone"
+      >
+        <ModalHeader>
+          <ModalHeading>Open softphone in a new window?</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          The softphone will move to a separate popup window. You can switch it off later to bring it back inline.
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={cancelOpenPopup}>Cancel</Button>
+            <Button variant="primary" onClick={proceedOpenPopup}>Open window</Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
 
       <AgentDesktopShell
         sections={mode === 'voice' ? voiceSections : mode === 'chat' ? chatSections : supervisorSections}
         title="Agent Desktop"
-        actions={headerActions}
         mode={mode}
         quickActions={shellQuickActions}
+        actions={
+          <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }} alignment="center">
+            <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+            <Switch
+              checked={isSoftphonePopout}
+              onChange={(e) => handleSoftphoneToggle(e.target.checked)}
+              aria-label="Softphone pop-out"
+              disabled={isSoftphoneValidating}
+            >
+              Softphone window {isSoftphoneValidating && '(checking...)'}
+            </Switch>
+            {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
+            <Button variant="destructive" onClick={logout}>Logout</Button>
+          </Stack>
+        }
       >
         <Box marginBottom="space70">
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
@@ -450,8 +589,10 @@ export default function AgentApp() {
                     </Heading>
 
                     <CardSection id="softphone" title="Softphone">
-                      {/* OFF → inline visible; ON → inline hidden (hook stays mounted in main) */}
-                      <Softphone popupOpen={isSoftphonePopout} />
+                      {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
+                      <Box display={isSoftphonePopout ? 'none' : 'block'}>
+                        <Softphone popupOpen={isSoftphonePopout} />
+                      </Box>
                     </CardSection>
 
                     <Box marginY="space40"><Separator orientation="horizontal" /></Box>

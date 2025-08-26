@@ -1511,9 +1511,10 @@ export default function PopoutButton({ onClick }) {
 
 ==== src\features\softphone\components\Softphone.jsx ====
 // contact-center/client/src/features/softphone/components/Softphone.jsx
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import useSoftphone from '../hooks/useSoftphone.js';
+import { useSoftphoneChannel } from '../hooks/useSoftphoneChannel.js';
 import useCallControls from './useCallControls.js';
 import DialPad from './DialPad.jsx';
 import IncomingModal from './IncomingModal.jsx';
@@ -1545,8 +1546,21 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
 }
 
 function SoftphoneInner({ remoteOnly, hiddenInline }) {
-  const isPopup = remoteOnly === true; // diseño full-height dentro del popup
+  // Detectar contexto popup de forma robusta: prioridad a prop remoteOnly, fallback al query param.
+  const isPopup = useMemo(() => {
+    if (remoteOnly) return true;
+    try {
+      return new URLSearchParams(window.location.search).get('popup') === 'softphone';
+    } catch {
+      return false;
+    }
+  }, [remoteOnly]);
+
   const { t } = useTranslation();
+
+  // Canal compartido: en popup envía 'ready' y responde 'ping'->'pong'.
+  // En main no es dañino; si ya tienes el canal en useSoftphone/AgentApp, este hook es idempotente.
+  useSoftphoneChannel({ isPopup });
 
   // Hook SIEMPRE montado en main; en popup (remoteOnly) no crea Device
   const softphone = useSoftphone(remoteOnly);
@@ -1856,21 +1870,35 @@ export default function useCallControls(softphone) {
 ==== src\features\softphone\constants.js ====
 export const SOFTPHONE_CHANNEL_KEY = 'softphone-control';
 
-// Forzar ventana (no pestaña) en la mayoría de navegadores.
-// Nota: algunos user settings siguen prefiriendo pestaña, pero el contenido
-// SIEMPRE abrirá en la URL correcta del popup.
+/**
+ * Features agresivos para forzar "popup window" (no tab).
+ * Algunos navegadores o políticas corporativas pueden seguir forzando tabs,
+ * pero esta combinación maximiza la probabilidad de ventana separada.
+ */
 export const SOFTPHONE_POPUP_FEATURES = [
-  'popup=yes',
+  // minimizar UI del navegador
+  'popup=1',
+  'noopener',
+  'noreferrer',
+  'toolbar=0',
+  'menubar=0',
+  'location=0',
+  'status=0',
+  'directories=0',
+  'personalbar=0',
+  'titlebar=0',
+
+  // dimensiones y posición
   'width=420',
   'height=640',
   'left=120',
   'top=80',
-  'menubar=no',
-  'toolbar=no',
-  'location=no',
-  'status=no',
-  'scrollbars=yes',
-  'resizable=yes'
+
+  // comportamiento
+  'scrollbars=1',
+  'resizable=1',
+  'dependent=yes',
+  'dialog=yes'
 ].join(',');
 
 ==== /src\features\softphone\constants.js ====
@@ -1943,7 +1971,7 @@ export default function useSoftphone(remoteOnly = false) {
     if (isPopup) return;
     try {
       const sid = getCallSid();
-      chanRef.current?.postMessage({
+      const msg = {
         type: 'state',
         payload: {
           ready,
@@ -1956,11 +1984,20 @@ export default function useSoftphone(remoteOnly = false) {
           hasIncoming: !!incoming,
           callSid: sid,
         },
-      });
+      };
+      // 1) intenta BroadcastChannel
+      chanRef.current?.postMessage?.(msg);
+      // 2) espejo por storage (best-effort) sin cambiar transporte
+      try {
+        localStorage.setItem(
+          SOFTPHONE_CHANNEL_KEY,
+          JSON.stringify({ ...msg, ts: Date.now() })
+        );
+      } catch {}
     } catch (e) {
       console.warn('[softphone channel state error]', e);
       setChannelError(true);
-      setUseStorageFallback(true);
+      // ❗ No forzar fallback aquí ni tocar chanRef; mantener BC evita desincronizar con el popup.
     }
   }, [ready, callStatus, isMuted, holding, recStatus, to, elapsed, incoming, isPopup]);
 
@@ -1993,13 +2030,17 @@ export default function useSoftphone(remoteOnly = false) {
       const id = waitForAck ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
       return new Promise((resolve, reject) => {
         try {
+          const ch = chanRef.current;
           if (id) pendingRef.current[id] = { resolve, reject };
-          chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
+          if (!ch || typeof ch.postMessage !== 'function') {
+            throw new Error('channel not ready');
+          }
+          ch.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
           if (!id) resolve();
         } catch (e) {
           console.warn('[softphone channel cmd error]', e);
           setChannelError(true);
-          setUseStorageFallback(true);
+          // ❗ No cambies a storage aquí; mantener ambos extremos en BC.
           if (id) delete pendingRef.current[id];
           reject(e);
         }
@@ -2120,8 +2161,27 @@ export default function useSoftphone(remoteOnly = false) {
 
     chanRef.current = ch;
 
+    const postSafe = (data) => {
+      try {
+        ch?.postMessage?.(data);
+      } catch (e) {
+        console.warn('[softphone channel post error]', e);
+        setChannelError(true);
+        // no cambiamos transporte
+      }
+      // espejo por storage para robustez
+      try {
+        localStorage.setItem(
+          SOFTPHONE_CHANNEL_KEY,
+          JSON.stringify({ ...(data || {}), ts: Date.now() })
+        );
+      } catch {}
+    };
+
     ch.onmessage = async (evt) => {
       const { type, payload, id, ok } = evt.data || {};
+
+      // ===================== POPUP CONTEXT =====================
       if (isPopup) {
         if (type === 'state') {
           setReady(!!payload.ready);
@@ -2132,11 +2192,13 @@ export default function useSoftphone(remoteOnly = false) {
           setTo(payload.to || '');
           setIncoming(payload.hasIncoming ? {} : null);
           setIncomingOpen(!!payload.hasIncoming);
+
           if (payload.callStatus === 'Idle') {
             setCallSid(null);
           } else {
             setCallSid(payload.callSid || null);
           }
+
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
             const sec = m * 60 + s;
@@ -2155,14 +2217,36 @@ export default function useSoftphone(remoteOnly = false) {
             clearInterval(tickRef.current);
             tickRef.current = null;
           }
-        } else if (type === 'resp' && id && pendingRef.current[id]) {
+          return;
+        }
+
+        if (type === 'resp' && id && pendingRef.current[id]) {
           const { resolve, reject } = pendingRef.current[id];
           delete pendingRef.current[id];
           if (ok) resolve();
           else reject(new Error('cmd failed'));
+          return;
         }
+
+        if (type === 'cmd') {
+          const action = payload?.action;
+          // Handshake: responder ping con pong
+          if (action === 'ping') {
+            postSafe({ type: 'cmd', payload: { action: 'pong' } });
+            return;
+          }
+          if (action === 'close') {
+            try { window.close(); } catch {}
+            return;
+          }
+          // Otros cmd no se ejecutan en popup
+          return;
+        }
+
         return;
       }
+
+      // ===================== MAIN CONTEXT =====================
       if (type === 'popup-closed') {
         setPopupOpen(false);
         popupWinRef.current = null;
@@ -2170,62 +2254,59 @@ export default function useSoftphone(remoteOnly = false) {
       }
 
       if (type !== 'cmd') return;
+
+      const action = payload?.action;
+      // Handshake: si el popup hace ping, contestar con pong y publicar estado
+      if (action === 'ping') {
+        postSafe({ type: 'cmd', payload: { action: 'pong' } });
+        publishState();
+        return;
+      }
+
+      if (action === 'ready') {
+        // no-op, solo confirmación
+        return;
+      }
+
+      // Ejecutar operaciones en main
       let success = true;
       try {
-        if (payload.action === 'ping') {
-          publishState();
-          return;
-        }
-        if (payload.action === 'dial') {
+        if (action === 'dial') {
           const num = String(payload.to || '').trim();
           if (num) {
             setTo(num);
             await dial(num);
           }
         }
-        if (payload.action === 'hangup') await hangup();
-        if (payload.action === 'mute') await toggleMute(true);
-        if (payload.action === 'unmute') await toggleMute(false);
-        if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
-        if (payload.action === 'accept') success = await acceptIncoming();
-        if (payload.action === 'reject') success = await rejectIncoming();
-        if (payload.action === 'hold') await holdStart(payload);    // ← accept optional overrides
-        if (payload.action === 'unhold') await holdStop(payload);   // ← accept optional overrides
-        if (payload.action === 'recStart') await recStart();
-        if (payload.action === 'recPause') await recPause();
-        if (payload.action === 'recResume') await recResume();
-        if (payload.action === 'recStop') await recStop();
+        if (action === 'hangup') await hangup();
+        if (action === 'mute') await toggleMute(true);
+        if (action === 'unmute') await toggleMute(false);
+        if (action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
+        if (action === 'accept') success = await acceptIncoming();
+        if (action === 'reject') success = await rejectIncoming();
+        if (action === 'hold') await holdStart(payload);    // acepta overrides
+        if (action === 'unhold') await holdStop(payload);   // acepta overrides
+        if (action === 'recStart') await recStart();
+        if (action === 'recPause') await recPause();
+        if (action === 'recResume') await recResume();
+        if (action === 'recStop') await recStop();
       } catch (e) {
         console.error('[softphone cmd error]', e);
         success = false;
       } finally {
         publishState();
-        if (id) {
-          try {
-            ch.postMessage({ type: 'resp', id, ok: success });
-          } catch (e) {
-            console.warn('[softphone channel resp error]', e);
-          }
-        }
+        if (id) postSafe({ type: 'resp', id, ok: success });
       }
     };
 
+    // Handshake inicial desde el popup o confirmación de disponibilidad
     if (isPopup) {
-      try {
-        ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
-      } catch (e) {
-        console.warn('[softphone channel ping error]', e);
-        setChannelError(true);
-        setUseStorageFallback(true);
-      }
+      postSafe({ type: 'cmd', payload: { action: 'ping' } });
     }
 
     return () => {
-      try {
-        ch.close();
-      } catch (e) {
-        console.warn('[softphone channel close error]', e);
-      }
+      try { ch.close?.(); } catch (e) { console.warn('[softphone channel close error]', e); }
+      chanRef.current = null;               // evitar postMessage tras cleanup
       clearInterval(tickRef.current);
       tickRef.current = null;
     };
@@ -2625,6 +2706,162 @@ export default function useSoftphone(remoteOnly = false) {
 
 ==== /src\features\softphone\hooks\useSoftphone.js ====
 
+==== src\features\softphone\hooks\useSoftphoneChannel.js ====
+// src/features/softphone/hooks/useSoftphoneChannel.js
+import { useEffect, useRef, useCallback } from 'react';
+import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
+import { SOFTPHONE_CHANNEL_KEY } from '../constants.js';
+
+export function useSoftphoneChannel({
+  isPopup = false,
+  onStateUpdate,
+  onPopupClosed,
+  onAckReceived,
+} = {}) {
+  const [softphonePrefRaw, setSoftphonePref] = useLocalStorage('softphone_popout', false);
+  const isSoftphonePopout = softphonePrefRaw === true || softphonePrefRaw === 'true';
+
+  const channelRef = useRef(null);
+  const storageHandlerRef = useRef(null);
+  const ackedRef = useRef(false);
+
+  const postToChannel = useCallback((type, payload = {}) => {
+    const msg = { type, payload, ts: Date.now() };
+    try {
+      const ch = channelRef.current;
+      if (ch && typeof ch.postMessage === 'function') {
+        ch.postMessage(msg);
+      } else {
+        // Fallback: storage broadcast
+        localStorage.setItem(SOFTPHONE_CHANNEL_KEY, JSON.stringify(msg));
+      }
+    } catch {
+      // If BC is closed or throws, try storage fallback
+      try {
+        localStorage.setItem(SOFTPHONE_CHANNEL_KEY, JSON.stringify(msg));
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    let bc = null;
+
+    const onMsg = (evt) => {
+      const { type, payload } = evt?.data || {};
+
+      if (type === 'state') {
+        onStateUpdate?.(payload);
+        // Consider first inbound state as ACK (breaks “checking…” loops)
+        if (!ackedRef.current) {
+          ackedRef.current = true;
+          onAckReceived?.();
+        }
+        return;
+      }
+
+      if (type === 'popup-closed') {
+        onPopupClosed?.();
+        return;
+      }
+
+      if (type === 'cmd') {
+        const action = payload?.action;
+
+        // Handshake:
+        // - POPUP replies to 'ping' with 'pong'
+        // - MAIN treats 'ping' as ACK too
+        if (action === 'ping') {
+          if (isPopup) {
+            try { postToChannel('cmd', { action: 'pong' }); } catch {}
+          }
+          if (!ackedRef.current) {
+            ackedRef.current = true;
+            onAckReceived?.();
+          }
+          return;
+        }
+
+        // ACKs
+        if (action === 'pong' || action === 'ready') {
+          if (!ackedRef.current) {
+            ackedRef.current = true;
+            onAckReceived?.();
+          }
+          return;
+        }
+
+        if (action === 'close' && isPopup) {
+          try { window.close(); } catch {}
+          return;
+        }
+      }
+    };
+
+    const installStorageFallback = () => {
+      if (storageHandlerRef.current) return;
+      const storageHandler = (e) => {
+        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
+          try { onMsg({ data: JSON.parse(e.newValue) }); } catch {}
+        }
+      };
+      window.addEventListener('storage', storageHandler);
+      storageHandlerRef.current = storageHandler;
+
+      channelRef.current = {
+        postMessage: (data) => {
+          try {
+            localStorage.setItem(
+              SOFTPHONE_CHANNEL_KEY,
+              JSON.stringify({ ...(data || {}), ts: Date.now() })
+            );
+          } catch {}
+        },
+        close: () => {
+          if (storageHandlerRef.current) {
+            window.removeEventListener('storage', storageHandlerRef.current);
+            storageHandlerRef.current = null;
+          }
+        },
+      };
+    };
+
+    // Prefer BroadcastChannel, fallback to storage
+    if (typeof BroadcastChannel === 'function') {
+      try {
+        bc = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
+        bc.onmessage = onMsg;
+        channelRef.current = bc;
+      } catch {
+        installStorageFallback();
+      }
+    } else {
+      installStorageFallback();
+    }
+
+    // POPUP announces readiness once
+    if (isPopup) {
+      try { postToChannel('cmd', { action: 'ready' }); } catch {}
+    }
+
+    return () => {
+      if (isPopup) {
+        try { postToChannel('popup-closed'); } catch {}
+      }
+      try { channelRef.current?.close?.(); } catch {}
+      if (storageHandlerRef.current) {
+        window.removeEventListener('storage', storageHandlerRef.current);
+        storageHandlerRef.current = null;
+      }
+      channelRef.current = null;
+      ackedRef.current = false;
+    };
+  }, [isPopup, postToChannel, onStateUpdate, onPopupClosed, onAckReceived]);
+
+  return { postToChannel, isSoftphonePopout, setSoftphonePref };
+}
+
+==== /src\features\softphone\hooks\useSoftphoneChannel.js ====
+
 ==== src\features\softphone\services\callSidStore.js ====
 // contact-center/client/src/softphone/callSidStore.js
 let _sid = null;
@@ -2974,7 +3211,7 @@ export default function ActivityQuickSwitch({ label, onChange }) {
 ==== /src\features\tasks\components\ActivityQuickSwitch.jsx ====
 
 ==== src\features\tasks\components\AgentApp.jsx ====
-// contact-center/client/src/features/tasks/components/AgentApp.jsx
+// src/features/tasks/components/AgentApp.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io } from 'socket.io-client';
@@ -2989,11 +3226,18 @@ import { Separator } from '@twilio-paste/core/separator';
 import { Badge } from '@twilio-paste/core/badge';
 import { Box as PBox } from '@twilio-paste/core/box';
 import { Switch } from '@twilio-paste/core/switch';
+import {
+  Modal,
+  ModalHeader,
+  ModalHeading,
+  ModalBody,
+  ModalFooter,
+} from '@twilio-paste/core/modal';
 
 import Api from '../../index.js';
 import { useWorker } from '../hooks/useWorker.js';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
-import { SOFTPHONE_CHANNEL_KEY, SOFTPHONE_POPUP_FEATURES } from '../../softphone/constants.js';
+import { SOFTPHONE_POPUP_FEATURES } from '../../softphone/constants.js';
 
 import ChatPanel from '../../../chat/ChatPanel.jsx';
 import StatusBar from './StatusBar.jsx';
@@ -3005,12 +3249,18 @@ import Reservations from './Reservations.jsx';
 import AgentDesktopShell from './AgentDesktopShell.jsx';
 import CallControlsModal from '../../softphone/components/CallControlsModal.jsx';
 import CardSection from '../../../shared/components/CardSection.jsx';
+import { useSoftphoneChannel } from '../../softphone/hooks/useSoftphoneChannel.js';
 
 const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
 
 const SOFTPHONE_WINDOW_NAME = 'softphone_popup';
 const SOFTPHONE_URL = () => `${window.location.origin}?popup=softphone`;
+
+// Handshake timings
+const ACK_TIMEOUT_MS = 8000;   // extended to allow slow popup init
+const PING_INTERVAL_MS = 500;  // periodic pings during validation
+const FIRST_PING_DELAY_MS = 1000; // wait before first ping to let popup mount
 
 export default function AgentApp() {
   const queryClient = useQueryClient();
@@ -3023,190 +3273,246 @@ export default function AgentApp() {
 
   const { worker, activity, reservations, setAvailable } = useWorker();
 
-  // Mode: 'voice' | 'chat' | 'supervisor'
+  // ---- Safe worker event helpers (avoid .off which doesn't exist) ----
+  const attachWorkerListener = useCallback((eventName, handler) => {
+    if (!worker || !eventName || !handler) return;
+    if (typeof worker.on === 'function') {
+      worker.on(eventName, handler);
+    } else if (typeof worker.addListener === 'function') {
+      worker.addListener(eventName, handler);
+    }
+  }, [worker]);
+
+  const detachWorkerListener = useCallback((eventName, handler) => {
+    if (!worker || !eventName || !handler) return;
+    if (typeof worker.removeListener === 'function') {
+      worker.removeListener(eventName, handler);
+    } else if (typeof worker.off === 'function') {
+      // Some EventEmitter polyfills do offer off; use if present
+      worker.off(eventName, handler);
+    } else if (typeof worker.removeAllListeners === 'function') {
+      // Last resort: drop all listeners for the event (avoid misuse)
+      worker.removeAllListeners(eventName);
+    }
+  }, [worker]);
+
+  // Tabs
   const [mode, setMode] = useLocalStorage('desktop_mode', 'voice');
 
-  // Chat sessions (tabs)
-  const [chatSessions, setChatSessions] = useState([]); // [{ sid, label, unread }]
+  // CHAT tabs
+  const [chatSessions, setChatSessions] = useState([]);
   const chatJoinedRef = useRef(new Set());
   const joinPendingRef = useRef(new Set());
   const [chatPanelKey, setChatPanelKey] = useState(0);
 
-  // CHAT badge
   const [chatBadge, setChatBadge] = useState(0);
-  useEffect(() => {
-    if (mode === 'chat') setChatBadge(0);
-  }, [mode]);
+  useEffect(() => { if (mode === 'chat') setChatBadge(0); }, [mode]);
 
-  // Softphone / popout
+  // ================== Softphone / Popup ==================
   const [controlsOpen, setControlsOpen] = useState(false);
   const [hasCall, setHasCall] = useState(false);
-  const [isSoftphonePopout, setSoftphonePopout] = useLocalStorage('softphone_popout', false);
 
+  // Initialize directly from localStorage. Accept old string values; always write booleans.
+  const [softphonePrefRaw, setSoftphonePref] = useLocalStorage('softphone_popout', false);
+  const isSoftphonePopout = softphonePrefRaw === true || softphonePrefRaw === 'true';
+
+  // Briefly disable interactions while verifying an "ON" state after reload.
+  const [isSoftphoneValidating, setIsSoftphoneValidating] = useState(false);
+
+  // Window handle lives only for this tab lifetime.
   const softphoneWinRef = useRef(null);
+
   const prevCallStatusRef = useRef('Idle');
-  const reopenBackoffRef = useRef(0);
   const lastOpenAttemptRef = useRef(0);
 
-  /* =========================
-   * Popup helpers (ventana única y URL correcta)
-   * ========================= */
-  const getExistingSoftphoneWindow = useCallback(() => {
-    try {
-      const w = window.open('', SOFTPHONE_WINDOW_NAME);
-      if (w && !w.closed) return w;
-    } catch {}
-    return null;
+  const awaitingAckRef = useRef(false);
+  const ackTimerRef = useRef(null);
+  const pingIntervalRef = useRef(null);
+  const validationRunRef = useRef(0); // guard token to avoid re-entrancy
+
+  // Distinguish confirm vs. cancel modal close
+  const closingByConfirmRef = useRef(false);
+
+  // Reusable channel (BroadcastChannel or storage fallback)
+  const { postToChannel } = useSoftphoneChannel({
+    isPopup: false,
+    onStateUpdate: (payload) => {
+      const status = payload?.callStatus || 'Idle';
+      setHasCall(status === 'In Call' || status === 'Incoming');
+      if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
+        toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
+      }
+      prevCallStatusRef.current = status;
+
+      // ✅ Any inbound state proves the popup is alive — stop validation loop.
+      if (awaitingAckRef.current) {
+        if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+        if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+        awaitingAckRef.current = false;
+        if (!isSoftphonePopout) setSoftphonePref(true);
+        setIsSoftphoneValidating(false);
+      }
+    },
+    onPopupClosed: () => {
+      softphoneWinRef.current = null;
+      setSoftphonePref(false); // keep storage in sync
+    },
+    onAckReceived: () => {
+      // Any 'pong' or 'ready' breaks validation
+      if (!awaitingAckRef.current) return;
+      if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+      if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+      awaitingAckRef.current = false;
+      // If it was turned ON programmatically by popup, ensure LS reflects ON
+      if (!isSoftphonePopout) setSoftphonePref(true);
+      setIsSoftphoneValidating(false);
+    },
+  });
+
+  // Keep a stable reference to the channel function
+  const postToChannelRef = useRef(postToChannel);
+  useEffect(() => { postToChannelRef.current = postToChannel; }, [postToChannel]);
+
+  const clearValidationTimers = useCallback(() => {
+    if (ackTimerRef.current) { clearTimeout(ackTimerRef.current); ackTimerRef.current = null; }
+    if (pingIntervalRef.current) { clearInterval(pingIntervalRef.current); pingIntervalRef.current = null; }
+    awaitingAckRef.current = false;
   }, []);
 
-  const openSoftphoneWindow = useCallback(() => {
-    // Reutiliza ventana por nombre si ya existe
-    let w = getExistingSoftphoneWindow();
+  // Stable probe (no deps) — uses refs so it doesn't retrigger endlessly
+  const beginValidationProbe = useCallback(() => {
+    // Prevent re-entrancy: if there's a probe running, don't start another
+    if (awaitingAckRef.current) return;
 
-    if (!w) {
-      // Evita ráfagas
-      const now = Date.now();
-      if (now - lastOpenAttemptRef.current < 600) return softphoneWinRef.current || null;
-      lastOpenAttemptRef.current = now;
+    setIsSoftphoneValidating(true);
+    awaitingAckRef.current = true;
 
-      // Abre about:blank con features de popup y navega a la URL del softphone
-      w = window.open('about:blank', SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
-      if (!w) return null;
-      try {
-        w.location.replace(SOFTPHONE_URL());
-      } catch {
-        try {
-          w.location.href = SOFTPHONE_URL();
-        } catch {}
+    const myRun = ++validationRunRef.current; // token for this validation attempt
+
+    // Delay the first ping to give the popup time to mount listeners
+    setTimeout(() => {
+      if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+      try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+      // Continue pinging while we wait
+      pingIntervalRef.current = setInterval(() => {
+        if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+        try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+      }, PING_INTERVAL_MS);
+    }, FIRST_PING_DELAY_MS);
+
+    // Global ACK timeout
+    ackTimerRef.current = setTimeout(() => {
+      if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
+      clearValidationTimers();
+      // No ACK — popup isn't alive; flip back to OFF and show inline.
+      setSoftphonePref(false);
+      setIsSoftphoneValidating(false);
+      toaster.push({
+        message: 'Softphone popup not detected. Returning inline.',
+        variant: 'neutral',
+        dismissAfter: 4000,
+      });
+    }, ACK_TIMEOUT_MS);
+  }, []); // intentionally empty deps for stability
+
+  // If stored preference is ON on mount/refresh, verify that a popup is truly alive.
+  useEffect(() => {
+    if (!isSoftphonePopout) return;
+    beginValidationProbe();
+    return () => clearValidationTimers();
+    // only depend on the boolean to avoid retriggers
+  }, [isSoftphonePopout]);
+
+  // Safety poll if we *do* have a handle
+  useEffect(() => {
+    if (!isSoftphonePopout) return;
+    const it = setInterval(() => {
+      if (softphoneWinRef.current && softphoneWinRef.current.closed) {
+        softphoneWinRef.current = null;
+        setSoftphonePref(false);
       }
-    } else {
-      // Asegura que navega al popup si por alguna razón quedó en otra URL
-      try {
-        const href = w.location?.href || '';
-        if (!href.includes('?popup=softphone')) {
-          w.location.replace(SOFTPHONE_URL());
-        }
-      } catch {}
+    }, 700);
+    return () => clearInterval(it);
+  }, [isSoftphonePopout, setSoftphonePref]);
+
+  // Confirm modal
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  /* Open/close popup (only via user gesture) */
+  const openSoftphoneWindow = useCallback(() => {
+    const now = Date.now();
+    if (now - lastOpenAttemptRef.current < 600) {
+      if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
+        try { softphoneWinRef.current.focus(); } catch {}
+        return softphoneWinRef.current;
+      }
+    }
+    lastOpenAttemptRef.current = now;
+
+    if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
+      try { softphoneWinRef.current.focus(); } catch {}
+      return softphoneWinRef.current;
     }
 
-    try {
-      w.focus();
-    } catch {}
-    try {
-      // aísla el opener
-      w.opener = null;
-    } catch {}
-
+    const w = window.open(SOFTPHONE_URL(), SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
+    // Some configs (e.g., noreferrer) can return null even when the popup opens; we do not assume block here.
+    if (!w) return null;
+    try { w.opener = null; } catch {}
+    try { w.focus(); } catch {}
     softphoneWinRef.current = w;
     return w;
-  }, [getExistingSoftphoneWindow]);
+  }, []);
 
   const closeSoftphoneWindow = useCallback(() => {
-    try {
-      softphoneWinRef.current?.close();
-    } catch {}
+    // Ask the popup to close itself (works even if handle is lost)
+    try { postToChannelRef.current?.('cmd', { action: 'close' }); } catch {}
+    try { softphoneWinRef.current?.close(); } catch {}
     softphoneWinRef.current = null;
   }, []);
 
-  /* =========================
-   * Voice state via BroadcastChannel
-   * ========================= */
-  useEffect(() => {
-    let channel;
-    const onMsg = (evt) => {
-      const { type, payload } = evt.data || {};
+  /* Confirm flow */
+  const proceedOpenPopup = useCallback(() => {
+    closingByConfirmRef.current = true;
+    setConfirmOpen(false);
 
-      if (type === 'state') {
-        const status = payload?.callStatus || 'Idle';
-        setHasCall(status === 'In Call' || status === 'Incoming');
-        if (prevCallStatusRef.current !== 'Incoming' && status === 'Incoming') {
-          toaster.push({ message: 'Incoming call', variant: 'warning', dismissAfter: 4000 });
-        }
-        prevCallStatusRef.current = status;
-      } else if (type === 'popup-closed') {
-        // El popup se cerró (por el usuario o por el propio popup).
-        softphoneWinRef.current = null;
+    // Open or focus the popup
+    openSoftphoneWindow();
 
-        if (isSoftphonePopout) {
-          // Si el toggle sigue ON, intenta reabrir con backoff suave (sin loops).
-          const now = Date.now();
-          if (now - reopenBackoffRef.current > 800) {
-            reopenBackoffRef.current = now;
-            const w = openSoftphoneWindow();
-            if (!w) setSoftphonePopout(false); // bloqueado → sincroniza OFF
-          }
-        } else {
-          setSoftphonePopout(false);
-        }
-      }
-      // Nota: NO encendemos el toggle por pings o mensajes del popup.
-    };
+    // Mark ON and validate; revert if no ACK arrives
+    setSoftphonePref(true);
+    beginValidationProbe();
 
-    if (typeof BroadcastChannel === 'function') {
-      channel = new BroadcastChannel(SOFTPHONE_CHANNEL_KEY);
-      channel.onmessage = onMsg;
-    } else {
-      const storageHandler = (e) => {
-        if (e.key === SOFTPHONE_CHANNEL_KEY && e.newValue) {
-          try {
-            onMsg({ data: JSON.parse(e.newValue) });
-          } catch {}
-        }
-      };
-      window.addEventListener('storage', storageHandler);
-      channel = { close: () => window.removeEventListener('storage', storageHandler) };
-    }
+    // allow onDismiss to behave normally after this tick
+    setTimeout(() => { closingByConfirmRef.current = false; }, 0);
+  }, [openSoftphoneWindow, setSoftphonePref, beginValidationProbe]);
 
-    return () => {
-      try {
-        channel?.close?.();
-      } catch {}
-    };
-  }, [isSoftphonePopout, openSoftphoneWindow, setSoftphonePopout, toaster]);
+  const cancelOpenPopup = useCallback(() => {
+    setConfirmOpen(false);
+    setSoftphonePref(false);
+  }, [setSoftphonePref]);
 
-  /* =========================
-   * Toggle ON/OFF
-   * ========================= */
-  const handleSoftphoneToggle = useCallback(
-    (checked) => {
-      if (checked) {
-        const w = openSoftphoneWindow();
-        setSoftphonePopout(!!w); // ON solo si realmente existe la ventana
-      } else {
-        closeSoftphoneWindow();
-        setSoftphonePopout(false);
-      }
-    },
-    [openSoftphoneWindow, closeSoftphoneWindow, setSoftphonePopout]
-  );
-
-  /* =========================
-   * Sync inicial (si toggle estaba ON)
-   * ========================= */
-  useEffect(() => {
-    if (!isSoftphonePopout) return;
-
-    // Ya hay referencia válida
-    if (softphoneWinRef.current && !softphoneWinRef.current.closed) return;
-
-    // Reutiliza si existe por nombre
-    const existing = getExistingSoftphoneWindow();
-    if (existing) {
-      softphoneWinRef.current = existing;
-      try {
-        existing.focus();
-      } catch {}
+  const handleModalDismiss = useCallback(() => {
+    if (closingByConfirmRef.current) {
+      closingByConfirmRef.current = false;
       return;
     }
+    cancelOpenPopup();
+  }, [cancelOpenPopup]);
 
-    // Intenta abrir (si el navegador bloquea, sincroniza OFF)
-    const w = openSoftphoneWindow();
-    if (!w) setSoftphonePopout(false);
-  }, [isSoftphonePopout, getExistingSoftphoneWindow, openSoftphoneWindow, setSoftphonePopout]);
+  const handleSoftphoneToggle = useCallback((checked) => {
+    if (checked) {
+      // Ask for confirmation; ON will be set after confirm.
+      setConfirmOpen(true);
+    } else {
+      setConfirmOpen(false);
+      clearValidationTimers();
+      closeSoftphoneWindow();
+      setSoftphonePref(false);
+      setIsSoftphoneValidating(false);
+    }
+  }, [closeSoftphoneWindow, setSoftphonePref, clearValidationTimers]);
 
-  /* =========================
-   * Chats: ensure & select
-   * ========================= */
+  // ================== CHAT helpers ==================
   const prioritizeChat = useCallback((sid) => {
     setChatSessions((prev) => {
       const idx = prev.findIndex((s) => s.sid === sid);
@@ -3221,7 +3527,6 @@ export default function AgentApp() {
   const ensureChatSession = useCallback(async (conversationSid, labelHint) => {
     if (!conversationSid) return false;
 
-    // si ya está unido / mostrado
     if (chatJoinedRef.current.has(conversationSid)) {
       setChatSessions((prev) => {
         if (prev.some((s) => s.sid === conversationSid)) return prev;
@@ -3234,12 +3539,10 @@ export default function AgentApp() {
     joinPendingRef.current.add(conversationSid);
 
     try {
-      // identidad por cookie
       const tokenResp = await fetch(`${baseURL}/api/chat/token`, { credentials: 'include' });
       if (!tokenResp.ok) throw new Error(`chat token: ${tokenResp.status}`);
       const { identity } = await tokenResp.json();
 
-      // ensure participant
       const joinResp = await fetch(`${baseURL}/api/conversations/${conversationSid}/participants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3250,7 +3553,7 @@ export default function AgentApp() {
       let ok = joinResp.ok || joinResp.status === 409;
       if (!ok) {
         const err = await joinResp.json().catch(() => ({}));
-        if (err?.error?.code === 50433) ok = true; // already in
+        if (err?.error?.code === 50433) ok = true;
       }
       if (!ok) return false;
 
@@ -3285,71 +3588,63 @@ export default function AgentApp() {
     [ensureChatSession, prioritizeChat, setMode]
   );
 
-  // Notificaciones simples de chat asignado
+  // Notificaciones / worker bindings
   const notifiedConvosRef = useRef(new Set());
   const processedTaskCreatedRef = useRef(new Set());
 
-  useEffect(() => {
-    if (!worker) return;
-
-    const onCreated = async (r) => {
-      try {
-        const a = r?.task?.attributes || {};
-        if (a.channel === 'chat') {
-          const sid = a.conversationSid || a.conversation_sid;
-          const label = a.customerName || a.from || a.name || sid;
-          if (sid) await ensureChatSession(sid, label);
-        }
-        invalidateTasks();
-      } catch (e) {
-        console.warn('[worker reservation.created handler]', e);
-      }
-    };
-
-    const onAccepted = async (r) => {
-      try {
-        const a = r?.task?.attributes || {};
-        if (a.channel !== 'chat') return;
+  // Memoize handlers with useCallback
+  const onReservationCreated = useCallback(async (r) => {
+    try {
+      const a = r?.task?.attributes || {};
+      if (a.channel === 'chat') {
         const sid = a.conversationSid || a.conversation_sid;
         const label = a.customerName || a.from || a.name || sid;
-        if (sid && !notifiedConvosRef.current.has(sid)) {
-          notifiedConvosRef.current.add(sid);
-          await ensureChatSession(sid, label);
-          toaster.push({
-            message: label ? `New chat assigned: ${label}` : 'New chat assigned',
-            variant: 'warning',
-            dismissAfter: 6000,
-          });
-        }
-        invalidateTasks();
-      } catch (e) {
-        console.warn('[worker reservation.accepted handler]', e);
+        if (sid) await ensureChatSession(sid, label);
       }
-    };
+      invalidateTasks();
+    } catch (e) {
+      console.warn('[worker reservation.created handler]', e);
+    }
+  }, [ensureChatSession, invalidateTasks]);
 
+  const onReservationAccepted = useCallback(async (r) => {
     try {
-      worker.off('reservation.created', onCreated);
-    } catch {}
-    try {
-      worker.off('reservation.accepted', onAccepted);
-    } catch {}
+      const a = r?.task?.attributes || {};
+      if (a.channel !== 'chat') return;
+      const sid = a.conversationSid || a.conversation_sid;
+      const label = a.customerName || a.from || a.name || sid;
+      if (sid && !notifiedConvosRef.current.has(sid)) {
+        notifiedConvosRef.current.add(sid);
+        await ensureChatSession(sid, label);
+        toaster.push({
+          message: label ? `New chat assigned: ${label}` : 'New chat assigned',
+          variant: 'warning',
+          dismissAfter: 6000,
+        });
+      }
+      invalidateTasks();
+    } catch (e) {
+      console.warn('[worker reservation.accepted handler]', e);
+    }
+  }, [ensureChatSession, invalidateTasks, toaster]);
 
-    worker.on('reservation.created', onCreated);
-    worker.on('reservation.accepted', onAccepted);
-
-    return () => {
-      try {
-        worker.off('reservation.created', onCreated);
-      } catch {}
-      try {
-        worker.off('reservation.accepted', onAccepted);
-      } catch {}
-    };
-  }, [worker, ensureChatSession, invalidateTasks, toaster]);
+  const onReservationEvent = useCallback(() => invalidateTasks(), [invalidateTasks]);
 
   useEffect(() => {
     if (!worker) return;
-    const refresh = () => invalidateTasks();
+
+    attachWorkerListener('reservation.created', onReservationCreated);
+    attachWorkerListener('reservation.accepted', onReservationAccepted);
+
+    return () => {
+      detachWorkerListener('reservation.created', onReservationCreated);
+      detachWorkerListener('reservation.accepted', onReservationAccepted);
+    };
+  }, [worker, attachWorkerListener, detachWorkerListener, onReservationCreated, onReservationAccepted]);
+
+  useEffect(() => {
+    if (!worker) return;
+
     const evs = [
       'reservation.rejected',
       'reservation.timeout',
@@ -3357,17 +3652,13 @@ export default function AgentApp() {
       'reservation.completed',
       'activity.update',
     ];
-    evs.forEach((e) => {
-      try {
-        worker.on(e, refresh);
-      } catch {}
-    });
-    return () => evs.forEach((e) => {
-      try {
-        worker.off(e, refresh);
-      } catch {}
-    });
-  }, [worker, invalidateTasks]);
+
+    evs.forEach((e) => attachWorkerListener(e, onReservationEvent));
+
+    return () => {
+      evs.forEach((e) => detachWorkerListener(e, onReservationEvent));
+    };
+  }, [worker, attachWorkerListener, detachWorkerListener, onReservationEvent]);
 
   useEffect(() => {
     const socket = io(socketBase, {
@@ -3390,113 +3681,55 @@ export default function AgentApp() {
       }
     });
 
-    socket.on('connect_error', (err) =>
-      console.warn('[socket.io] connect_error', err?.message || err)
-    );
+    socket.on('connect_error', (err) => console.warn('[socket.io] connect_error', err?.message || err));
 
     return () => socket.disconnect();
   }, [ensureChatSession, invalidateTasks]);
 
   const logout = useCallback(async () => {
     await Api.logout();
-    try {
-      localStorage.removeItem('agent_ctx');
-    } catch {}
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // TODO: reemplazar por actividad Offline real
-    try {
-      await setAvailable(offlineSid);
-    } catch {}
+    try { localStorage.removeItem('agent_ctx'); } catch {}
+    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // replace with real "Offline" Activity SID if applicable
+    try { await setAvailable(offlineSid); } catch {}
     window.location.reload();
   }, [setAvailable]);
 
-  /* =========================
-   * Header actions
-   * ========================= */
-  const headerActions = useMemo(
-    () => (
-      <Stack
-        orientation="horizontal"
-        spacing="space30"
-        style={{ flexWrap: 'wrap' }}
-        alignment="center"
-      >
-        {/* Activity en header: única fuente de verdad */}
-        <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+  /* Secciones por modo */
+  const voiceSections = useMemo(() => ([
+    { id: 'softphone', label: 'Softphone' },
+    { id: 'customer360', label: 'Customer 360' },
+    { id: 'voiceTasks', label: 'Voice Tasks' },
+  ]), []);
 
-        {/* Toggle ventana del softphone */}
-        <Switch
-          checked={isSoftphonePopout}
-          onChange={(e) => handleSoftphoneToggle(e.target.checked)}
-          aria-label="Softphone pop-out"
-        >
-          Softphone window
-        </Switch>
+  const supervisorSections = useMemo(() => ([
+    { id: 'reservations', label: 'Reservations' },
+    { id: 'presence', label: 'Presence' },
+  ]), []);
 
-        {hasCall && (
-          <Button variant="primary" onClick={() => setControlsOpen(true)}>
-            Call controls
-          </Button>
-        )}
-        <Button variant="destructive" onClick={logout}>
-          Logout
-        </Button>
-      </Stack>
-    ),
-    [activity, setAvailable, isSoftphonePopout, handleSoftphoneToggle, hasCall, logout]
-  );
+  const chatSections = useMemo(() => ([
+    { id: 'mainChat', label: 'Main Chat' },
+    { id: 'chatTasks', label: 'Chat Tasks' },
+    { id: 'customer360-chat', label: 'Customer 360' },
+  ]), []);
 
-  /* =========================
-   * Secciones por modo
-   * ========================= */
-  const voiceSections = useMemo(
-    () => [
-      { id: 'softphone', label: 'Softphone' },
-      { id: 'customer360', label: 'Customer 360' },
-      { id: 'voiceTasks', label: 'Voice Tasks' }, // ahora en VOICE
+  const shellQuickActions = useMemo(() => ({
+    voice: [
+      { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
+      { label: 'Customer 360', targetId: 'customer360' },
+      { label: 'Voice Tasks', targetId: 'voiceTasks' },
     ],
-    []
-  );
-
-  const supervisorSections = useMemo(
-    () => [
-      { id: 'reservations', label: 'Reservations' },
-      { id: 'presence', label: 'Presence' },
+    chat: [
+      { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
+      { label: 'Chat Tasks', targetId: 'chatTasks' },
+      { label: 'Customer 360', targetId: 'customer360-chat' },
     ],
-    []
-  );
-
-  const chatSections = useMemo(
-    () => [
-      { id: 'mainChat', label: 'Main Chat' },
-      { id: 'chatTasks', label: 'Chat Tasks' },
-      { id: 'customer360-chat', label: 'Customer 360' },
+    supervisor: [
+      { label: 'Reservations', targetId: 'reservations' },
+      { label: 'Presence', targetId: 'presence' },
     ],
-    []
-  );
+  }), []);
 
-  const shellQuickActions = useMemo(
-    () => ({
-      voice: [
-        { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
-        { label: 'Customer 360', targetId: 'customer360' },
-        { label: 'Voice Tasks', targetId: 'voiceTasks' },
-      ],
-      chat: [
-        { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
-        { label: 'Chat Tasks', targetId: 'chatTasks' },
-        { label: 'Customer 360', targetId: 'customer360-chat' },
-      ],
-      supervisor: [
-        { label: 'Reservations', targetId: 'reservations' },
-        { label: 'Presence', targetId: 'presence' },
-      ],
-    }),
-    []
-  );
-
-  /* =========================
-   * Render
-   * ========================= */
+  /* Render */
   return (
     <Box minHeight="100vh" width="100%">
       <Toaster {...toaster} />
@@ -3504,12 +3737,47 @@ export default function AgentApp() {
       {/* Modal de controles de llamada */}
       <CallControlsModal isOpen={controlsOpen} onDismiss={() => setControlsOpen(false)} />
 
+      {/* Modal de confirmación para abrir popup */}
+      <Modal
+        isOpen={confirmOpen}
+        onDismiss={handleModalDismiss}
+        size="default"
+        ariaLabel="confirm-open-softphone"
+      >
+        <ModalHeader>
+          <ModalHeading>Open softphone in a new window?</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          The softphone will move to a separate popup window. You can switch it off later to bring it back inline.
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={cancelOpenPopup}>Cancel</Button>
+            <Button variant="primary" onClick={proceedOpenPopup}>Open window</Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
+
       <AgentDesktopShell
         sections={mode === 'voice' ? voiceSections : mode === 'chat' ? chatSections : supervisorSections}
         title="Agent Desktop"
-        actions={headerActions}
         mode={mode}
         quickActions={shellQuickActions}
+        actions={
+          <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }} alignment="center">
+            <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+            <Switch
+              checked={isSoftphonePopout}
+              onChange={(e) => handleSoftphoneToggle(e.target.checked)}
+              aria-label="Softphone pop-out"
+              disabled={isSoftphoneValidating}
+            >
+              Softphone window {isSoftphoneValidating && '(checking...)'}
+            </Switch>
+            {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
+            <Button variant="destructive" onClick={logout}>Logout</Button>
+          </Stack>
+        }
       >
         <Box marginBottom="space70">
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
@@ -3534,21 +3802,19 @@ export default function AgentApp() {
                     </Heading>
 
                     <CardSection id="softphone" title="Softphone">
-                      {/* Cuando toggle = OFF: UI inline visible. ON: oculta UI (hook sigue montado). */}
-                      <Softphone popupOpen={isSoftphonePopout} />
+                      {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
+                      <Box display={isSoftphonePopout ? 'none' : 'block'}>
+                        <Softphone popupOpen={isSoftphonePopout} />
+                      </Box>
                     </CardSection>
 
-                    <Box marginY="space40">
-                      <Separator orientation="horizontal" />
-                    </Box>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
 
                     <CardSection id="customer360" title="Customer 360">
                       <Customer360 />
                     </CardSection>
 
-                    <Box marginY="space40">
-                      <Separator orientation="horizontal" />
-                    </Box>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
 
                     <CardSection id="voiceTasks" title="Voice Tasks">
                       <TasksPanel channel="voice" setAvailable={setAvailable} />
@@ -3561,9 +3827,7 @@ export default function AgentApp() {
               <TabPanel id="chat">
                 <Stack orientation="vertical" spacing="space70">
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Active Conversations
-                    </Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Conversations</Heading>
                     <CardSection id="mainChat" title="Main Chat">
                       <Box id="main-chat-panel" minHeight="60vh">
                         {chatSessions.length ? (
@@ -3591,9 +3855,7 @@ export default function AgentApp() {
                               )
                             }
                             onPopout={(sid) => {
-                              const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(
-                                sid
-                              )}`;
+                              const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
                               window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
                             }}
                           />
@@ -3605,28 +3867,11 @@ export default function AgentApp() {
                   </Box>
 
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Tasks & Customer Info
-                    </Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Customer Info</Heading>
                     <CardSection id="chatTasks" title="Chat Tasks">
-                      <TasksPanel channel="chat" onOpenChat={(sid) => {
-                        if (!sid) return;
-                        ensureChatSession(sid).then((ok) => {
-                          if (!ok) return;
-                          prioritizeChat(sid);
-                          setMode('chat');
-                          setChatPanelKey((k) => k + 1);
-                          requestAnimationFrame(() => {
-                            document
-                              .getElementById('main-chat-panel')
-                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                          });
-                        });
-                      }} />
+                      <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
                     </CardSection>
-                    <Box marginY="space40">
-                      <Separator orientation="horizontal" />
-                    </Box>
+                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
                     <CardSection id="customer360-chat" title="Customer 360">
                       <Customer360 />
                     </CardSection>
@@ -3634,22 +3879,18 @@ export default function AgentApp() {
                 </Stack>
               </TabPanel>
 
-              {/* SUPERVISOR (solo Reservations + Presence) */}
+              {/* SUPERVISOR */}
               <TabPanel id="supervisor">
                 <Stack orientation="vertical" spacing="space70">
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Tasks & Incoming
-                    </Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Incoming</Heading>
                     <CardSection id="reservations" title="Reservations">
                       <Reservations items={reservations} standalone />
                     </CardSection>
                   </Box>
 
                   <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Team Presence
-                    </Heading>
+                    <Heading as="h2" variant="heading30" marginBottom="space40">Team Presence</Heading>
                     <CardSection id="presence" title="Presence">
                       <Presence />
                     </CardSection>
@@ -3673,7 +3914,6 @@ import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
 import { Box } from '@twilio-paste/core/box';
-import { Input } from '@twilio-paste/core/input';
 import { Stack } from '@twilio-paste/core/stack';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
@@ -3686,8 +3926,8 @@ import {
   SidebarCollapseButton,
 } from '@twilio-paste/core/sidebar';
 
-const SIDEBAR_W = 288;
-const SHELL_HEADER_H = 68;
+const SIDEBAR_W = 300;
+const SHELL_HEADER_H = 64;
 
 /* Responsive breakpoint hook */
 function useIsDesktop() {
@@ -3704,7 +3944,6 @@ function useIsDesktop() {
     try {
       mql.addEventListener('change', onChange);
     } catch {
-      // Safari
       mql.addListener(onChange);
     }
 
@@ -3712,7 +3951,6 @@ function useIsDesktop() {
       try {
         mql.removeEventListener('change', onChange);
       } catch {
-        // Safari
         mql.removeListener(onChange);
       }
     };
@@ -3768,7 +4006,7 @@ export default function AgentDesktopShell({
   const [pad, setPad] = useLocalStorage('agent_pad', '');
 
   /* =========================
-   * Sidebar (no navigation)
+   * Sidebar (simplified for note-taking focus, with high contrast)
    * ========================= */
   const SidebarInner = (
     <>
@@ -3777,12 +4015,12 @@ export default function AgentDesktopShell({
           position: 'sticky',
           top: 0,
           zIndex: 2,
-          background: 'var(--paste-color-background-body)',
+          background: 'var(--paste-color-background-body-inverse)',
           borderBottom: '1px solid var(--paste-color-border-weak)',
-          backdropFilter: 'saturate(140%) blur(6px)',
+          backdropFilter: 'saturate(180%) blur(20px)',
         }}
       >
-        <SidebarHeaderLabel>Help & Notes</SidebarHeaderLabel>
+        <SidebarHeaderLabel style={{ color: 'var(--paste-color-text-inverse)' }}>Notes & Tips</SidebarHeaderLabel>
         {!isDesktop && (
           <SidebarCollapseButton
             i18nCollapseLabel="Hide panel"
@@ -3792,79 +4030,63 @@ export default function AgentDesktopShell({
         )}
       </SidebarHeader>
 
-      {/* Optional tiny input for a quick title */}
-      <Box padding="space60" paddingBottom="space20">
-        <Input id="shell-filter-input" placeholder="Quick note title…" aria-label="Sidebar input" />
-      </Box>
-
-      <SidebarBody>
-        {/* Scratchpad (big, high-contrast) */}
-        <Box padding="space60" paddingTop="space20">
-          <Heading as="h5" variant="heading50" margin="space0">
+      <SidebarBody style={{ background: 'var(--paste-color-background-body-inverse)' }}>
+        {/* Scratchpad as primary focus, with modern styling, larger size, and high contrast */}
+        <Box padding="space60">
+          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
             Scratchpad
           </Heading>
-
           <Box
-            marginTop="space40"
-            backgroundColor="colorBackgroundStrong"
-            padding="space60"
+            backgroundColor="colorBackgroundStronger"
             borderRadius="borderRadius30"
+            borderWidth="borderWidth10"
+            borderColor="colorBorderWeak"
+            borderStyle="solid"
+            padding="space50"
+            boxShadow="shadow"
+            minHeight="400px" // Make the note part bigger
+            display="flex"
+            flexDirection="column"
           >
             <TextArea
               value={pad}
               onChange={(e) => setPad(e.target.value)}
-              placeholder="Write down anything…"
-              rows={16}
+              placeholder="Jot down quick notes, ideas, or reminders here... Everything is saved locally."
               style={{
-                color: 'var(--paste-color-text-inverse)',
                 background: 'transparent',
+                color: 'var(--paste-color-text-inverse)',
+                resize: 'vertical',
+                border: 'none',
+                flexGrow: 1,
+                fontSize: 'fontSize30',
+                lineHeight: 'lineHeight30',
               }}
             />
           </Box>
         </Box>
 
-        {/* Usage guide */}
-        <Box padding="space60" paddingTop="space20">
-          <Heading as="h5" variant="heading50" margin="space0">
-            Guide
+        {/* Condensed key insights, with high contrast */}
+        <Box padding="space60" paddingTop="space0">
+          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
+            Key Tips
           </Heading>
-
           <Box
-            marginTop="space40"
-            backgroundColor="colorBackgroundStrong"
-            color="colorTextInverse"
-            padding="space60"
+            backgroundColor="colorBackgroundStronger"
             borderRadius="borderRadius30"
-            style={{ lineHeight: 1.5 }}
+            borderWidth="borderWidth10"
+            borderColor="colorBorderWeak"
+            borderStyle="solid"
+            padding="space50"
+            boxShadow="shadow"
           >
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              <li>
-                <b>Modes:</b> usa las pestañas superiores para cambiar entre <i>VOICE</i>,{' '}
-                <i>CHAT</i> y <i>SUPERVISOR</i>.
-              </li>
-              <li>
-                <b>Voice:</b> Softphone dentro del card; el botón <i>Softphone window</i> abre una
-                ventana aparte. Si la cierras, el switch pasa a OFF y no se reabre solo.
-              </li>
-              <li>
-                <b>Voice Tasks:</b> ahora vive en VOICE, debajo de Customer 360.
-              </li>
-              <li>
-                <b>Supervisor:</b> muestra <i>Reservations</i> y <i>Presence</i> (sin{' '}
-                <i>Voice Tasks</i>).
-              </li>
-              <li>
-                <b>Activity:</b> el selector de estado del agente está en el header y es la única
-                fuente de verdad.
-              </li>
-              <li>
-                <b>Chats:</b> los chats asignados abren pestañas; puedes “pop-out” un chat
-                individual con ↗.
-              </li>
-              <li>
-                <b>Notas:</b> todo lo que escribas en el Scratchpad se guarda localmente (no se
-                envía al servidor).
-              </li>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem', listStyleType: 'disc', fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--paste-color-text-inverse)' }}>
+              <li><strong>Modes:</strong> Switch via top tabs: VOICE, CHAT, SUPERVISOR.</li>
+              <li><strong>Voice:</strong> Softphone in card; separate window option. Closing disables auto-reopen.</li>
+              <li><strong>Voice Tasks:</strong> Under Customer 360 in VOICE.</li>
+              <li><strong>Supervisor:</strong> Shows Reservations & Presence only.</li>
+              <li><strong>Activity:</strong> Status selector in header is authoritative.</li>
+              <li><strong>Chats:</strong> Open in tabs; pop out with ↗.</li>
+              <li><strong>Notes:</strong> Saved locally only.</li>
             </ul>
           </Box>
         </Box>
@@ -3872,15 +4094,15 @@ export default function AgentDesktopShell({
 
       {footer ? (
         <>
-          <Separator orientation="horizontal" verticalSpacing="space50" />
-          <Box padding="space60">{footer}</Box>
+          <Separator orientation="horizontal" verticalSpacing="space40" />
+          <Box padding="space60" style={{ background: 'var(--paste-color-background-body-inverse)', color: 'var(--paste-color-text-inverse)' }}>{footer}</Box>
         </>
       ) : null}
     </>
   );
 
   /* =========================
-   * Layout
+   * Layout (minimalist with clean transitions, assuming dark mode support)
    * ========================= */
   return (
     <Box height="100vh" width="100%" overflow="hidden" position="relative">
@@ -3916,14 +4138,14 @@ export default function AgentDesktopShell({
         <Box
           as="header"
           paddingX="space70"
-          paddingY="space60"
+          paddingY="space50"
           backgroundColor="colorBackgroundBody"
           style={{
             borderBottom: '1px solid var(--paste-color-border-weak)',
             position: 'sticky',
             top: `${offset}px`,
             zIndex: 6,
-            backdropFilter: 'saturate(140%) blur(6px)',
+            backdropFilter: 'saturate(180%) blur(20px)',
             height: `${SHELL_HEADER_H}px`,
             display: 'flex',
             alignItems: 'center',
@@ -3952,27 +4174,26 @@ export default function AgentDesktopShell({
           overflow="auto"
           backgroundColor="colorBackgroundBody"
         >
-          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1400 }}>
+          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1280 }}>
             {children}
           </Box>
         </Box>
       </Box>
 
-      {/* Mobile drawer (optional) */}
+      {/* Mobile drawer */}
       {!isDesktop && drawerOpen && (
         <>
           <Box
             id="shell-drawer"
             role="dialog"
             aria-modal="true"
-            aria-label="Help & Notes"
+            aria-label="Notes & Tips"
             position="fixed"
             top={`${offset}px`}
             left={0}
             height={`calc(100vh - ${offset}px)`}
-            width="min(82vw, 340px)"
+            width="min(80vw, 320px)"
             zIndex={11}
-            boxShadow="shadow"
             backgroundColor="colorBackgroundBody"
             style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
           >
@@ -3989,7 +4210,7 @@ export default function AgentDesktopShell({
             height={`calc(100vh - ${offset}px)`}
             zIndex={10}
             backgroundColor="colorBackground"
-            style={{ opacity: 0.35 }}
+            style={{ opacity: 0.3 }}
             onClick={() => setDrawerOpen(false)}
             aria-hidden="true"
           />
@@ -4010,7 +4231,6 @@ AgentDesktopShell.propTypes = {
   mode: PropTypes.oneOf(['voice', 'chat', 'supervisor']),
   quickActions: PropTypes.object,
 };
-
 ==== /src\features\tasks\components\AgentDesktopShell.jsx ====
 
 ==== src\features\tasks\components\Customer360.jsx ====
@@ -6696,6 +6916,24 @@ const isSoftphonePopup = qp.get('popup') === 'softphone';
 const isChatPopup = qp.get('popup') === 'chat';
 const chatSid = qp.get('sid');
 const remoteOnly = isSoftphonePopup;
+
+// 🔔 EARLY HANDSHAKE so opener cancels any "blocked" toast quickly.
+if (isSoftphonePopup) {
+  try {
+    const KEY = 'softphone-control'; // keep in sync with SOFTPHONE_CHANNEL_KEY
+    if (typeof BroadcastChannel === 'function') {
+      const ch = new BroadcastChannel(KEY);
+      ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
+      ch.close();
+    } else {
+      // storage fallback (fires 'storage' in the opener)
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ t: Date.now(), type: 'cmd', payload: { action: 'ping' } })
+      );
+    }
+  } catch {}
+}
 
 root.render(
   <Theme.Provider theme="default">

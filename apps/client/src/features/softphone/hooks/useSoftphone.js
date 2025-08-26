@@ -65,7 +65,7 @@ export default function useSoftphone(remoteOnly = false) {
     if (isPopup) return;
     try {
       const sid = getCallSid();
-      chanRef.current?.postMessage({
+      const msg = {
         type: 'state',
         payload: {
           ready,
@@ -78,11 +78,20 @@ export default function useSoftphone(remoteOnly = false) {
           hasIncoming: !!incoming,
           callSid: sid,
         },
-      });
+      };
+      // 1) intenta BroadcastChannel
+      chanRef.current?.postMessage?.(msg);
+      // 2) espejo por storage (best-effort) sin cambiar transporte
+      try {
+        localStorage.setItem(
+          SOFTPHONE_CHANNEL_KEY,
+          JSON.stringify({ ...msg, ts: Date.now() })
+        );
+      } catch {}
     } catch (e) {
       console.warn('[softphone channel state error]', e);
       setChannelError(true);
-      setUseStorageFallback(true);
+      // ❗ No forzar fallback aquí ni tocar chanRef; mantener BC evita desincronizar con el popup.
     }
   }, [ready, callStatus, isMuted, holding, recStatus, to, elapsed, incoming, isPopup]);
 
@@ -115,13 +124,17 @@ export default function useSoftphone(remoteOnly = false) {
       const id = waitForAck ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
       return new Promise((resolve, reject) => {
         try {
+          const ch = chanRef.current;
           if (id) pendingRef.current[id] = { resolve, reject };
-          chanRef.current?.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
+          if (!ch || typeof ch.postMessage !== 'function') {
+            throw new Error('channel not ready');
+          }
+          ch.postMessage({ type: 'cmd', payload: { action, ...extra }, id });
           if (!id) resolve();
         } catch (e) {
           console.warn('[softphone channel cmd error]', e);
           setChannelError(true);
-          setUseStorageFallback(true);
+          // ❗ No cambies a storage aquí; mantener ambos extremos en BC.
           if (id) delete pendingRef.current[id];
           reject(e);
         }
@@ -242,8 +255,27 @@ export default function useSoftphone(remoteOnly = false) {
 
     chanRef.current = ch;
 
+    const postSafe = (data) => {
+      try {
+        ch?.postMessage?.(data);
+      } catch (e) {
+        console.warn('[softphone channel post error]', e);
+        setChannelError(true);
+        // no cambiamos transporte
+      }
+      // espejo por storage para robustez
+      try {
+        localStorage.setItem(
+          SOFTPHONE_CHANNEL_KEY,
+          JSON.stringify({ ...(data || {}), ts: Date.now() })
+        );
+      } catch {}
+    };
+
     ch.onmessage = async (evt) => {
       const { type, payload, id, ok } = evt.data || {};
+
+      // ===================== POPUP CONTEXT =====================
       if (isPopup) {
         if (type === 'state') {
           setReady(!!payload.ready);
@@ -254,11 +286,13 @@ export default function useSoftphone(remoteOnly = false) {
           setTo(payload.to || '');
           setIncoming(payload.hasIncoming ? {} : null);
           setIncomingOpen(!!payload.hasIncoming);
+
           if (payload.callStatus === 'Idle') {
             setCallSid(null);
           } else {
             setCallSid(payload.callSid || null);
           }
+
           if (payload.elapsed) {
             const [m, s] = String(payload.elapsed).split(':').map((x) => parseInt(x, 10) || 0);
             const sec = m * 60 + s;
@@ -277,14 +311,36 @@ export default function useSoftphone(remoteOnly = false) {
             clearInterval(tickRef.current);
             tickRef.current = null;
           }
-        } else if (type === 'resp' && id && pendingRef.current[id]) {
+          return;
+        }
+
+        if (type === 'resp' && id && pendingRef.current[id]) {
           const { resolve, reject } = pendingRef.current[id];
           delete pendingRef.current[id];
           if (ok) resolve();
           else reject(new Error('cmd failed'));
+          return;
         }
+
+        if (type === 'cmd') {
+          const action = payload?.action;
+          // Handshake: responder ping con pong
+          if (action === 'ping') {
+            postSafe({ type: 'cmd', payload: { action: 'pong' } });
+            return;
+          }
+          if (action === 'close') {
+            try { window.close(); } catch {}
+            return;
+          }
+          // Otros cmd no se ejecutan en popup
+          return;
+        }
+
         return;
       }
+
+      // ===================== MAIN CONTEXT =====================
       if (type === 'popup-closed') {
         setPopupOpen(false);
         popupWinRef.current = null;
@@ -292,62 +348,59 @@ export default function useSoftphone(remoteOnly = false) {
       }
 
       if (type !== 'cmd') return;
+
+      const action = payload?.action;
+      // Handshake: si el popup hace ping, contestar con pong y publicar estado
+      if (action === 'ping') {
+        postSafe({ type: 'cmd', payload: { action: 'pong' } });
+        publishState();
+        return;
+      }
+
+      if (action === 'ready') {
+        // no-op, solo confirmación
+        return;
+      }
+
+      // Ejecutar operaciones en main
       let success = true;
       try {
-        if (payload.action === 'ping') {
-          publishState();
-          return;
-        }
-        if (payload.action === 'dial') {
+        if (action === 'dial') {
           const num = String(payload.to || '').trim();
           if (num) {
             setTo(num);
             await dial(num);
           }
         }
-        if (payload.action === 'hangup') await hangup();
-        if (payload.action === 'mute') await toggleMute(true);
-        if (payload.action === 'unmute') await toggleMute(false);
-        if (payload.action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
-        if (payload.action === 'accept') success = await acceptIncoming();
-        if (payload.action === 'reject') success = await rejectIncoming();
-        if (payload.action === 'hold') await holdStart(payload);    // ← accept optional overrides
-        if (payload.action === 'unhold') await holdStop(payload);   // ← accept optional overrides
-        if (payload.action === 'recStart') await recStart();
-        if (payload.action === 'recPause') await recPause();
-        if (payload.action === 'recResume') await recResume();
-        if (payload.action === 'recStop') await recStop();
+        if (action === 'hangup') await hangup();
+        if (action === 'mute') await toggleMute(true);
+        if (action === 'unmute') await toggleMute(false);
+        if (action === 'dtmf' && payload.digit) sendDtmf(String(payload.digit));
+        if (action === 'accept') success = await acceptIncoming();
+        if (action === 'reject') success = await rejectIncoming();
+        if (action === 'hold') await holdStart(payload);    // acepta overrides
+        if (action === 'unhold') await holdStop(payload);   // acepta overrides
+        if (action === 'recStart') await recStart();
+        if (action === 'recPause') await recPause();
+        if (action === 'recResume') await recResume();
+        if (action === 'recStop') await recStop();
       } catch (e) {
         console.error('[softphone cmd error]', e);
         success = false;
       } finally {
         publishState();
-        if (id) {
-          try {
-            ch.postMessage({ type: 'resp', id, ok: success });
-          } catch (e) {
-            console.warn('[softphone channel resp error]', e);
-          }
-        }
+        if (id) postSafe({ type: 'resp', id, ok: success });
       }
     };
 
+    // Handshake inicial desde el popup o confirmación de disponibilidad
     if (isPopup) {
-      try {
-        ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
-      } catch (e) {
-        console.warn('[softphone channel ping error]', e);
-        setChannelError(true);
-        setUseStorageFallback(true);
-      }
+      postSafe({ type: 'cmd', payload: { action: 'ping' } });
     }
 
     return () => {
-      try {
-        ch.close();
-      } catch (e) {
-        console.warn('[softphone channel close error]', e);
-      }
+      try { ch.close?.(); } catch (e) { console.warn('[softphone channel close error]', e); }
+      chanRef.current = null;               // evitar postMessage tras cleanup
       clearInterval(tickRef.current);
       tickRef.current = null;
     };

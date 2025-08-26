@@ -1,7 +1,8 @@
 // contact-center/client/src/features/softphone/components/Softphone.jsx
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import useSoftphone from '../hooks/useSoftphone.js';
+import { useSoftphoneChannel } from '../hooks/useSoftphoneChannel.js';
 import useCallControls from './useCallControls.js';
 import DialPad from './DialPad.jsx';
 import IncomingModal from './IncomingModal.jsx';
@@ -33,8 +34,21 @@ export default function Softphone({ remoteOnly = false, popupOpen = false }) {
 }
 
 function SoftphoneInner({ remoteOnly, hiddenInline }) {
-  const isPopup = remoteOnly === true; // diseño full-height dentro del popup
+  // Detectar contexto popup de forma robusta: prioridad a prop remoteOnly, fallback al query param.
+  const isPopup = useMemo(() => {
+    if (remoteOnly) return true;
+    try {
+      return new URLSearchParams(window.location.search).get('popup') === 'softphone';
+    } catch {
+      return false;
+    }
+  }, [remoteOnly]);
+
   const { t } = useTranslation();
+
+  // Canal compartido: en popup envía 'ready' y responde 'ping'->'pong'.
+  // En main no es dañino; si ya tienes el canal en useSoftphone/AgentApp, este hook es idempotente.
+  useSoftphoneChannel({ isPopup });
 
   // Hook SIEMPRE montado en main; en popup (remoteOnly) no crea Device
   const softphone = useSoftphone(remoteOnly);

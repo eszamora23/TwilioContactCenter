@@ -14,6 +14,24 @@ const isChatPopup = qp.get('popup') === 'chat';
 const chatSid = qp.get('sid');
 const remoteOnly = isSoftphonePopup;
 
+// 🔔 EARLY HANDSHAKE so opener cancels any "blocked" toast quickly.
+if (isSoftphonePopup) {
+  try {
+    const KEY = 'softphone-control'; // keep in sync with SOFTPHONE_CHANNEL_KEY
+    if (typeof BroadcastChannel === 'function') {
+      const ch = new BroadcastChannel(KEY);
+      ch.postMessage({ type: 'cmd', payload: { action: 'ping' } });
+      ch.close();
+    } else {
+      // storage fallback (fires 'storage' in the opener)
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ t: Date.now(), type: 'cmd', payload: { action: 'ping' } })
+      );
+    }
+  } catch {}
+}
+
 root.render(
   <Theme.Provider theme="default">
     {isSoftphonePopup ? (
