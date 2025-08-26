@@ -10,6 +10,8 @@ import {
   logInteraction
 } from '../services/crm.js';
 
+import { interactions as interactionsSvc } from '../services/crm.js';
+
 export async function getVehicleById(req, res) {
   try { res.json(await vehicleById(req.params.id)); }
   catch { res.status(500).json({ error: 'crm error' }); }
@@ -45,6 +47,15 @@ export async function getFinance(req, res) {
     const otpVerified = String(req.query.otpVerified || 'false') === 'true';
     res.json(await finance(req.params.customerId, otpVerified));
   } catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getInteractions(req, res) {
+  try {
+    // TODO: enable once /v1/interactions/:customerId is available upstream
+    res.json([]);
+    // res.json(await interactionsSvc(req.params.customerId));
+  }
+  catch { res.status(500).json({ error: 'crm error' }); }
 }
 
 export async function postPayLink(req, res) {
