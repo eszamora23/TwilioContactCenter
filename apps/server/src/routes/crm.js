@@ -8,6 +8,7 @@ import {
   getAppointments,
   postAppointment,
   getFinance,
+  getInteractions,
   postPayLink,
   postInteraction
 } from '../controllers/crm.js';
@@ -21,6 +22,7 @@ crmProxy.get('/crm/vehicles/:vin', getVehicleByVin);
 crmProxy.get('/crm/appointments/:vehicleId', getAppointments);
 crmProxy.post('/crm/appointments', postAppointment);
 crmProxy.get('/crm/finance/:customerId', getFinance);
+crmProxy.get('/crm/interactions/:customerId', getInteractions);
 crmProxy.post('/crm/paylink', postPayLink);
 crmProxy.post('/crm/interactions', postInteraction);
 

@@ -7,5 +7,6 @@ export const vehicleByVin = (vin) => crm.vehicleByVin(vin);
 export const appointments = (vehicleId) => crm.appointments(vehicleId);
 export const createAppointment = (body) => crm.createAppointment(body);
 export const finance = (customerId, otpVerified) => crm.finance(customerId, otpVerified);
+export const interactions = (customerId) => crm.interactions(customerId);
 export const payLink = (customerId) => crm.payLink(customerId);
 export const logInteraction = (body) => crm.logInteraction(body);

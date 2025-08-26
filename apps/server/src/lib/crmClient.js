@@ -41,6 +41,8 @@ export const crm = {
   recallsByVin: vin => doFetch(`/v1/recalls/${encodeURIComponent(vin)}`),
   finance: (customerId, otpVerified = false) =>
     doFetch(`/v1/finance/${encodeURIComponent(customerId)}`, { qs: { otpVerified: String(otpVerified) } }),
+  interactions: (customerId) =>
+    doFetch(`/v1/interactions/${encodeURIComponent(customerId)}`),
   payLink: customerId => doFetch(`/v1/paylink`, { method: 'POST', body: { customerId } }),
   logInteraction: payload => doFetch(`/v1/interactions`, { method: 'POST', body: payload })
 };
