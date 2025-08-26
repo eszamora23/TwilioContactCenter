@@ -38,8 +38,10 @@ import CallControlsModal from '../../softphone/components/CallControlsModal.jsx'
 import CardSection from '../../../shared/components/CardSection.jsx';
 import { useSoftphoneChannel } from '../../softphone/hooks/useSoftphoneChannel.js';
 
-const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
-const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
+// Si VITE_API_BASE incluye /api, nos quedamos solo con el origen (https://api.contactcenterdev.com)
+const apiBaseRaw = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const baseURL = new URL(apiBaseRaw).origin;
+const socketBase = import.meta.env.VITE_SOCKET_BASE || baseURL;
 
 const SOFTPHONE_WINDOW_NAME = 'softphone_popup';
 const SOFTPHONE_URL = () => `${window.location.origin}?popup=softphone`;
