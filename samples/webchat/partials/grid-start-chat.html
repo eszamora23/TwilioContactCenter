@@ -1,39 +1,38 @@
-<div class="card">
-  <div class="card-body">
+<div class="card" style="width:100%;max-width:unset;">
+  <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
     <h2>Start a new chat</h2>
-    <p class="helper">
+    <p class="helper" style="margin:0">
       This is the customer view. Your message goes straight to the next available agent.
       For the demo, keep this page open as the <b>customer</b> and open the <b>Agent Portal</b> in another window as the agent.
       From this chat you can also start a <b>video call</b> if it’s enabled.
     </p>
-    <form id="start-form" aria-label="Start form">
-      <div class="split">
-        <div class="field">
+
+    <form id="start-form" aria-label="Start form" style="display:flex;flex-direction:column;gap:12px;width:100%;">
+      <div class="split" style="display:flex;flex-direction:column;gap:12px;width:100%;">
+        <div class="field" style="display:flex;flex-direction:column;gap:6px;width:100%;">
           <label class="label" for="name">Full name</label>
-          <input class="input" id="name" type="text" placeholder="e.g. Alex Johnson" required />
+          <input class="input" id="name" type="text" placeholder="e.g. Alex Johnson" required style="width:100%;" />
         </div>
-        <div class="field">
+        <div class="field" style="display:flex;flex-direction:column;gap:6px;width:100%;">
           <label class="label" for="email">Email (reuses a single thread per email)</label>
-          <input class="input" id="email" type="email" placeholder="you@company.com" required />
+          <input class="input" id="email" type="email" placeholder="you@company.com" required style="width:100%;" />
         </div>
       </div>
 
-      <div class="start-actions">
-        <button class="btn primary" type="submit">Start chat</button>
-        <span class="helper">By starting, you accept our <a href="#" style="color:var(--accent)">Terms</a>.</span>
+      <div class="start-actions" style="display:flex;flex-direction:column;gap:12px;width:100%;">
+        <button class="btn primary" type="submit" style="width:100%;">Start chat</button>
+        <!-- removed Terms text -->
       </div>
 
-      <div class="callout small" style="margin-top:10px">
-        Video is optional and depends on backend feature flag <span class="mono">ENABLE_VIDEO=true</span>.
-      </div>
+      <!-- removed .env / feature-flag callout -->
     </form>
   </div>
 </div>
 
-<div class="card">
+<div class="card" style="width:100%;max-width:unset;">
   <div class="card-body">
     <h3>How the demo works (simple)</h3>
-    <ol class="small" style="margin:10px 0 0 18px; line-height:1.6">
+    <ol class="small" style="margin:10px 0 0 18px; line-height:1.6; width:100%;">
       <li><b>Start the chat</b> here as the customer. It routes to the next available agent.</li>
       <li>Open the <b>Agent Portal</b> (below) in another window and log in with the demo values.</li>
       <li>Reply to yourself from the portal to see the real-time conversation.</li>
