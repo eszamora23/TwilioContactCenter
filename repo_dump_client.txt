@@ -3347,8 +3347,10 @@ import CallControlsModal from '../../softphone/components/CallControlsModal.jsx'
 import CardSection from '../../../shared/components/CardSection.jsx';
 import { useSoftphoneChannel } from '../../softphone/hooks/useSoftphoneChannel.js';
 
-const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
-const socketBase = import.meta.env.VITE_SOCKET_BASE || new URL(baseURL).origin;
+// Si VITE_API_BASE incluye /api, nos quedamos solo con el origen (https://api.contactcenterdev.com)
+const apiBaseRaw = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const baseURL = new URL(apiBaseRaw).origin;
+const socketBase = import.meta.env.VITE_SOCKET_BASE || baseURL;
 
 const SOFTPHONE_WINDOW_NAME = 'softphone_popup';
 const SOFTPHONE_URL = () => `${window.location.origin}?popup=softphone`;
@@ -7182,11 +7184,22 @@ export default http;
 ==== /src\shared\services\http.js ====
 
 ==== vite.config.js ====
+// vite.config.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  plugins: [react()]
+  plugins: [react()],
+  server: {
+    host: true, // escucha en 0.0.0.0 (útil en Docker/LAN)
+    port: 5173,
+    allowedHosts: ['demo.contactcenterdev.com'], // habilita este Host
+    // Si usas proxy HTTPS y necesitas HMR sobre WSS, descomenta:
+    // hmr: { host: 'demo.contactcenterdev.com', protocol: 'wss', clientPort: 443 },
+  },
+  preview: {
+    allowedHosts: ['demo.contactcenterdev.com'],
+  },
 });
 
 ==== /vite.config.js ====

@@ -1,15 +1,20 @@
-// vite.config.ts
+// vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      jsxRuntime: 'automatic',   // <-- clave
+    }),
+  ],
+  esbuild: {
+    jsx: 'automatic',           // cinturón y tirantes
+  },
   server: {
-    host: true, // escucha en 0.0.0.0 (útil en Docker/LAN)
+    host: true,
     port: 5173,
-    allowedHosts: ['demo.contactcenterdev.com'], // habilita este Host
-    // Si usas proxy HTTPS y necesitas HMR sobre WSS, descomenta:
-    // hmr: { host: 'demo.contactcenterdev.com', protocol: 'wss', clientPort: 443 },
+    allowedHosts: ['demo.contactcenterdev.com'],
   },
   preview: {
     allowedHosts: ['demo.contactcenterdev.com'],
