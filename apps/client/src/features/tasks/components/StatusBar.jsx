@@ -15,12 +15,23 @@ export default function StatusBar({ label, onChange, inline = false }) {
   const [loading, setLoading] = useState(true);
   const { t } = useTranslation();
 
+  // NEW: track which SID is currently selected so the <Select> is controlled
+  const [selectedSid, setSelectedSid] = useState('');
+
   useEffect(() => {
     http
       .get('/taskrouter/activities')
       .then((r) => setActs(r.data || []))
       .finally(() => setLoading(false));
   }, []);
+
+  // NEW: keep the select in sync with the Worker's current activity label
+  useEffect(() => {
+    const current = acts.find(
+      (a) => a?.name?.toLowerCase() === String(label || '').toLowerCase()
+    );
+    setSelectedSid(current?.sid || '');
+  }, [acts, label]);
 
   const txt = String(label || '').toLowerCase();
   const variant =
@@ -39,8 +50,11 @@ export default function StatusBar({ label, onChange, inline = false }) {
           <SkeletonLoader />
         ) : (
           <Select
-            onChange={(e) => onChange?.(e.target.value)}
-            defaultValue=""
+            value={selectedSid}
+            onChange={(e) => {
+              setSelectedSid(e.target.value);
+              onChange?.(e.target.value);
+            }}
             size="small"
             disabled={!acts.length}
             style={{ minWidth: 200 }}
@@ -105,8 +119,11 @@ export default function StatusBar({ label, onChange, inline = false }) {
             ) : (
               <Select
                 id="activitySelect"
-                onChange={(e) => onChange?.(e.target.value)}
-                defaultValue=""
+                value={selectedSid}
+                onChange={(e) => {
+                  setSelectedSid(e.target.value);
+                  onChange?.(e.target.value);
+                }}
                 size="default"
                 disabled={!acts.length}
                 style={{ minWidth: 220, maxWidth: 320 }}

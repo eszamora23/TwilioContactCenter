@@ -85,8 +85,8 @@ export function assignment(req, res) {
       instruction: 'conference',
       from: env.callerId,          // Twilio-verified caller ID or owned number
       to: dialTarget,              // e.g. "client:agent:demo-agent-1"
-      timeout: 18,                 // quick requeue if agent doesn't pick up
-
+      timeout: 25,         // give browsers a bit more room to re-subscribe their WebRTC transports
+      record: 'do-not-record',
       // Participant/Conference params (apply to the agent leg)
       startConferenceOnEnter: true,
       endConferenceOnExit: false,
@@ -127,7 +127,7 @@ export async function events(req, res) {
     const presenceData = await listWorkers();
     const formatted = presenceData.map(w => {
       let contact = null;
-      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch {}
+      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch { }
       return {
         workerSid: w.sid,
         friendlyName: w.friendlyName,
@@ -249,7 +249,7 @@ export async function wrapTask(req, res) {
     const status = String(task.assignmentStatus).toLowerCase();
 
     let attrs = {};
-    try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+    try { attrs = JSON.parse(task.attributes || '{}'); } catch { }
     if (disposition) attrs.disposition = disposition;
     if (reason) attrs.wrapup_reason = reason;
 
@@ -295,7 +295,7 @@ export async function completeTask(req, res) {
 
     if (autoWrap && status === 'assigned') {
       let attrs = {};
-      try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+      try { attrs = JSON.parse(task.attributes || '{}'); } catch { }
       if (disposition) attrs.disposition = disposition;
       if (reason) attrs.wrapup_reason = reason;
       await updateTask(taskSid, {
@@ -312,7 +312,7 @@ export async function completeTask(req, res) {
     }
 
     let attrs = {};
-    try { attrs = JSON.parse(task.attributes || '{}'); } catch {}
+    try { attrs = JSON.parse(task.attributes || '{}'); } catch { }
     if (disposition) attrs.disposition = disposition;
     if (reason) attrs.wrapup_reason = reason;
 
@@ -365,7 +365,7 @@ export async function availableWorkers(_req, res) {
       try {
         const attrs = JSON.parse(w.attributes || '{}');
         contact = attrs.contact_uri || null;
-      } catch {}
+      } catch { }
       out.push({ workerSid: w.sid, friendlyName: w.friendlyName, contactUri: contact });
     }
     res.json(out);
@@ -391,7 +391,7 @@ export async function presence(_req, res) {
     const workers = _presenceCache.data;
     const out = workers.map(w => {
       let contact = null;
-      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch {}
+      try { contact = JSON.parse(w.attributes || '{}').contact_uri || null; } catch { }
       return {
         workerSid: w.sid,
         friendlyName: w.friendlyName,

@@ -199,7 +199,7 @@ export default function useSoftphone(remoteOnly = false) {
     boot().catch(() => setError(t('generalError')));
     return () => {
       clearInterval(tickRef.current);
-      dev.disconnect();
+      dev.shutdown();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPopup]);
@@ -472,7 +472,7 @@ export default function useSoftphone(remoteOnly = false) {
     try {
       setError('');
       const sid = getCallSid();
-      if (dev) await dev.disconnect();
+      if (dev) await dev.endCall();
       if (sid) await Api.hangup(sid);
     } catch {
       setError(t('hangupError'));

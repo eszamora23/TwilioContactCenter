@@ -7,6 +7,14 @@ export function useWorker() {
   const [worker, setWorker] = useState(null);
   const [activity, setActivity] = useState('');
   const [reservations, setReservations] = useState([]);
+
+  // Expose discovered SIDs to consumers (e.g., for explicit Offline on logout)
+  const [availableSidState, setAvailableSidState] = useState(null);
+  const [offlineSidState, setOfflineSidState] = useState(null);
+
+  // Refs used inside timers/closures
+  const availableSidRef = useRef(null);
+  const offlineSidRef = useRef(null);
   const refreshRef = useRef(null);
 
   useEffect(() => {
@@ -15,44 +23,46 @@ export function useWorker() {
     (async () => {
       const token = await Api.workerToken();
 
-      // === Descubre Activities para conectar/desconectar ===
-      let connectSid;
-      let disconnectSid;
+      // === Discover Activities for auto connect/disconnect ===
       let offlineName = 'Offline';
       try {
         const acts = await http.get('/taskrouter/activities').then((r) => r.data || []);
         const aAvail = acts.find((a) => /available/i.test(a.name));
         const aOffline = acts.find((a) => /offline/i.test(a.name));
-        connectSid = aAvail?.sid;
-        disconnectSid = aOffline?.sid;
+
+        availableSidRef.current = aAvail?.sid || null;
+        offlineSidRef.current = aOffline?.sid || null;
         offlineName = aOffline?.name || offlineName;
+
+        // publish to state so callers can use them
+        setAvailableSidState(availableSidRef.current);
+        setOfflineSidState(offlineSidRef.current);
       } catch {
-        // si falla, seguimos con constructor sin opciones (funciona igual)
+        // If it fails, we still build the Worker without these hints.
       }
 
-      // === Crea el Worker con opciones de auto-actividad ===
+      // === Create Worker with auto-activity opts (if known) ===
       try {
         // eslint-disable-next-line no-undef
         const opts = {
           closeExistingSessions: true,
-          ...(connectSid ? { connectActivitySid: connectSid } : {}),
-          ...(disconnectSid ? { disconnectActivitySid: disconnectSid } : {}),
+          ...(availableSidRef.current ? { connectActivitySid: availableSidRef.current } : {}),
+          ...(offlineSidRef.current ? { disconnectActivitySid: offlineSidRef.current } : {}),
         };
-        // Si no hay ninguna opción, igual pasamos el objeto (TaskRouter lo ignora sin error)
         // eslint-disable-next-line no-undef
         w = new Twilio.TaskRouter.Worker(token, opts);
-      } catch (e) {
-        // Fallback ultra conservador
+      } catch {
+        // Ultra-conservative fallback
         // eslint-disable-next-line no-undef
         w = new Twilio.TaskRouter.Worker(token);
       }
 
-      // === Eventos ===
+      // === Events ===
       w.on('ready', (wk) => setActivity((wk || w).activityName));
       w.on('activity.update', (wk) => setActivity((wk || w).activityName));
-      // No todos los SDK emiten estos, pero no hacen daño si no existen
+      // Some SDK builds emit these; harmless if not
       w.on?.('disconnected', () => setActivity(offlineName));
-      w.on?.('connected', () => {}); // la actividad correcta llega por 'ready'/'activity.update'
+      w.on?.('connected', () => {}); // the accurate activity arrives via ready/activity.update
 
       w.on('reservation.created', (r) => {
         console.log('reservation', r.sid, r.task?.attributes);
@@ -62,7 +72,7 @@ export function useWorker() {
       w.on('error', (e) => console.error('TR Worker error', e));
       setWorker(w);
 
-      // === Refresh del token (55m) preservando opciones ===
+      // === Token refresh (55m), preserving options ===
       refreshRef.current = setInterval(async () => {
         try {
           const newToken = await Api.workerToken();
@@ -73,8 +83,8 @@ export function useWorker() {
             // eslint-disable-next-line no-undef
             const opts = {
               closeExistingSessions: true,
-              ...(connectSid ? { connectActivitySid: connectSid } : {}),
-              ...(disconnectSid ? { disconnectActivitySid: disconnectSid } : {}),
+              ...(availableSidRef.current ? { connectActivitySid: availableSidRef.current } : {}),
+              ...(offlineSidRef.current ? { disconnectActivitySid: offlineSidRef.current } : {}),
             };
             // eslint-disable-next-line no-undef
             const nw = new Twilio.TaskRouter.Worker(newToken, opts);
@@ -84,9 +94,7 @@ export function useWorker() {
             nw.on('reservation.created', (r) => setReservations((prev) => [r, ...prev]));
             nw.on('error', (e) => console.error('TR Worker error', e));
             setWorker(nw);
-            try {
-              prev?.disconnect?.();
-            } catch {}
+            try { prev?.disconnect?.(); } catch {}
             w = nw;
           }
         } catch (e) {
@@ -96,20 +104,17 @@ export function useWorker() {
     })();
 
     return () => {
-      clearInterval(refreshRef.current);
-      try {
-        w && w.disconnect && w.disconnect();
-      } catch {}
+      try { clearInterval(refreshRef.current); } catch {}
+      try { w && w.disconnect && w.disconnect(); } catch {}
     };
   }, []);
 
-  // === Cambio de actividad fiable (espera callback) ===
+  // === Reliable activity change (waits for callback) ===
   async function setAvailable(activitySid) {
     if (!worker) return;
     await new Promise((resolve, reject) => {
       try {
-        // Firma clásica: update("ActivitySid", sid, callback)
-        // Actualiza la UI con el worker actualizado que llega en el callback.
+        // Classic signature: update("ActivitySid", sid, cb)
         worker.update('ActivitySid', activitySid, (err, updated) => {
           if (err) return reject(err);
           try {
@@ -123,5 +128,12 @@ export function useWorker() {
     });
   }
 
-  return { worker, activity, reservations, setAvailable };
+  return {
+    worker,
+    activity,
+    reservations,
+    setAvailable,
+    // expose current discovered SIDs to consumers (e.g., logout → set Offline)
+    sids: { availableSid: availableSidState, offlineSid: offlineSidState },
+  };
 }

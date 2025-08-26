@@ -58,8 +58,7 @@ export default function AgentApp() {
     queryClient.invalidateQueries({ queryKey: ['myTask'] });
   }, [queryClient]);
 
-  const { worker, activity, reservations, setAvailable } = useWorker();
-
+  const { worker, activity, reservations, setAvailable, sids } = useWorker();
   // ---- Safe worker event helpers (avoid .off which doesn't exist) ----
   const attachWorkerListener = useCallback((eventName, handler) => {
     if (!worker || !eventName || !handler) return;
@@ -179,11 +178,11 @@ export default function AgentApp() {
     // Delay the first ping to give the popup time to mount listeners
     setTimeout(() => {
       if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
-      try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+      try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch { }
       // Continue pinging while we wait
       pingIntervalRef.current = setInterval(() => {
         if (!awaitingAckRef.current || validationRunRef.current !== myRun) return;
-        try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch {}
+        try { postToChannelRef.current?.('cmd', { action: 'ping' }); } catch { }
       }, PING_INTERVAL_MS);
     }, FIRST_PING_DELAY_MS);
 
@@ -230,30 +229,30 @@ export default function AgentApp() {
     const now = Date.now();
     if (now - lastOpenAttemptRef.current < 600) {
       if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
-        try { softphoneWinRef.current.focus(); } catch {}
+        try { softphoneWinRef.current.focus(); } catch { }
         return softphoneWinRef.current;
       }
     }
     lastOpenAttemptRef.current = now;
 
     if (softphoneWinRef.current && !softphoneWinRef.current.closed) {
-      try { softphoneWinRef.current.focus(); } catch {}
+      try { softphoneWinRef.current.focus(); } catch { }
       return softphoneWinRef.current;
     }
 
     const w = window.open(SOFTPHONE_URL(), SOFTPHONE_WINDOW_NAME, SOFTPHONE_POPUP_FEATURES);
     // Some configs (e.g., noreferrer) can return null even when the popup opens; we do not assume block here.
     if (!w) return null;
-    try { w.opener = null; } catch {}
-    try { w.focus(); } catch {}
+    try { w.opener = null; } catch { }
+    try { w.focus(); } catch { }
     softphoneWinRef.current = w;
     return w;
   }, []);
 
   const closeSoftphoneWindow = useCallback(() => {
     // Ask the popup to close itself (works even if handle is lost)
-    try { postToChannelRef.current?.('cmd', { action: 'close' }); } catch {}
-    try { softphoneWinRef.current?.close(); } catch {}
+    try { postToChannelRef.current?.('cmd', { action: 'close' }); } catch { }
+    try { softphoneWinRef.current?.close(); } catch { }
     softphoneWinRef.current = null;
   }, []);
 
@@ -475,11 +474,12 @@ export default function AgentApp() {
 
   const logout = useCallback(async () => {
     await Api.logout();
-    try { localStorage.removeItem('agent_ctx'); } catch {}
-    const offlineSid = 'WAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; // replace with real "Offline" Activity SID if applicable
-    try { await setAvailable(offlineSid); } catch {}
+    try { localStorage.removeItem('agent_ctx'); } catch { }
+    try {
+      if (sids?.offlineSid) await setAvailable(sids.offlineSid);
+    } catch { }
     window.location.reload();
-  }, [setAvailable]);
+  }, [setAvailable, sids]);
 
   /* Secciones por modo */
   const voiceSections = useMemo(() => ([

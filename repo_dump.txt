@@ -339,6 +339,8 @@ import {
   logInteraction
 } from '../services/crm.js';
 
+import { interactions as interactionsSvc } from '../services/crm.js';
+
 export async function getVehicleById(req, res) {
   try { res.json(await vehicleById(req.params.id)); }
   catch { res.status(500).json({ error: 'crm error' }); }
@@ -374,6 +376,15 @@ export async function getFinance(req, res) {
     const otpVerified = String(req.query.otpVerified || 'false') === 'true';
     res.json(await finance(req.params.customerId, otpVerified));
   } catch { res.status(500).json({ error: 'crm error' }); }
+}
+
+export async function getInteractions(req, res) {
+  try {
+    // TODO: enable once /v1/interactions/:customerId is available upstream
+    res.json([]);
+    // res.json(await interactionsSvc(req.params.customerId));
+  }
+  catch { res.status(500).json({ error: 'crm error' }); }
 }
 
 export async function postPayLink(req, res) {
@@ -533,6 +544,8 @@ import {
 } from '../services/taskrouter.js';
 import { rest } from '../twilio.js'; // REST client for TaskRouter ops
 
+const GUARD_CONTACT_ONLY = String(process.env.RESV_GUARD_CONTACT_ONLY ?? 'true').toLowerCase() !== 'false';
+
 /* ---------------------------
  * Helpers
  * --------------------------- */
@@ -657,7 +670,8 @@ export async function events(req, res) {
     req.app.get('io')?.emit('presence_update', { data: formatted });
   }
 
-  // Guard: reject reservation if the agent cannot be dialed or is not truly available
+  // Guard: reject reservation ONLY if the agent cannot be dialed (no contact_uri).
+  // Availability is handled by Workflow/Timeout to avoid race-induced churn.
   if (req.body.EventType === 'reservation.created') {
     try {
       const workspaceSid = env.workspaceSid;
@@ -672,7 +686,9 @@ export async function events(req, res) {
       const availableFlag = String(req.body.WorkerActivityAvailable ?? '').toLowerCase();
       const available = availableFlag === 'true' || req.body.WorkerActivityAvailable === true;
 
-      if (!contactUri || !available) {
+      const shouldReject = GUARD_CONTACT_ONLY ? !contactUri : (!contactUri || !available);
+
+      if (shouldReject) {
         await rest.taskrouter.v1
           .workspaces(workspaceSid)
           .workers(workerSid)
@@ -2119,6 +2135,8 @@ export const crm = {
   recallsByVin: vin => doFetch(`/v1/recalls/${encodeURIComponent(vin)}`),
   finance: (customerId, otpVerified = false) =>
     doFetch(`/v1/finance/${encodeURIComponent(customerId)}`, { qs: { otpVerified: String(otpVerified) } }),
+  interactions: (customerId) =>
+    doFetch(`/v1/interactions/${encodeURIComponent(customerId)}`),
   payLink: customerId => doFetch(`/v1/paylink`, { method: 'POST', body: { customerId } }),
   logInteraction: payload => doFetch(`/v1/interactions`, { method: 'POST', body: payload })
 };
@@ -2926,6 +2944,7 @@ import {
   getAppointments,
   postAppointment,
   getFinance,
+  getInteractions,
   postPayLink,
   postInteraction
 } from '../controllers/crm.js';
@@ -2939,6 +2958,7 @@ crmProxy.get('/crm/vehicles/:vin', getVehicleByVin);
 crmProxy.get('/crm/appointments/:vehicleId', getAppointments);
 crmProxy.post('/crm/appointments', postAppointment);
 crmProxy.get('/crm/finance/:customerId', getFinance);
+crmProxy.get('/crm/interactions/:customerId', getInteractions);
 crmProxy.post('/crm/paylink', postPayLink);
 crmProxy.post('/crm/interactions', postInteraction);
 
@@ -3204,6 +3224,7 @@ export const vehicleByVin = (vin) => crm.vehicleByVin(vin);
 export const appointments = (vehicleId) => crm.appointments(vehicleId);
 export const createAppointment = (body) => crm.createAppointment(body);
 export const finance = (customerId, otpVerified) => crm.finance(customerId, otpVerified);
+export const interactions = (customerId) => crm.interactions(customerId);
 export const payLink = (customerId) => crm.payLink(customerId);
 export const logInteraction = (body) => crm.logInteraction(body);
 

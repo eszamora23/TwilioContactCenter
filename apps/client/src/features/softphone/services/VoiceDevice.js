@@ -3,30 +3,38 @@ import { Device } from '@twilio/voice-sdk';
 import Api from '../../index.js';
 import { setCallSid } from './callSidStore.js';
 
+/**
+ * Enterprise-grade Twilio Voice Device wrapper
+ * - Keeps the Device registered between calls (no “dead air” between tasks).
+ * - Separates "end call" from "full shutdown" so normal hangups don't tear down signaling.
+ * - Auto re-registers on transient drops (WebSocket/transport) with bounded backoff.
+ * - Token refresh with rebuild fallback.
+ */
 export class VoiceDevice {
   constructor() {
-    this.device = undefined;
-    this.current = undefined;
-    this._refreshTimer = undefined;
+    this.device = undefined;          // Twilio Device instance
+    this.current = undefined;         // Current Call instance (if any)
+    this._refreshTimer = undefined;   // Proactive token refresh interval
+    this._deviceOptions = null;       // Options used to instantiate the Device
+
+    // Callbacks (wired by hooks)
     this.onIncoming = null;
     this.onStatusChange = null;
-    this.onMuteSync = null; // Callback to mirror mute state into React state
-    this._deviceOptions = null; // keep the exact options used to (re)create Device
+    this.onMuteSync = null;
+
+    // Resilience flags
+    this._shuttingDown = false;
+    this._reRegTimer = null;
+    this._reRegBackoffMs = 500;       // start small
+    this._reRegBackoffMaxMs = 5000;   // cap backoff to 5s
   }
+
+  /* --------------------------- internal helpers --------------------------- */
 
   _status(s) {
-    try {
-      this.onStatusChange && this.onStatusChange(s);
-    } catch {}
+    try { this.onStatusChange?.(s); } catch {}
   }
 
-  /**
-   * Build robust Device options:
-   * - edge: prefer explicit edges (comma-separated) for consistent routing
-   * - codecPreferences: prefer opus
-   * - maxCallSignalingTimeoutMs: keep WS long enough to recover mid-call
-   * - logLevel: 'error' to reduce noise in production
-   */
   _buildDeviceOptions() {
     const raw = (import.meta?.env?.VITE_TWILIO_EDGE || '')
       .split(',')
@@ -35,7 +43,7 @@ export class VoiceDevice {
 
     const edge =
       raw.length === 0 ? undefined :
-      raw.length === 1 ? raw[0] : raw; // string or string[] (fallback order)
+      raw.length === 1 ? raw[0] : raw;
 
     return {
       audio: { echoCancellation: true },
@@ -46,108 +54,89 @@ export class VoiceDevice {
     };
   }
 
-  async register() {
-    const token = await Api.voiceToken();
-    this._deviceOptions = this._buildDeviceOptions();
-
-    this.device = new Device(token, this._deviceOptions);
-
-    // -- Device lifecycle
-    this.device.on('registered', () => {
-      console.log('[Voice] registered');
-      this._status('Idle');
-    });
-    this.device.on('unregistered', () => {
-      console.log('[Voice] unregistered');
-      this._status('Idle');
-      // Keep the device reachable for the next reservation
-      // (avoid small windows of undialable state after a call ends)
-      try { this.device?.register(); } catch {}
-    });
-
-    // Handle token errors gracefully (e.g., 401)
-    this.device.on('error', (e) => {
-      console.error('[Voice] device error', e);
-      const msg = String(e?.message || '').toLowerCase();
-      if (msg.includes('token')) {
-        this.refreshToken().catch(console.error);
-      } else if (msg.includes('transport') || msg.includes('websocket') || msg.includes('disconnect')) {
-        // Reconnect path for transient signaling drops (e.g. 31205)
-        try { this.device?.register(); } catch {}
-      }
-    });
-
-    // Incoming call
-    this.device.on('incoming', (call) => {
-      this.current = call;
-      this._wireCall(call);
-      this._status('Incoming');
-      this.onIncoming?.(call);
-    });
-
-    // Token lifecycle events
-    this.device.on('tokenWillExpire', async () => {
-      await this.refreshToken();
-    });
-    // Some versions also emit tokenExpired
-    this.device.on?.('tokenExpired', async () => {
-      await this.refreshToken();
-    });
-
-    await this.device.register();
-
-    // Proactive refresh (belt & suspenders)
-    this._refreshTimer = setInterval(
-      () => this.refreshToken().catch(() => {}),
-      55 * 60 * 1000
-    );
+  _clearReRegTimer() {
+    if (this._reRegTimer) {
+      clearTimeout(this._reRegTimer);
+      this._reRegTimer = null;
+    }
   }
 
-  async refreshToken() {
-    const newToken = await Api.voiceToken();
-    // Fast path: Device.updateToken exists
-    if (this.device?.updateToken) {
-      await this.device.updateToken(newToken);
-      return;
-    }
-    // Conservative fallback: rebuild Device with the same options
-    try { await this.device?.unregister(); } catch {}
-    try { this.device?.destroy?.(); } catch {}
-    this.device = new Device(newToken, this._deviceOptions || this._buildDeviceOptions());
+  _scheduleReRegister(reason = 'unknown') {
+    if (this._shuttingDown) return;
+    if (!this.device) return;
 
-    // Re-bind handlers after rebuild
-    this.device.on('registered', () => this._status('Idle'));
-    this.device.on('unregistered', () => {
+    // Debounce / backoff to avoid register storms in flaky networks
+    if (this._reRegTimer) return;
+    const delay = this._reRegBackoffMs;
+    this._reRegBackoffMs = Math.min(this._reRegBackoffMs * 2, this._reRegBackoffMaxMs);
+
+    this._reRegTimer = setTimeout(async () => {
+      this._reRegTimer = null;
+      if (this._shuttingDown || !this.device) return;
+      try {
+        await this.device.register();
+      } catch (e) {
+        // Keep backing off; schedule another attempt.
+        this._scheduleReRegister('register-failed');
+      }
+    }, delay);
+  }
+
+  _resetReRegisterBackoff() {
+    this._reRegBackoffMs = 500;
+    this._clearReRegTimer();
+  }
+
+  _wireDevice(device) {
+    device.on('registered', () => {
+      console.log('[Voice] registered');
+      this._resetReRegisterBackoff();
       this._status('Idle');
-      try { this.device?.register(); } catch {}
     });
-    this.device.on('error', (e) => {
-      console.error('[Voice] device error (rebuilt)', e);
+
+    device.on('unregistered', () => {
+      console.log('[Voice] unregistered');
+      this._status('Idle');
+      if (!this._shuttingDown) this._scheduleReRegister('unregistered');
+    });
+
+    device.on('error', (e) => {
+      console.error('[Voice] device error', e);
       const msg = String(e?.message || '').toLowerCase();
+
+      // Token/auth issues → refresh token
       if (msg.includes('token')) {
         this.refreshToken().catch(console.error);
-      } else if (msg.includes('transport') || msg.includes('websocket') || msg.includes('disconnect')) {
-        try { this.device?.register(); } catch {}
+        return;
+      }
+
+      // Transport/WS disconnects → gentle re-register with backoff
+      if (!this._shuttingDown && (
+          msg.includes('transport') ||
+          msg.includes('websocket') ||
+          msg.includes('disconnect') ||
+          msg.includes('31205') // generic Twilio transport error code often seen
+        )) {
+        this._scheduleReRegister('transport');
       }
     });
-    this.device.on('incoming', (call) => {
+
+    device.on('incoming', (call) => {
       this.current = call;
       this._wireCall(call);
       this._status('Incoming');
-      this.onIncoming?.(call);
+      try { this.onIncoming?.(call); } catch {}
     });
-    this.device.on?.('tokenWillExpire', async () => { await this.refreshToken(); });
-    this.device.on?.('tokenExpired', async () => { await this.refreshToken(); });
 
-    await this.device.register();
+    // Token lifecycle
+    device.on?.('tokenWillExpire', async () => { await this.refreshToken(); });
+    device.on?.('tokenExpired', async () => { await this.refreshToken(); });
   }
 
   _wireCall(call) {
     const fetchSid = () => {
-      try {
-        // Voice SDK v2: parameters may be a Map
-        return call?.parameters?.CallSid || call?.parameters?.get?.('CallSid') || null;
-      } catch { return null; }
+      try { return call?.parameters?.CallSid || call?.parameters?.get?.('CallSid') || null; }
+      catch { return null; }
     };
 
     call.on('accept', () => {
@@ -162,47 +151,93 @@ export class VoiceDevice {
     });
 
     call.on('mute', (isMuted) => {
-      // Fired when local audio mute state changes
       try { this.onMuteSync?.(!!isMuted); } catch {}
     });
 
-    call.on('disconnect', () => {
-      console.log('[Voice] call ended');
+    const onToIdle = () => {
       setCallSid(null);
       try { window.localStorage.removeItem('callSid'); } catch {}
       if (this.current === call) this.current = undefined;
       this._status('Idle');
+
+      // Ensure we remain (or become) registered post-call
+      if (!this._shuttingDown) this._scheduleReRegister('post-call');
+    };
+
+    call.on('disconnect', () => {
+      console.log('[Voice] call ended');
+      onToIdle();
     });
 
     call.on('cancel', () => {
       console.log('[Voice] call cancelled');
-      setCallSid(null);
-      try { window.localStorage.removeItem('callSid'); } catch {}
-      if (this.current === call) this.current = undefined;
-      this._status('Idle');
-      this.onIncoming?.(null);
+      try { this.onIncoming?.(null); } catch {}
+      onToIdle();
     });
 
     call.on('error', (e) => {
       console.error('[Voice] call error', e);
-      setCallSid(null);
-      try { window.localStorage.removeItem('callSid'); } catch {}
-      this._status('Idle');
+      onToIdle();
     });
   }
 
+  /* ------------------------------- public API ------------------------------ */
+
+  /**
+   * Create + register the Device (idempotent). Keeps a proactive token refresh.
+   */
+  async register() {
+    this._shuttingDown = false;
+
+    const token = await Api.voiceToken();
+    this._deviceOptions = this._buildDeviceOptions();
+
+    this.device = new Device(token, this._deviceOptions);
+    this._wireDevice(this.device);
+
+    await this.device.register();
+
+    // Proactive refresh (belt & suspenders)
+    this._refreshTimer = setInterval(
+      () => this.refreshToken().catch(() => {}),
+      55 * 60 * 1000
+    );
+  }
+
+  /**
+   * Refresh token; rebuild Device if updateToken is not supported.
+   */
+  async refreshToken() {
+    const newToken = await Api.voiceToken();
+
+    // Fast path
+    if (this.device?.updateToken) {
+      try {
+        await this.device.updateToken(newToken);
+        return;
+      } catch (e) {
+        console.warn('[Voice] updateToken failed; rebuilding device', e?.message || e);
+      }
+    }
+
+    // Rebuild Device (conservative fallback)
+    try { await this.device?.unregister?.(); } catch {}
+    try { this.device?.destroy?.(); } catch {}
+
+    this.device = new Device(newToken, this._deviceOptions || this._buildDeviceOptions());
+    this._wireDevice(this.device);
+    await this.device.register();
+  }
+
+  /**
+   * Place an outbound call via TwiML App; keeps Device registered.
+   */
   async dial(to) {
     if (!this.device) throw new Error('Device not ready');
-
-    // Device.connect → your TwiML App → /api/voice/outbound reads "To"
     const call = await this.device.connect({ params: { To: String(to).trim() } });
-
     this.current = call;
     this._wireCall(call);
-
-    // Outgoing: CallSid arrives shortly after; we set status now for UX
     this._status('In Call');
-
     return call;
   }
 
@@ -220,18 +255,41 @@ export class VoiceDevice {
     try { this.current?.sendDigits?.(String(digits)); } catch (e) { console.error('[Voice] sendDigits error', e); }
   }
 
+  /**
+   * End the current call but KEEP the Device registered and ready for the next reservation.
+   * (Use shutdown() to fully tear down the Device).
+   */
+  async endCall() {
+    try { await this.current?.disconnect?.(); } catch {}
+    this.current = undefined;
+    this._status('Idle');
+    if (!this._shuttingDown) this._scheduleReRegister('endCall');
+  }
+
+  /**
+   * Backward-compat "disconnect": now behaves as endCall() to avoid tearing down Device
+   * on normal hangups. Use shutdown() for full teardown.
+   */
   async disconnect() {
+    await this.endCall();
+  }
+
+  /**
+   * Full teardown of the softphone (unregister + destroy). Use ONLY on app exit/unmount.
+   */
+  async shutdown() {
+    this._shuttingDown = true;
+    this._clearReRegTimer();
     clearInterval(this._refreshTimer);
     this._refreshTimer = undefined;
-    try {
-      await this.current?.disconnect();
-    } catch {}
 
-    if (this.device) {
-      try { await this.device.unregister(); } catch {}
-      try { this.device.destroy?.(); } catch {}
-      this.device = undefined;
-    }
+    try { await this.current?.disconnect?.(); } catch {}
+    this.current = undefined;
+
+    try { await this.device?.unregister?.(); } catch {}
+    try { this.device?.destroy?.(); } catch {}
+
+    this.device = undefined;
     this._status('Idle');
   }
 }
