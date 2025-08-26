@@ -38,32 +38,45 @@ function safeParseJson(str) {
 }
 
 /* ---------------------------
- * Assignment Callback
+ * Assignment Callback (robust)
  * ---------------------------
  * Uses the TaskRouter "conference" instruction with **camelCase**
  * participant/conference parameters (per Twilio docs).
- * - Removes deprecated/invalid fields (post_work_activity_sid, end_conference_on_customer_exit, snake_case keys)
- * - Adds optional status callbacks for better observability
+ * - Falls back to fetching Worker from TaskRouter if webhook lacks attributes
+ * - Adds optional status callbacks for observability
  */
-export function assignment(req, res) {
+export async function assignment(req, res) {
   try {
     const taskSid = String(req.body.TaskSid || '').trim();
-
     const channelName = String(req.body.TaskChannelUniqueName || '').toLowerCase();
+
     const attrs = safeJson(req.body.TaskAttributes);
     const workerAttrs = safeJson(req.body.WorkerAttributes);
 
-    // Prefer an explicit selected_contact_uri (e.g., set when agent joined a chat),
-    // fall back to Worker's attributes.contact_uri
-    const selected = String(attrs.selected_contact_uri || '').trim();
-    const workerContact = String(workerAttrs.contact_uri || '').trim();
-    const dialTarget = toContactUri(selected || workerContact);
+    // Prefer explicit selection (e.g., from chat join), then worker webhooks attrs
+    let dialTarget = toContactUri(
+      String(attrs.selected_contact_uri || workerAttrs.contact_uri || '').trim()
+    );
 
+    // Fallback: fetch Worker from TR if webhook did not include contact_uri (common in prod)
+    if (!dialTarget && req.body.WorkerSid) {
+      try {
+        const wk = await rest.taskrouter.v1
+          .workspaces(env.workspaceSid)
+          .workers(req.body.WorkerSid)
+          .fetch();
+        const wAttrs = safeJson(wk.attributes);
+        dialTarget = toContactUri(wAttrs.contact_uri || '');
+      } catch (e) {
+        console.warn('[assignment] fallback fetch worker failed:', e?.message || e);
+      }
+    }
+
+    // Chat tasks are accepted immediately (no conferencing)
     const isChat =
       channelName === 'chat' ||
       String(attrs.channel || '').toLowerCase() === 'chat' ||
       !!attrs.conversationSid;
-
     if (isChat) {
       return res.status(200).json({ instruction: 'accept' });
     }
@@ -77,38 +90,30 @@ export function assignment(req, res) {
       return res.status(200).json({ instruction: 'reject', reason: 'no contact_uri' });
     }
 
-    // We keep the conference name aligned with the TaskSid for easier tracing
-    const conferenceName = taskSid || `task-${Date.now()}`;
-
-    // ✅ Correct, doc-accurate conference payload (camelCase keys)
+    // ✅ Doc-accurate conference payload (camelCase keys)
     const payload = {
       instruction: 'conference',
-      from: env.callerId,          // Twilio-verified caller ID or owned number
-      to: dialTarget,              // e.g. "client:agent:demo-agent-1"
-      timeout: 25,         // give browsers a bit more room to re-subscribe their WebRTC transports
+      from: env.callerId,    // Twilio-verified caller ID or owned number
+      to: dialTarget,        // e.g. "client:agent:42"
+      timeout: 25,
       record: 'do-not-record',
-      // Participant/Conference params (apply to the agent leg)
       startConferenceOnEnter: true,
       endConferenceOnExit: false,
       beep: 'onEnter',
-      // Optional: queue/hold music while waiting (if you want it)
       ...(env.holdMusicUrl ? { waitUrl: env.holdMusicUrl } : {}),
-
-      // Agent call status callbacks (progress of the agent leg)
       ...(env.publicBaseUrl ? {
         statusCallback: `${env.publicBaseUrl}/api/voice/agent-call-events`,
-        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       } : {}),
-
-      // Conference lifecycle callbacks (start/end/join/leave/hold/mute)
       ...(env.publicBaseUrl ? {
         conferenceStatusCallback: `${env.publicBaseUrl}/api/voice/conference-events`,
-        conferenceStatusCallbackEvent: ['start', 'end', 'join', 'leave', 'mute', 'hold']
-      } : {})
+        conferenceStatusCallbackEvent: ['start', 'end', 'join', 'leave', 'mute', 'hold'],
+      } : {}),
     };
 
     return res.status(200).json(payload);
-  } catch {
+  } catch (e) {
+    console.warn('[assignment] error:', e?.message || e);
     return res.status(200).json({ instruction: 'reject', reason: 'assignment error' });
   }
 }
@@ -117,7 +122,8 @@ export function assignment(req, res) {
  * Events Webhook (TaskRouter)
  * ---------------------------
  * - Push presence updates to Socket.IO
- * - Auto-reject reservations lacking a dialable contact or availability
+ * - Auto-reject reservations lacking a dialable contact (optionally availability)
+ *   with robust fallback to TaskRouter Worker fetch.
  */
 export async function events(req, res) {
   console.log('TR event', req.body.EventType, req.body.TaskSid || '', req.body.ReservationSid || '');
@@ -140,22 +146,31 @@ export async function events(req, res) {
     req.app.get('io')?.emit('presence_update', { data: formatted });
   }
 
-  // Guard: reject reservation ONLY if the agent cannot be dialed (no contact_uri).
-  // Availability is handled by Workflow/Timeout to avoid race-induced churn.
+  // Guard on reservation.created
   if (req.body.EventType === 'reservation.created') {
     try {
       const workspaceSid = env.workspaceSid;
       const workerSid = req.body.WorkerSid;
       const reservationSid = req.body.ReservationSid;
 
+      // Try webhook attributes first
       const workerAttrs = safeJson(req.body.WorkerAttributes);
-      const contactUriRaw = workerAttrs.contact_uri || null;
-      const contactUri = toContactUri(contactUriRaw);
+      let contactUri = toContactUri(workerAttrs.contact_uri || '');
 
-      // Some accounts send this flag as string
+      // 🔧 Fallback: fetch Worker if missing contact_uri (typical on VPS/prod)
+      if (!contactUri && workerSid) {
+        try {
+          const wk = await rest.taskrouter.v1.workspaces(workspaceSid).workers(workerSid).fetch();
+          const wAttrs = safeJson(wk.attributes);
+          contactUri = toContactUri(wAttrs.contact_uri || '');
+        } catch (e) {
+          console.warn('[reservation.guard] fetch worker failed:', e?.message || e);
+        }
+      }
+
+      // Only reject if we truly cannot dial the agent (or also not available if configured)
       const availableFlag = String(req.body.WorkerActivityAvailable ?? '').toLowerCase();
       const available = availableFlag === 'true' || req.body.WorkerActivityAvailable === true;
-
       const shouldReject = GUARD_CONTACT_ONLY ? !contactUri : (!contactUri || !available);
 
       if (shouldReject) {

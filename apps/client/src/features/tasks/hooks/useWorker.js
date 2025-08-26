@@ -69,6 +69,24 @@ export function useWorker() {
         setReservations((prev) => [r, ...prev]);
       });
 
+      // === Added listeners for faster incident diagnosis ===
+      w.on('reservation.canceled', (r) => {
+        try {
+          console.warn('[TR] reservation.canceled', r.sid, {
+            reason: r.canceledReason || r.reason || r?.data?.reason || 'unknown',
+            to:
+              (r.task?.attributes &&
+                JSON.parse(r.task.attributes || '{}').selected_contact_uri) || null,
+          });
+        } catch (e) {
+          console.warn('[TR] reservation.canceled', r.sid);
+        }
+      });
+
+      w.on('reservation.timeout', (r) => {
+        console.warn('[TR] reservation.timeout', r.sid);
+      });
+
       w.on('error', (e) => console.error('TR Worker error', e));
       setWorker(w);
 
@@ -92,9 +110,30 @@ export function useWorker() {
             nw.on('activity.update', (wk) => setActivity((wk || nw).activityName));
             nw.on?.('disconnected', () => setActivity(offlineName));
             nw.on('reservation.created', (r) => setReservations((prev) => [r, ...prev]));
+
+            // === Added listeners mirrored for refreshed worker ===
+            nw.on('reservation.canceled', (r) => {
+              try {
+                console.warn('[TR] reservation.canceled', r.sid, {
+                  reason: r.canceledReason || r.reason || r?.data?.reason || 'unknown',
+                  to:
+                    (r.task?.attributes &&
+                      JSON.parse(r.task.attributes || '{}').selected_contact_uri) || null,
+                });
+              } catch (e) {
+                console.warn('[TR] reservation.canceled', r.sid);
+              }
+            });
+
+            nw.on('reservation.timeout', (r) => {
+              console.warn('[TR] reservation.timeout', r.sid);
+            });
+
             nw.on('error', (e) => console.error('TR Worker error', e));
             setWorker(nw);
-            try { prev?.disconnect?.(); } catch {}
+            try {
+              prev?.disconnect?.();
+            } catch {}
             w = nw;
           }
         } catch (e) {
@@ -104,8 +143,12 @@ export function useWorker() {
     })();
 
     return () => {
-      try { clearInterval(refreshRef.current); } catch {}
-      try { w && w.disconnect && w.disconnect(); } catch {}
+      try {
+        clearInterval(refreshRef.current);
+      } catch {}
+      try {
+        w && w.disconnect && w.disconnect();
+      } catch {}
     };
   }, []);
 
