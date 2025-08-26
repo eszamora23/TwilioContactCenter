@@ -1,6 +1,7 @@
 import axios from 'axios';
-
-const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+// Garantiza sufijo /api aunque VITE_API_BASE venga sin él
+const RAW = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const baseURL = RAW.endsWith('/api') ? RAW : `${RAW.replace(/\/+$/, '')}/api`;
 
 const http = axios.create({ baseURL, withCredentials: true });
 

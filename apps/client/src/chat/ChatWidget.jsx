@@ -17,7 +17,8 @@ import { Separator } from '@twilio-paste/core/separator';
 import Video from 'twilio-video';
 import styles from './ChatWidget.module.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const RAW = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const API_BASE = RAW.endsWith('/api') ? RAW : `${RAW.replace(/\/+$/, '')}/api`;
 const VIDEO_FLAG = String(import.meta.env.VITE_VIDEO_ENABLED || 'false').toLowerCase() === 'true';
 
 /* ============ Video helpers (inline) ============ */
