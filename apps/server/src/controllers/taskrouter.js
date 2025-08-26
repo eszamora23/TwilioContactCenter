@@ -14,6 +14,8 @@ import {
 } from '../services/taskrouter.js';
 import { rest } from '../twilio.js'; // REST client for TaskRouter ops
 
+const GUARD_CONTACT_ONLY = String(process.env.RESV_GUARD_CONTACT_ONLY ?? 'true').toLowerCase() !== 'false';
+
 /* ---------------------------
  * Helpers
  * --------------------------- */
@@ -138,7 +140,8 @@ export async function events(req, res) {
     req.app.get('io')?.emit('presence_update', { data: formatted });
   }
 
-  // Guard: reject reservation if the agent cannot be dialed or is not truly available
+  // Guard: reject reservation ONLY if the agent cannot be dialed (no contact_uri).
+  // Availability is handled by Workflow/Timeout to avoid race-induced churn.
   if (req.body.EventType === 'reservation.created') {
     try {
       const workspaceSid = env.workspaceSid;
@@ -153,7 +156,9 @@ export async function events(req, res) {
       const availableFlag = String(req.body.WorkerActivityAvailable ?? '').toLowerCase();
       const available = availableFlag === 'true' || req.body.WorkerActivityAvailable === true;
 
-      if (!contactUri || !available) {
+      const shouldReject = GUARD_CONTACT_ONLY ? !contactUri : (!contactUri || !available);
+
+      if (shouldReject) {
         await rest.taskrouter.v1
           .workspaces(workspaceSid)
           .workers(workerSid)
