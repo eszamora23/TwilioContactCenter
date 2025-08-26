@@ -264,7 +264,8 @@ import { Separator } from '@twilio-paste/core/separator';
 import Video from 'twilio-video';
 import styles from './ChatWidget.module.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const RAW = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const API_BASE = RAW.endsWith('/api') ? RAW : `${RAW.replace(/\/+$/, '')}/api`;
 const VIDEO_FLAG = String(import.meta.env.VITE_VIDEO_ENABLED || 'false').toLowerCase() === 'true';
 
 /* ============ Video helpers (inline) ============ */
@@ -6267,6 +6268,24 @@ export function useWorker() {
         setReservations((prev) => [r, ...prev]);
       });
 
+      // === Added listeners for faster incident diagnosis ===
+      w.on('reservation.canceled', (r) => {
+        try {
+          console.warn('[TR] reservation.canceled', r.sid, {
+            reason: r.canceledReason || r.reason || r?.data?.reason || 'unknown',
+            to:
+              (r.task?.attributes &&
+                JSON.parse(r.task.attributes || '{}').selected_contact_uri) || null,
+          });
+        } catch (e) {
+          console.warn('[TR] reservation.canceled', r.sid);
+        }
+      });
+
+      w.on('reservation.timeout', (r) => {
+        console.warn('[TR] reservation.timeout', r.sid);
+      });
+
       w.on('error', (e) => console.error('TR Worker error', e));
       setWorker(w);
 
@@ -6290,9 +6309,30 @@ export function useWorker() {
             nw.on('activity.update', (wk) => setActivity((wk || nw).activityName));
             nw.on?.('disconnected', () => setActivity(offlineName));
             nw.on('reservation.created', (r) => setReservations((prev) => [r, ...prev]));
+
+            // === Added listeners mirrored for refreshed worker ===
+            nw.on('reservation.canceled', (r) => {
+              try {
+                console.warn('[TR] reservation.canceled', r.sid, {
+                  reason: r.canceledReason || r.reason || r?.data?.reason || 'unknown',
+                  to:
+                    (r.task?.attributes &&
+                      JSON.parse(r.task.attributes || '{}').selected_contact_uri) || null,
+                });
+              } catch (e) {
+                console.warn('[TR] reservation.canceled', r.sid);
+              }
+            });
+
+            nw.on('reservation.timeout', (r) => {
+              console.warn('[TR] reservation.timeout', r.sid);
+            });
+
             nw.on('error', (e) => console.error('TR Worker error', e));
             setWorker(nw);
-            try { prev?.disconnect?.(); } catch {}
+            try {
+              prev?.disconnect?.();
+            } catch {}
             w = nw;
           }
         } catch (e) {
@@ -6302,8 +6342,12 @@ export function useWorker() {
     })();
 
     return () => {
-      try { clearInterval(refreshRef.current); } catch {}
-      try { w && w.disconnect && w.disconnect(); } catch {}
+      try {
+        clearInterval(refreshRef.current);
+      } catch {}
+      try {
+        w && w.disconnect && w.disconnect();
+      } catch {}
     };
   }, []);
 
@@ -7140,8 +7184,9 @@ export default function useLocalStorage(key, initialValue) {
 
 ==== src\shared\services\http.js ====
 import axios from 'axios';
-
-const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+// Garantiza sufijo /api aunque VITE_API_BASE venga sin él
+const RAW = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const baseURL = RAW.endsWith('/api') ? RAW : `${RAW.replace(/\/+$/, '')}/api`;
 
 const http = axios.create({ baseURL, withCredentials: true });
 

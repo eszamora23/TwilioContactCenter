@@ -1,8 +1,10 @@
-// Lee del window.* si existe para permitir overriding desde index.html
-export const API_BASE = typeof window !== 'undefined' && window.API_BASE
+// Base del API (origen). Acepta sin /api y le agregamos helpers ya normalizados.
+const RAW_BASE = (typeof window !== 'undefined' && window.API_BASE)
   ? window.API_BASE
   : 'http://localhost:4000';
-
+export const API_BASE = RAW_BASE.replace(/\/+$/, '');
+export const API_BASE_API = `${API_BASE}/api`;
+export const DEMO_BASE = `${API_BASE_API}/demo`; // <-- usamos /api/demo siempre
 export const DEMO = typeof window !== 'undefined' && window.DEMO
   ? window.DEMO
   : {

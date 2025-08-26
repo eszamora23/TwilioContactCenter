@@ -196,8 +196,10 @@ async function ensureVoiceSDKLoaded() {
     await loadScriptOnce('https://unpkg.com/@twilio/voice-sdk@2.10.1/dist/twilio.min.js');
   }
 }
+import { API_BASE, DEMO_BASE } from '../services/config.js';
 async function fetchVoiceToken(identityHint = 'softphone:alex') {
-  const r = await fetch(`${API_BASE}/demo/token/voice?identity=${encodeURIComponent(identityHint)}`);
+  const r = await fetch(`${DEMO_BASE}/token/voice?identity=${encodeURIComponent(identityHint)}`);
+
   if (!r.ok) throw new Error('voice token http ' + r.status);
   return r.json(); // { token, identity }
 }
@@ -315,7 +317,7 @@ async function startCallFromUI() {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/demo/call/start`, {
+    const res = await fetch(`${DEMO_BASE}/call/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to, from })
     });

@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Website X — Concierge Support (Twilio)</title>
 
   <!-- Networking hints -->
-  <link rel="preconnect" href="http://localhost:4000" crossorigin>
+  <link rel="preconnect" href="https://api.contactcenterdev.com" crossorigin>
   <link rel="preconnect" href="https://media.twiliocdn.com" crossorigin>
   <link rel="dns-prefetch" href="https://tsock.us1.twilio.com">
   <link rel="modulepreload" href="./app/main.js" />
@@ -14,7 +15,8 @@
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
 
   <!-- Styles modularizados -->
   <link rel="stylesheet" href="./styles/base.css" />
@@ -24,6 +26,7 @@
   <link rel="stylesheet" href="./styles/video.css" />
   <link rel="stylesheet" href="./styles/phone-lab.css" />
 </head>
+
 <body>
   <div class="backdrop" id="backdrop"></div>
 
@@ -36,15 +39,18 @@
       <main>
         <section class="hero" id="kb" aria-label="Hero" data-include="./partials/hero"></section>
         <section class="grid" id="chat" aria-label="Start chat" data-include="./partials/grid-start-chat"></section>
-        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat" data-include="./partials/chat-shell"></section>
-        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal"></section>
+        <section id="chat-container" class="chat hidden" aria-live="polite" aria-label="Live chat"
+          data-include="./partials/chat-shell"></section>
+        <section class="grid" id="agent-portal" aria-label="Agent Portal" data-include="./partials/agent-portal">
+        </section>
         <section class="grid" id="phone-lab" aria-label="Phone Lab" data-include="./partials/phone-lab"></section>
         <section class="grid" id="status" aria-label="Service Status" data-include="./partials/status"></section>
         <section class="grid" id="how" aria-label="How it works" data-include="./partials/how"></section>
       </main>
 
       <footer>
-        © <span id="year"></span> Website X • Premium Support — <a href="#" style="color:var(--accent)">Privacy</a> · <a href="#" style="color:var(--accent)">Terms</a>
+        © <span id="year"></span> Website X • Premium Support — <a href="#" style="color:var(--accent)">Privacy</a> · <a
+          href="#" style="color:var(--accent)">Terms</a>
       </footer>
     </div>
   </div>
@@ -53,22 +59,22 @@
   <div class="fab" data-include="./partials/fab"></div>
 
   <!-- Config inicial: EXACTO al monolítico -->
-<script>
-  window.API_BASE = 'http://localhost:4000';
-  window.DEMO = {
-    agentPortalUrl: 'https://agents.demo.example.com',
-    agentId: 'demo-agent-1',
-    workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    identity: 'client:agent:demo-agent-1',
-    softphoneUrl: '',
-    ivrNumber: '+12058275832',
-    outboundFromNumber: '+19793416695',
-    customerProfiles: [
-      { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695' }
-    ]
-  };
-  try { document.getElementById('year').textContent = new Date().getFullYear(); } catch {}
-</script>
+  <script>
+    window.API_BASE = 'https://api.contactcenterdev.com';
+    window.DEMO = {
+      agentPortalUrl: 'https://demo.contactcenterdev.com',
+      agentId: 'demo-agent-1',
+      workerSid: 'WKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+      identity: 'client:agent:demo-agent-1',
+      softphoneUrl: '',
+      ivrNumber: '+12058275832',
+      outboundFromNumber: '+19793416695',
+      customerProfiles: [
+        { id: 'alex', name: 'Alex Johnson', callerId: '+19793416695' }
+      ]
+    };
+    try { document.getElementById('year').textContent = new Date().getFullYear(); } catch { }
+  </script>
 
 
   <!-- Cargador de parciales y arranque -->
@@ -90,4 +96,5 @@
     await import('./app/main.js');
   </script>
 </body>
+
 </html>

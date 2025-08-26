@@ -72,11 +72,12 @@ app.use('/api/conversations', conversationsRoute);
 app.use('/webhooks/conversations/pre', conversationsPreWebhooksRoute);
 app.use('/webhooks/conversations', conversationsWebhooksRoute);
 
-// --- Rutas DEMO (Phone Lab / softphone embebido) ---
-// El frontend llama a: POST ${API_BASE}/demo/call/start
-// Por eso montamos el router exactamente en /demo (sin /api).
++// --- Rutas DEMO (Phone Lab / softphone embebido) ---
 app.use('/demo', rateLimit({ windowMs: 15 * 60 * 1000, max: 15 }));
 app.use('/demo', demoRoutes);
+// Alias para despliegues donde el proxy sólo expone /api/*
+app.use('/api/demo', rateLimit({ windowMs: 15 * 60 * 1000, max: 15 }));
+app.use('/api/demo', demoRoutes);
 
 if (env.publicBaseUrl) {
   configureServiceWebhooks({
