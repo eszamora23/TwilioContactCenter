@@ -25,13 +25,29 @@ const col = () => collections();
 /** Customers */
 v1.get('/customers/by-ani/:ani', async (req, res) => {
   try {
-    const ani = req.params.ani.replace(/\D/g, '');
-    const c = await col().customers.findOne({ phones: ani });
+    const raw = (req.params.ani || '').replace(/\D/g, '');
+
+    // Candidatos robustos: E.164, 11 dígitos, last-10
+    const cand = new Set();
+    if (raw) cand.add(raw);
+    // last-10 si viene 11 con 1
+    if (raw.length === 11 && raw.startsWith('1')) {
+      cand.add(raw.slice(1));        // 9793416695
+      cand.add('+' + raw);           // +19793416695
+    }
+    // si viene 10, añade 11 y E.164
+    if (raw.length === 10) {
+      cand.add('1' + raw);           // 119793416695
+      cand.add('+1' + raw);          // +19793416695
+    }
+
+    const c = await col().customers.findOne({ phones: { $in: [...cand] } });
     return res.json(c || null);
   } catch (e) {
     return res.status(500).json({ error: 'db error' });
   }
 });
+
 
 v1.get('/customers/:id', async (req, res) => {
   try {

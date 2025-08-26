@@ -1,0 +1,754 @@
+==== package.json ====
+{
+  "name": "crm-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.18.0",
+    "shared": "file:../../packages/shared"
+  }
+}
+
+==== /package.json ====
+
+==== scripts\seed.mjs ====
+/**
+ * contact-center/crm-orchestrator/scripts/seed.mjs
+ * Seed con MongoDB Driver nativo
+ */
+import 'dotenv/config';
+import { MongoClient, ObjectId } from 'mongodb';
+
+const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/crm_demo';
+const dbPath = new URL(uri).pathname.replace(/^\//, '');
+const dbName = dbPath || 'crm_demo';
+
+const N_CUSTOMERS = Number(process.env.SEED_CUSTOMERS || 40);
+const RESET = String(process.env.SEED_RESET || 'true') === 'true';
+
+// -------- utilidades básicas --------
+const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const chance = (p) => Math.random() < p;
+const pick = (arr) => arr[rand(0, arr.length - 1)];
+const uniq = (arr) => Array.from(new Set(arr));
+
+const FIRST = ['Alex','Taylor','Jordan','Sam','Chris','Jamie','Avery','Riley','Casey','Morgan','Dana','Skyler','Robin','Quinn','Reese','Jessie','Shawn','Cameron'];
+const LAST  = ['Johnson','Martinez','Nguyen','Brown','Davis','Miller','Wilson','Anderson','Thomas','Jackson','Harris','Clark','Lewis','Young','Walker','Hall','Allen','King'];
+const TIERS = ['Standard','Silver','Gold','Platinum'];
+
+const MAKES = {
+  Honda: ['Civic','Accord','CR-V','Pilot'],
+  Toyota: ['Corolla','Camry','RAV4','Highlander'],
+  Ford:   ['Focus','Fusion','Escape','Explorer','F-150'],
+  BMW:    ['320i','330e','X1','X3','X5'],
+  Audi:   ['A3','A4','Q3','Q5','Q7'],
+  Nissan: ['Sentra','Altima','Rogue','Pathfinder'],
+  Chevrolet: ['Malibu','Equinox','Traverse','Silverado'],
+};
+
+const SERVICE_TYPES = ['Oil Change','Tire Rotation','Brake Inspection','Warranty Service','Recall Repair','Diagnostics'];
+const RECALL_CAMPAIGNS = [
+  { campaignId: 'RC-AB12', title: 'Airbag Inflator' },
+  { campaignId: 'RC-EL45', title: 'Electrical Harness' },
+  { campaignId: 'RC-FU93', title: 'Fuel Pump Module' },
+  { campaignId: 'RC-BR22', title: 'Brake Hose Routing' },
+];
+
+const ADVISORS = ['ADV-001','ADV-002','ADV-003','ADV-004','ADV-005'];
+
+// VIN: 17 caracteres (sin I,O,Q)
+const VIN_CHARS = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
+function newVin() {
+  let s = '';
+  for (let i = 0; i < 17; i++) s += VIN_CHARS[rand(0, VIN_CHARS.length - 1)];
+  return s;
+}
+function newPlate() {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const nums = '0123456789';
+  return `${letters[rand(0,25)]}${letters[rand(0,25)]}${letters[rand(0,25)]}-${nums[rand(0,9)]}${nums[rand(0,9)]}${nums[rand(0,9)]}`;
+}
+function fakeUSPhone() {
+  const area = String(rand(201, 989));
+  const mid  = String(rand(200, 999)).padStart(3,'0');
+  const end  = String(rand(1000, 9999)).padStart(4,'0');
+  const e164 = `+1${area}${mid}${end}`;
+  return [e164, `${area}${mid}${end}`];
+}
+
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+function randomPastDate(daysBack=120) { return addDays(Date.now(), -rand(0, daysBack)); }
+function randomFutureDate(daysForward=60) { return addDays(Date.now(), rand(1, daysForward)); }
+
+const client = new MongoClient(uri);
+
+async function resetCollections(db) {
+  const names = ['customers','vehicles','appointments','recalls','finance','reports','interactions'];
+  for (const name of names) {
+    try { await db.collection(name).drop(); } catch {}
+  }
+}
+
+async function seedRecallsForVin(db, vin) {
+  const qty = chance(0.35) ? rand(1, 2) : 0;
+  const docs = [];
+  for (let i=0;i<qty;i++) {
+    const campaign = pick(RECALL_CAMPAIGNS);
+    const open = chance(0.55);
+    const doc = {
+      vin,
+      campaignId: campaign.campaignId,
+      title: campaign.title,
+      status: open ? 'open' : 'closed',
+      oemRef: `OEM-${rand(100,999)}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.collection('recalls').insertOne(doc);
+    docs.push(doc);
+  }
+  return docs;
+}
+
+async function seedAppointments(db, vehicleId) {
+  const docs = [];
+
+  // 1-3 pasadas
+  const pastCount = rand(1, 3);
+  for (let i=0;i<pastCount;i++) {
+    const dt = randomPastDate(180);
+    const status = chance(0.85) ? 'completed' : 'canceled';
+    const stype = pick(SERVICE_TYPES);
+    const appt = {
+      vehicleId,
+      serviceType: stype,
+      datetime: dt,
+      status,
+      advisorId: pick(ADVISORS),
+      notes: status === 'completed' ? 'All good' : 'Customer canceled',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.collection('appointments').insertOne(appt);
+    docs.push(appt);
+
+    // Report opcional
+    if (status === 'completed' && chance(0.7)) {
+      await db.collection('reports').insertOne({
+        vehicleId,
+        appointmentId: (appt._id || new ObjectId()).toString(),
+        url: `https://cdn.demo.example/reports/${(appt._id || new ObjectId()).toString()}.pdf`,
+        summary: `${stype} performed. No critical issues.`,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  // Próxima cita futura ~60%
+  if (chance(0.6)) {
+    const dt = randomFutureDate(75);
+    const stype = pick(SERVICE_TYPES);
+    const appt = {
+      vehicleId,
+      serviceType: stype,
+      datetime: dt,
+      status: 'scheduled',
+      advisorId: pick(ADVISORS),
+      notes: 'Scheduled via seed',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await db.collection('appointments').insertOne(appt);
+    docs.push(appt);
+  }
+
+  return docs.sort((a,b) => new Date(b.datetime) - new Date(a.datetime));
+}
+
+async function seedFinance(db, customerId) {
+  if (!chance(0.7)) return null;
+  const doc = {
+    customerId,
+    balance: rand(1200, 45000),
+    payoffDate: `${rand(2025,2028)}-${String(rand(1,12)).padStart(2,'0')}-${String(rand(1,28)).padStart(2,'0')}`,
+    loyaltyCashback: chance(0.6) ? rand(100, 1500) : 0,
+    lastPayment: `${rand(2024,2025)}-${String(rand(1,12)).padStart(2,'0')}-${String(rand(1,28)).padStart(2,'0')}`,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  await db.collection('finance').insertOne(doc);
+  return doc;
+}
+
+async function seedInteractions(db, customerId) {
+  const intents = ['service_status','recall_schedule','finance_balance','sales_cashback','general_inquiry'];
+  const channel = pick(['voice','sms','whatsapp']);
+  const qty = rand(0, 2);
+  for (let i=0;i<qty;i++) {
+    await db.collection('interactions').insertOne({
+      customerId,
+      channel,
+      intent: pick(intents),
+      taskSid: null,
+      callSid: null,
+      disposition: pick(['Resolved','Escalated','Callback scheduled','Wrong number']),
+      notes: 'Seeded interaction',
+      csat: chance(0.6) ? rand(3,5) : undefined,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+}
+
+async function seedCustomer(db, index) {
+  const first = pick(FIRST);
+  const last = pick(LAST);
+  const name = `${first} ${last}`;
+  const email = `${first}.${last}${rand(1,999)}@example.com`.toLowerCase();
+
+  const ph = fakeUSPhone();
+  const phones = uniq([ph[0], ph[1]]);
+
+  const tier = pick(TIERS);
+  const customer = {
+    name, email, phones, tier,
+    consents: { marketing: chance(0.7) },
+    defaultVehicleId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  const cRes = await db.collection('customers').insertOne(customer);
+  const customerId = cRes.insertedId.toString();
+
+  const make = pick(Object.keys(MAKES));
+  const vehiclesDocs = [];
+  const vCount = rand(1,3);
+  for (let i=0;i<vCount;i++) {
+    const model = pick(MAKES[make]);
+    const year = rand(2015, 2024);
+    const mileage = rand(8000, 120000);
+    const vin = newVin();
+    const plate = newPlate();
+
+    const vehicle = {
+      customerId,
+      vin,
+      plate,
+      make,
+      model,
+      year,
+      mileage,
+      warranties: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const vRes = await db.collection('vehicles').insertOne(vehicle);
+    const vehicleId = vRes.insertedId.toString();
+    vehiclesDocs.push({ ...vehicle, _id: vRes.insertedId });
+
+    await seedRecallsForVin(db, vin);
+    await seedAppointments(db, vehicleId);
+  }
+
+  await db.collection('customers').updateOne(
+    { _id: new ObjectId(customerId) },
+    { $set: { defaultVehicleId: vehiclesDocs[0]?._id?.toString() || null } }
+  );
+
+  await seedFinance(db, customerId);
+  await seedInteractions(db, customerId);
+
+  return { customerId, vehicles: vehiclesDocs.map(v => v._id.toString()) };
+}
+
+// Cliente/vehículo “ancla”
+// Cliente/vehículo “ancla”
+async function seedAnchor(db) {
+  // 👇 AQUI plantamos tu número real para el demo
+  const customer = {
+    name: 'Alex Johnson',
+    phones: ['+19793416695', '19793416695'], // <- E.164 y sólo dígitos
+    email: 'alex@example.com',
+    tier: 'Gold',
+    consents: {},
+    defaultVehicleId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  const cRes = await db.collection('customers').insertOne(customer);
+  const customerId = cRes.insertedId.toString();
+
+  const vehicle = {
+    customerId,
+    vin: '1HGCM82633A123456',
+    plate: 'ABC-123',
+    make: 'Honda',
+    model: 'Accord',
+    year: 2019,
+    mileage: 42000,
+    warranties: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  const vRes = await db.collection('vehicles').insertOne(vehicle);
+  const vehicleId = vRes.insertedId.toString();
+
+  await db.collection('appointments').insertOne({
+    vehicleId,
+    serviceType: 'Oil Change',
+    datetime: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    status: 'completed',
+    notes: 'Synthetic, all good',
+    advisorId: 'ADV-001',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await db.collection('finance').insertOne({
+    customerId,
+    balance: 12450,
+    payoffDate: '2025-12-01',
+    loyaltyCashback: 600,
+    lastPayment: '2025-07-10',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await db.collection('recalls').insertOne({
+    vin: vehicle.vin,
+    campaignId: 'RC-AB12',
+    title: 'Airbag Inflator',
+    status: 'open',
+    oemRef: 'OEM-999',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await db.collection('appointments').insertOne({
+    vehicleId,
+    serviceType: 'Warranty Service',
+    datetime: addDays(Date.now(), 14),
+    status: 'scheduled',
+    notes: 'Scheduled via anchor seed',
+    advisorId: 'ADV-002',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await db.collection('customers').updateOne(
+    { _id: new ObjectId(customerId) },
+    { $set: { defaultVehicleId: vehicleId } }
+  );
+
+  await db.collection('interactions').insertOne({
+    customerId,
+    channel: 'voice',
+    intent: 'service_status',
+    taskSid: null,
+    callSid: null,
+    disposition: 'Resolved',
+    notes: 'Previous status check',
+    csat: 5,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  console.log('[anchor] customer', customerId, 'vehicle', vehicleId);
+}
+
+
+async function run() {
+  await client.connect();
+  const db = client.db(dbName);
+
+  if (RESET) await resetCollections(db);
+
+  // Crea índices básicos (opcional)
+  await db.collection('vehicles').createIndex({ vin: 1 });
+  await db.collection('vehicles').createIndex({ plate: 1 });
+  await db.collection('finance').createIndex({ customerId: 1 });
+
+  // 1) ancla determinística
+  await seedAnchor(db);
+
+  // 2) clientes aleatorios
+  const created = [];
+  for (let i = 0; i < N_CUSTOMERS; i++) {
+    const r = await seedCustomer(db, i);
+    created.push(r);
+  }
+
+  // resumen
+  const counts = await Promise.all([
+    db.collection('customers').countDocuments(),
+    db.collection('vehicles').countDocuments(),
+    db.collection('appointments').countDocuments(),
+    db.collection('recalls').countDocuments(),
+    db.collection('finance').countDocuments(),
+    db.collection('reports').countDocuments(),
+    db.collection('interactions').countDocuments(),
+  ]);
+
+  console.log('---------------------------------------');
+  console.log('Seed OK');
+  console.log('Customers     :', counts[0]);
+  console.log('Vehicles      :', counts[1]);
+  console.log('Appointments  :', counts[2]);
+  console.log('Recalls       :', counts[3], '(incluye open & closed; la API lista solo "open")');
+  console.log('Finance       :', counts[4]);
+  console.log('Reports       :', counts[5]);
+  console.log('Interactions  :', counts[6]);
+  console.log('Tip: prueba IVR lookup con VIN 1HGCM82633A123456 o ANI +12125551234');
+  console.log('---------------------------------------');
+
+  await client.close();
+  process.exit(0);
+}
+
+run().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+
+==== /scripts\seed.mjs ====
+
+==== src\db.js ====
+﻿// contact-center/crm-orchestrator/src/db.js
+import { MongoClient, ServerApiVersion } from 'mongodb';
+import { crmEnv as env } from 'shared/env';
+
+let _client;
+let _db;
+
+export async function connectDb() {
+  if (_client && _db) return { client: _client, db: _db };
+
+  const uri = env.mongoUri;
+  if (!uri) throw new Error('MONGODB_URI is not set');
+
+  const client = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    },
+  });
+
+  await client.connect();
+
+  // Si la URI incluye /<dbname> Ãºsalo; si no, por defecto crm_demo
+  const dbPath = new URL(uri).pathname.replace(/^\//, '');
+  const dbName = dbPath || 'crm_demo';
+
+  const db = client.db(dbName);
+
+  _client = client;
+  _db = db;
+
+  // Ping opcional
+  await db.command({ ping: 1 });
+  console.log(`[MongoDB] Connected to ${db.databaseName}`);
+
+  return { client, db };
+}
+
+export function collections() {
+  if (!_db) throw new Error('DB not connected. Call connectDb() first.');
+  return {
+    customers: _db.collection('customers'),
+    vehicles: _db.collection('vehicles'),
+    appointments: _db.collection('appointments'),
+    recalls: _db.collection('recalls'),
+    finance: _db.collection('finance'),
+    reports: _db.collection('reports'),
+    interactions: _db.collection('interactions'),
+  };
+}
+
+
+==== /src\db.js ====
+
+==== src\index.js ====
+﻿// contact-center/crm-orchestrator/src/index.js
+import express from 'express';
+import cors from 'cors';
+import { crmEnv as env } from 'shared/env';
+import { v1 } from './routes.v1.js';
+import { connectDb } from './db.js';
+
+const app = express();
+app.use(cors({ origin: '*' }));
+app.use(express.json());
+
+app.get('/health', (_req, res) => res.json({ ok: true }));
+app.use('/v1', v1);
+
+// ConÃ©ctate a MongoDB Atlas (driver nativo)
+await connectDb();
+
+app.listen(env.port, () => console.log(`crm-orchestrator on :${env.port}`));
+
+
+==== /src\index.js ====
+
+==== src\models.js ====
+import mongoose from 'mongoose';
+
+const Customer = new mongoose.Schema({
+  name: String,
+  phones: [String],
+  email: String,
+  tier: { type: String, default: 'Standard' },
+  consents: { type: Object, default: {} },
+  defaultVehicleId: String
+}, { timestamps: true });
+
+const Vehicle = new mongoose.Schema({
+  customerId: String,
+  vin: { type: String, index: true },
+  plate: { type: String, index: true },
+  make: String,
+  model: String,
+  year: Number,
+  mileage: Number,
+  warranties: [Object]
+}, { timestamps: true });
+
+const Appointment = new mongoose.Schema({
+  vehicleId: String,
+  serviceType: String,
+  datetime: Date,
+  status: { type: String, default: 'scheduled' },
+  advisorId: String,
+  notes: String
+}, { timestamps: true });
+
+const Recall = new mongoose.Schema({
+  vin: String,
+  campaignId: String,
+  title: String,
+  status: { type: String, default: 'open' },
+  oemRef: String
+}, { timestamps: true });
+
+const Finance = new mongoose.Schema({
+  customerId: { type: String, index: true },
+  balance: Number,
+  payoffDate: String,
+  loyaltyCashback: Number,
+  lastPayment: String
+}, { timestamps: true });
+
+const Report = new mongoose.Schema({
+  vehicleId: String,
+  appointmentId: String,
+  url: String,
+  summary: String
+}, { timestamps: true });
+
+const Interaction = new mongoose.Schema({
+  customerId: String,
+  channel: String,
+  intent: String,
+  taskSid: String,
+  callSid: String,
+  disposition: String,
+  notes: String,
+  csat: Number
+}, { timestamps: true });
+
+export const Models = {
+  Customer: mongoose.model('customers', Customer),
+  Vehicle: mongoose.model('vehicles', Vehicle),
+  Appointment: mongoose.model('appointments', Appointment),
+  Recall: mongoose.model('recalls', Recall),
+  Finance: mongoose.model('finance', Finance),
+  Report: mongoose.model('reports', Report),
+  Interaction: mongoose.model('interactions', Interaction)
+};
+
+==== /src\models.js ====
+
+==== src\routes.v1.js ====
+﻿// contact-center/crm-orchestrator/src/routes.v1.js
+import { Router } from 'express';
+import { requireServiceAuth } from 'shared/auth';
+import { collections } from './db.js';
+import { ObjectId } from 'mongodb';
+
+export const v1 = Router();
+
+// All routes require internal service auth
+v1.use(requireServiceAuth);
+
+/** Helpers */
+const maskFinance = (f) =>
+  !f
+    ? null
+    : {
+        balance: '****',
+        payoffDate: f.payoffDate,
+        loyaltyCashback: f.loyaltyCashback,
+        lastPayment: '****', // Mask additional field
+      };
+
+const col = () => collections();
+
+/** Customers */
+v1.get('/customers/by-ani/:ani', async (req, res) => {
+  try {
+    const ani = req.params.ani.replace(/\D/g, '');
+    const c = await col().customers.findOne({ phones: ani });
+    return res.json(c || null);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.get('/customers/:id', async (req, res) => {
+  try {
+    const _id = new ObjectId(req.params.id);
+    const c = await col().customers.findOne({ _id });
+    return res.json(c || null);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+/** Vehicles */
+// NEW: fetch vehicle by internal id
+v1.get('/vehicles/:id', async (req, res) => {
+  try {
+    const _id = new ObjectId(req.params.id);
+    const v = await col().vehicles.findOne({ _id });
+    return res.json(v || null);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.get('/vehicles/by-vin/:vin', async (req, res) => {
+  try {
+    const v = await col().vehicles.findOne({ vin: req.params.vin.toUpperCase() });
+    return res.json(v || null);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.get('/vehicles/by-plate/:plate', async (req, res) => {
+  try {
+    const v = await col().vehicles.findOne({ plate: req.params.plate.toUpperCase() });
+    return res.json(v || null);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+/** Appointments */
+v1.get('/appointments/:vehicleId', async (req, res) => {
+  try {
+    const appts = await col()
+      .appointments.find({ vehicleId: req.params.vehicleId })
+      .sort({ datetime: -1 })
+      .limit(10)
+      .toArray();
+    return res.json(appts || []);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.post('/appointments', async (req, res) => {
+  try {
+    const { vehicleId, datetime, serviceType, notes } = req.body || {};
+    if (!vehicleId || !datetime) return res.status(400).json({ error: 'missing fields' });
+
+    const doc = {
+      vehicleId,
+      serviceType: serviceType || 'service',
+      datetime: new Date(datetime),
+      status: 'scheduled',
+      advisorId: undefined,
+      notes: notes || '',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await col().appointments.insertOne(doc);
+    return res.json(doc);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+/** Recalls */
+v1.get('/recalls/:vin', async (req, res) => {
+  try {
+    const list = await col()
+      .recalls.find({ vin: req.params.vin.toUpperCase(), status: 'open' })
+      .toArray();
+    return res.json(list || []);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+/** Finance */
+v1.get('/finance/:customerId', async (req, res) => {
+  try {
+    const f = await col().finance.findOne({ customerId: req.params.customerId });
+    const otpVerified = String(req.query.otpVerified || 'false') === 'true';
+    return res.json(otpVerified ? f : maskFinance(f));
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.post('/paylink', async (req, res) => {
+  try {
+    const { customerId } = req.body || {};
+    if (!customerId) return res.status(400).json({ error: 'missing customerId' });
+    // For demo: generate a fake pay link and pretend we sent an SMS
+    const url = `https://pay.demo.example/${customerId}/${Date.now()}`;
+    return res.json({ ok: true, url });
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+/** Interactions */
+v1.post('/interactions', async (req, res) => {
+  try {
+    const doc = { ...(req.body || {}), createdAt: new Date(), updatedAt: new Date() };
+    const r = await col().interactions.insertOne(doc);
+    return res.json({ ok: true, id: r.insertedId });
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+v1.get('/interactions/:customerId', async (req, res) => {
+  try {
+    const list = await col()
+      .interactions.find({ customerId: req.params.customerId })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .toArray();
+    return res.json(list || []);
+  } catch (e) {
+    return res.status(500).json({ error: 'db error' });
+  }
+});
+
+==== /src\routes.v1.js ====
+

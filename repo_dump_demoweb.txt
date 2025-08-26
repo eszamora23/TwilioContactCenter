@@ -1680,7 +1680,7 @@ bus.on('chat:ended', () => {
 ==== webchat\ui\shell.ui.js ====
 import { byId, qs, qsa } from './dom.js';
 import { toast } from './toast.js';
-import { API_BASE, DEMO, LS } from '../services/config.js';
+import { API_BASE, DEMO_BASE, DEMO, LS } from '../services/config.js';
 import { loadScriptOnce } from '../services/script.loader.js';
 
 // Footer year
@@ -1876,7 +1876,6 @@ async function ensureVoiceSDKLoaded() {
     await loadScriptOnce('https://unpkg.com/@twilio/voice-sdk@2.10.1/dist/twilio.min.js');
   }
 }
-import { API_BASE, DEMO_BASE } from '../services/config.js';
 async function fetchVoiceToken(identityHint = 'softphone:alex') {
   const r = await fetch(`${DEMO_BASE}/token/voice?identity=${encodeURIComponent(identityHint)}`);
 
