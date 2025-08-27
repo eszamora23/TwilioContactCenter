@@ -46,7 +46,7 @@
 
 .key {
   width: 100%;
-  height: 48px;
+  height: var(--paste-space-120);
 }
 
 .padGrid {
@@ -55,8 +55,35 @@
   gap: var(--paste-space-40);
 }
 
+.callControlGroup {
+  flex-wrap: wrap;
+}
+
 .pill {
   border-radius: 9999px;
-  padding: 2px 10px;
+  padding: var(--paste-space-10) var(--paste-space-40);
   background: var(--paste-color-backgroundStrong);
+}
+
+@media (max-width: 480px) {
+  .layout {
+    gap: var(--paste-space-40);
+  }
+
+  .controls {
+    gap: var(--paste-space-40);
+  }
+
+  .padGrid {
+    gap: var(--paste-space-20);
+    width: 100%;
+  }
+
+  .key {
+    height: var(--paste-space-100);
+  }
+
+  .pill {
+    padding: var(--paste-space-0) var(--paste-space-30);
+  }
 }
