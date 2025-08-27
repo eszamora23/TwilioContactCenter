@@ -7,11 +7,11 @@
 }
 
 /* Fullscreen para popup */
-.fullscreen{
-  height:100svh; /* navegadores modernos */
-  height:100vh;  /* fallback */
-  padding: var(--paste-space-70);
-}
+  .fullscreen{
+    height:100%;   /* fallback */
+    height:100svh; /* navegadores modernos */
+    padding: var(--paste-space-70);
+  }
 
 /* Shell con card (popup y también sirve embebido si lo prefieres) */
 .card{

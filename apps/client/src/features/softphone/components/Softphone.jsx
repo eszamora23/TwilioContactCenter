@@ -97,7 +97,8 @@ function SoftphoneInner({ remoteOnly, hiddenInline }) {
       boxShadow="shadow"
       padding="space70"
       className={styles.layout}
-      minHeight={isPopup ? '100vh' : undefined}
+      height={isPopup ? '100%' : undefined}
+      minHeight={isPopup ? '100dvh' : undefined}
     >
       {error ? (
         <Box marginBottom="space50">
