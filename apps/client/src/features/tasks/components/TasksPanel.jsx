@@ -26,26 +26,40 @@ import { Input } from '@twilio-paste/core/input';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Toaster, useToaster } from '@twilio-paste/core/toast';
 import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
+import {
+  Disclosure,
+  DisclosureHeading,
+  DisclosureContent
+} from '@twilio-paste/core/disclosure';
 
 /**
- * TasksPanel — app-like, no inner scrolls
- * Responsive polish:
- * - Static grid templates
- * - Avoid long IDs blowing layout
- * - Mobile buttons full-width where it helps
+ * TasksPanel — refactor app-like, responsive, sin scroll lateral
+ * - Oculta datos técnicos por defecto (Task SID, Call SID)
+ * - Tarjetas compactas, contenido humano (cliente, intención, estado)
+ * - Botones contextuales (Abrir/Cerrar/Completar, Transferir/Finalizar)
+ * - Grillas fluidas sin overflow horizontal
  */
 export default function TasksPanel({ onFinished, setAvailable, channel = 'voice', onOpenChat }) {
   const voiceMode = channel !== 'chat';
   const { t: translate } = useTranslation();
   const toaster = useToaster();
 
-  // Data
+  // ===== Helpers UI =====
+  const fmtSeconds = (s = 0) => {
+    const sec = Math.max(0, Number(s) || 0);
+    const m = Math.floor(sec / 60);
+    const r = sec % 60;
+    return m > 0 ? `${m}m ${r}s` : `${r}s`;
+  };
+  const mask = (v) => (v && String(v).length > 12 ? `${String(v).slice(0, 4)}…${String(v).slice(-4)}` : v || '—');
+
+  // ===== Data =====
   const { data: itemsRaw = [], isLoading: loading, refetch: load } = useQuery({
     queryKey: ['myTasks'],
     queryFn: () => Api.myTasks('wrapping,assigned,reserved'),
     staleTime: 10000,
     refetchOnWindowFocus: true,
-    refetchInterval: 10000, // o 0 si no quieres polling
+    refetchInterval: 10000,
     onError: () =>
       toaster.push({
         message: translate('tasksLoadError') || 'Failed to load tasks.',
@@ -53,7 +67,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       }),
   });
 
-  // Split by channel
+  // Split por canal (voz vs chat)
   const voiceTasks = useMemo(
     () => itemsRaw.filter((t) => (t?.attributes?.channel || 'voice') !== 'chat'),
     [itemsRaw]
@@ -65,9 +79,9 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const items = voiceMode ? voiceTasks : chatTasks;
 
   /* =========================================================
-   * Conversation state cache (sid -> { state, closed, participantsCount })
+   * Cache de estado de Conversaciones (sid -> { state, closed, participantsCount })
    * ========================================================= */
-  const [convStates, setConvStates] = useState({}); // { [sid]: { state, closed, participantsCount } }
+  const [convStates, setConvStates] = useState({});
 
   const fetchConvState = useCallback(async (sid) => {
     try {
@@ -113,7 +127,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const [chatWrapDisposition, setChatWrapDisposition] = useState('Resolved');
   const [chatWrapNotes, setChatWrapNotes] = useState('');
 
-  // Si chat está abierto y se intenta completar → popup para cerrar primero
+  // Si chat está abierto y se intenta completar → pedir cerrar primero
   const [confirmCloseFirst, setConfirmCloseFirst] = useState(null); // { task, convoSid }
 
   const attemptCompleteChat = (t) => {
@@ -126,12 +140,10 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     const isWrapping = String(t?.assignmentStatus || '').toLowerCase() === 'wrapping';
     if (!convoSid) return;
 
-    // Si no está cerrado NI inactivo NI wrapping y aún hay participantes → pedir cerrar primero
     if (!ended && !isWrapping && !noParticipants) {
       setConfirmCloseFirst({ task: t, convoSid });
       return;
     }
-    // Condición suficiente para wrap: ended || wrapping || sin participantes
     setChatWrapTask(t);
     setChatWrapDisposition('Resolved');
     setChatWrapNotes('Chat wrap-up');
@@ -167,7 +179,6 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         console.warn('logInteraction (chat) failed', e?.message || e);
       }
 
-      // autoWrap permite completar incluso si el Task aún estaba en assigned
       await Api.completeTask(taskSid, { reason, disposition, autoWrap: true });
 
       setOpenChatWrap(false);
@@ -199,7 +210,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const [externalNumber, setExternalNumber] = useState('');
 
   const filteredAgents = useMemo(
-    () => agents.filter((a) => a.friendlyName.toLowerCase().includes(search.toLowerCase())),
+    () => agents.filter((a) => String(a.friendlyName || '').toLowerCase().includes(search.toLowerCase())),
     [agents, search]
   );
 
@@ -326,13 +337,13 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   }
 
   /* =========================
-   * Chat actions
+   * Acciones de chat
    * ========================= */
   async function closeChat(conversationSid) {
     try {
       await http.post(`/conversations/${conversationSid}/close`, { removeParticipants: true });
       toaster.push({ message: 'Chat closed', variant: 'success', dismissAfter: 2000 });
-      await refreshConvStates(chatTasks); // refrescar estado
+      await refreshConvStates(chatTasks);
       await load();
     } catch (e) {
       console.error('close chat error', e);
@@ -347,9 +358,9 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     }
   }
 
-  // ===== Grid templates (static strings) =====
-  const gridColsChat = 'repeat(auto-fit, minmax(320px, 1fr))';
-  const gridColsVoice = 'repeat(auto-fit, minmax(340px, 1fr))';
+  // ===== Grids responsivas (sin scroll lateral) =====
+  const gridColsChat = 'repeat(auto-fit, minmax(280px, 1fr))';
+  const gridColsVoice = 'repeat(auto-fit, minmax(300px, 1fr))';
 
   function statusToVariant(s) {
     const v = String(s || '').toLowerCase();
@@ -359,10 +370,14 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     return 'neutral';
   }
 
-  /* =========================
-   * Render — CHAT (cards)
-   * ========================= */
+  // ===== Header Metrics (voice) =====
+  const avgSLA = items.length > 0
+    ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
+    : 0;
+
+  // ===== Render =====
   if (!voiceMode) {
+    // ===== CHAT =====
     return (
       <Box
         display="grid"
@@ -374,8 +389,11 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         borderRadius="borderRadius30"
         boxShadow="shadow"
         padding="space70"
+        overflowX="hidden"
       >
         <Toaster {...toaster} />
+
+        {/* Header */}
         <Stack
           orientation={['vertical', 'horizontal']}
           spacing="space50"
@@ -384,20 +402,23 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
           style={{ flexWrap: 'wrap' }}
         >
           <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
-            <Heading as="h3" variant="heading30" margin="space0">Chat Tasks</Heading>
+            <Heading as="h3" variant="heading30" margin="space0">
+              {translate('chatTasks') || 'Chats activos'}
+            </Heading>
             <Badge as="span" variant="neutral">{chatTasks.length}</Badge>
           </Stack>
           <Button variant="secondary" onClick={load} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? (translate('loading') || 'Loading…') : (translate('refresh') || 'Refresh')}
           </Button>
         </Stack>
 
         <Separator orientation="horizontal" />
 
+        {/* Content */}
         {loading ? (
           <SkeletonLoader />
         ) : !chatTasks.length ? (
-          <Box color="colorTextWeak">No chat tasks</Box>
+          <Box color="colorTextWeak">{translate('noChatTasks') || 'No hay chats asignados'}</Box>
         ) : (
           <Box display="grid" gridTemplateColumns={gridColsChat} gap="space60">
             {chatTasks.map((t) => {
@@ -410,51 +431,71 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
               const isWrapping = String(t.assignmentStatus || '').toLowerCase() === 'wrapping';
               const showComplete = ended || isWrapping || noParticipants;
 
+              const customer = a.customerName || a.name || a.customer || a.from || a.phone || a.phoneNumber || 'Cliente';
+              const intent = a.intent || a.topic || a.reason || null;
+
               return (
                 <Card key={t.sid} padding="space70">
                   <Stack orientation="vertical" spacing="space50">
+                    {/* Título humano + estado */}
                     <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
                       <Box flexGrow={1} minWidth="0" width="100%">
                         <Heading
                           as="h4"
                           variant="heading40"
                           margin="space0"
-                          style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
-                          title={t.sid}
+                          style={{ lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                         >
-                          {t.sid}
+                          {customer}
                         </Heading>
+                        {intent ? (
+                          <Box color="colorTextWeak" fontSize="fontSize30" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {intent}
+                          </Box>
+                        ) : null}
                       </Box>
                       <Badge as="span" variant={ended ? 'neutral' : statusToVariant(t.assignmentStatus)}>
                         {ended ? 'closed' : (t.assignmentStatus || 'assigned')}
                       </Badge>
                     </Stack>
 
+                    {/* Meta compacta */}
                     <Box color="colorTextWeak" fontSize="fontSize30">
-                      Conversation: <b style={{ wordBreak: 'break-all' }}>{convoSid || '—'}</b>
                       {typeof cs.participantsCount === 'number' ? (
-                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
-                          · participants: {cs.participantsCount}
-                        </span>
-                      ) : null}
-                      {(!ended && isWrapping) ? (
-                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
-                          · task: wrapping
-                        </span>
-                      ) : null}
+                        <span>Participantes: <b>{cs.participantsCount}</b></span>
+                      ) : (
+                        <span>&nbsp;</span>
+                      )}
                     </Box>
 
-                    {/* Smart buttons */}
+                    {/* Acciones */}
                     {!showComplete ? (
                       <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-                        <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>Open chat</Button>
-                        <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>Close chat</Button>
+                        <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>
+                          {translate('openChat') || 'Abrir chat'}
+                        </Button>
+                        <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>
+                          {translate('closeChat') || 'Cerrar chat'}
+                        </Button>
                       </Stack>
                     ) : (
                       <Button variant="primary" size="small" onClick={() => attemptCompleteChat(t)}>
-                        {translate('completeTask') || 'Complete task'}
+                        {translate('completeTask') || 'Completar'}
                       </Button>
                     )}
+
+                    {/* Detalles técnicos (colapsado) */}
+                    <Disclosure>
+                      <DisclosureHeading as="h5">
+                        {translate('technicalDetails') || 'Detalles técnicos'}
+                      </DisclosureHeading>
+                      <DisclosureContent>
+                        <Box color="colorTextWeak" fontSize="fontSize30" style={{ wordBreak: 'break-all' }}>
+                          Conversation: <b>{mask(convoSid)}</b><br />
+                          Task: <b>{mask(t.sid)}</b>
+                        </Box>
+                      </DisclosureContent>
+                    </Disclosure>
                   </Stack>
                 </Card>
               );
@@ -495,14 +536,14 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         {/* Modal: pedir cerrar primero si el chat sigue abierto */}
         <Modal isOpen={!!confirmCloseFirst} onDismiss={() => setConfirmCloseFirst(null)} ariaLabel="close-chat-first" size="default">
           <ModalHeader>
-            <ModalHeading>Close chat to wrap up</ModalHeading>
+            <ModalHeading>{translate('closeFirstTitle') || 'Close chat to wrap up'}</ModalHeading>
           </ModalHeader>
           <ModalBody>
-            You need to close the conversation before completing the task.
+            {translate('closeFirstBody') || 'You need to close the conversation before completing the task.'}
           </ModalBody>
           <ModalFooter>
             <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-              <Button variant="secondary" onClick={() => setConfirmCloseFirst(null)}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setConfirmCloseFirst(null)}>{translate('cancel') || 'Cancel'}</Button>
               <Button
                 variant="destructive"
                 onClick={async () => {
@@ -517,7 +558,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
                   }
                 }}
               >
-                Close chat now
+                {translate('closeNow') || 'Close chat now'}
               </Button>
             </Stack>
           </ModalFooter>
@@ -526,13 +567,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     );
   }
 
-  /* =========================
-   * Render — VOICE
-   * ========================= */
-  const avgSLA = items.length > 0
-    ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
-    : 0;
-
+  // ===== VOICE =====
   return (
     <Box
       display="grid"
@@ -544,9 +579,11 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       borderRadius="borderRadius30"
       boxShadow="shadow"
       padding="space70"
+      overflowX="hidden"
     >
       <Toaster {...toaster} />
 
+      {/* Header */}
       <Stack
         orientation={['vertical', 'horizontal']}
         spacing="space40"
@@ -556,10 +593,10 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       >
         <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
           <Heading as="h3" variant="heading30" margin="space0">
-            {translate('myTasks') || 'My Tasks'}
+            {translate('myTasks') || 'Mis llamadas'}
           </Heading>
           <Badge as="span" variant="neutral">{items.length}</Badge>
-          <Badge as="span">Avg SLA: {avgSLA}s</Badge>
+          <Badge as="span">Avg SLA: {fmtSeconds(avgSLA)}</Badge>
         </Stack>
 
         <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap', width: '100%' }}>
@@ -584,6 +621,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
 
       <Separator orientation="horizontal" />
 
+      {/* Content */}
       {loading ? (
         <SkeletonLoader />
       ) : !items.length ? (
@@ -601,12 +639,18 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       ) : (
         <Box display="grid" gridTemplateColumns={gridColsVoice} gap="space60">
           {items.map((t) => (
-            <VoiceTaskCard key={t.sid} t={t} onFinishPress={(task) => {
-              setWrapTask(task);
-              setWrapDisposition('Resolved');
-              setWrapNotes(`Call duration: ${Math.max(0, task.age || 0)}s`);
-              setOpenWrap(true);
-            }} onTransfer={onTransfer} />
+            <VoiceTaskCard
+              key={t.sid}
+              t={t}
+              fmtSeconds={fmtSeconds}
+              onFinishPress={(task) => {
+                setWrapTask(task);
+                setWrapDisposition('Resolved');
+                setWrapNotes(`Call duration: ${Math.max(0, task.age || 0)}s`);
+                setOpenWrap(true);
+              }}
+              onTransfer={onTransfer}
+            />
           ))}
         </Box>
       )}
@@ -691,11 +735,12 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   );
 }
 
-/* ===== Voice Card ===== */
-function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
+/* ===== Voice Card (refactor: sin IDs técnicos visibles) ===== */
+function VoiceTaskCard({ t, onFinishPress, onTransfer, fmtSeconds }) {
+  const a = t.attributes || {};
   const status = String(t.assignmentStatus || '').toLowerCase();
   const canFinish = status === 'wrapping';
-  const customerCallSid = t.attributes?.callSid || t.attributes?.call_sid || null;
+  const customerCallSid = a.callSid || a.call_sid || null;
 
   const variant =
     status === 'wrapping'
@@ -703,6 +748,12 @@ function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
       : (status === 'assigned' || status === 'reserved')
         ? 'new'
         : 'neutral';
+
+  const customer = a.customerName || a.name || a.customer || a.from || a.phone || a.phoneNumber || 'Cliente';
+  const intent = a.intent || a.topic || a.reason || null;
+  const wait = t.age || 0;
+
+  const [showDetails, setShowDetails] = useState(false);
 
   return (
     <Card padding="space70">
@@ -713,25 +764,38 @@ function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
               as="h4"
               variant="heading40"
               margin="space0"
-              style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
-              title={t.sid}
+              style={{ lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
             >
-              {t.sid}
+              {customer}
             </Heading>
+            {intent ? (
+              <Box color="colorTextWeak" fontSize="fontSize30" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {intent}
+              </Box>
+            ) : null}
           </Box>
           <Badge as="span" variant={variant}>{t.assignmentStatus}</Badge>
         </Stack>
 
-        {customerCallSid ? (
-          <Box color="colorTextWeak" fontSize="fontSize30">
-            CallSid: <b style={{ wordBreak: 'break-all' }}>{customerCallSid}</b>
-          </Box>
-        ) : null}
+        <Box color="colorTextWeak" fontSize="fontSize30">
+          Espera: <b>{fmtSeconds(wait)}</b>
+        </Box>
 
         <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-          <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid}>Transfer</Button>
-          <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish}>Finish</Button>
+          <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid}>{'Transferir'}</Button>
+          <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish}>{'Finalizar'}</Button>
         </Stack>
+
+        {/* Detalles técnicos (colapsado) */}
+        <Disclosure state={showDetails} onChange={() => setShowDetails((s) => !s)}>
+          <DisclosureHeading as="h5">{'Detalles técnicos'}</DisclosureHeading>
+          <DisclosureContent>
+            <Box color="colorTextWeak" fontSize="fontSize30" style={{ wordBreak: 'break-all' }}>
+              CallSid: <b>{customerCallSid ? (customerCallSid.length > 12 ? `${customerCallSid.slice(0,4)}…${customerCallSid.slice(-4)}` : customerCallSid) : '—'}</b><br />
+              Task: <b>{t.sid && t.sid.length > 12 ? `${t.sid.slice(0,4)}…${t.sid.slice(-4)}` : t.sid}</b>
+            </Box>
+          </DisclosureContent>
+        </Disclosure>
       </Stack>
     </Card>
   );
