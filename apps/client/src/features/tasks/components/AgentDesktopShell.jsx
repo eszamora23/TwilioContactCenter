@@ -122,7 +122,7 @@ export default function AgentDesktopShell({
 
       <SidebarBody style={{ background: 'var(--paste-color-background-body-inverse)' }}>
         {/* Scratchpad as primary focus, with modern styling, larger size, and high contrast */}
-        <Box padding="space60">
+        <Box padding={['space40', 'space60']}>
           <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
             Scratchpad
           </Heading>
@@ -132,7 +132,7 @@ export default function AgentDesktopShell({
             borderWidth="borderWidth10"
             borderColor="colorBorderWeak"
             borderStyle="solid"
-            padding="space50"
+            padding={['space40', 'space50']}
             boxShadow="shadow"
             minHeight="400px" // Make the note part bigger
             display="flex"
@@ -156,7 +156,7 @@ export default function AgentDesktopShell({
         </Box>
 
         {/* Condensed key insights, with high contrast */}
-        <Box padding="space60" paddingTop="space0">
+        <Box padding={['space40', 'space60']} paddingTop="space0">
           <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
             Key Tips
           </Heading>
@@ -166,7 +166,7 @@ export default function AgentDesktopShell({
             borderWidth="borderWidth10"
             borderColor="colorBorderWeak"
             borderStyle="solid"
-            padding="space50"
+            padding={['space40', 'space50']}
             boxShadow="shadow"
           >
             <ul style={{ margin: 0, paddingLeft: '1.25rem', listStyleType: 'disc', fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--paste-color-text-inverse)' }}>
@@ -185,7 +185,12 @@ export default function AgentDesktopShell({
       {footer ? (
         <>
           <Separator orientation="horizontal" verticalSpacing="space40" />
-          <Box padding="space60" style={{ background: 'var(--paste-color-background-body-inverse)', color: 'var(--paste-color-text-inverse)' }}>{footer}</Box>
+          <Box
+            padding={['space40', 'space60']}
+            style={{ background: 'var(--paste-color-background-body-inverse)', color: 'var(--paste-color-text-inverse)' }}
+          >
+            {footer}
+          </Box>
         </>
       ) : null}
     </>
@@ -195,7 +200,7 @@ export default function AgentDesktopShell({
    * Layout (minimalist with clean transitions, assuming dark mode support)
    * ========================= */
   return (
-    <Box height="100%" minHeight="100dvh" width="100%" overflow="hidden" position="relative">
+    <Box height="100dvh" width="100%" overflow="hidden" position="relative">
       {/* Desktop sidebar */}
       {isDesktop && (
         <Box
@@ -220,8 +225,7 @@ export default function AgentDesktopShell({
         as="main"
         display="flex"
         flexDirection="column"
-        height="100%"
-        minHeight="100dvh"
+        height="100dvh"
         overflow="hidden"
         paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
         style={{ background: 'var(--paste-color-background-body)' }}
@@ -229,8 +233,8 @@ export default function AgentDesktopShell({
         {/* Sticky header */}
         <Box
           as="header"
-          paddingX="space70"
-          paddingY="space50"
+          paddingX={['space40', 'space70']}
+          paddingY={['space40', 'space50']}
           backgroundColor="colorBackgroundBody"
           style={{
             borderBottom: '1px solid var(--paste-color-border-weak)',
@@ -266,7 +270,11 @@ export default function AgentDesktopShell({
           overflow="auto"
           backgroundColor="colorBackgroundBody"
         >
-          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1280 }}>
+          <Box
+            as="section"
+            padding={['space60', 'space70']}
+            style={{ margin: '0 auto', maxWidth: 1280 }}
+          >
             {children}
           </Box>
         </Box>
@@ -283,9 +291,10 @@ export default function AgentDesktopShell({
             position="fixed"
             top={`${offset}px`}
             left={0}
-              height={`calc(100% - ${offset}px)`}
-              minHeight={`calc(100dvh - ${offset}px)`}
-            width="min(80vw, 320px)"
+            height={`calc(100% - ${offset}px)`}
+            minHeight={`calc(100dvh - ${offset}px)`}
+            width="100%"
+            maxWidth="320px"
             zIndex={11}
             backgroundColor="colorBackgroundBody"
             style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
