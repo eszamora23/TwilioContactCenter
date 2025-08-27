@@ -520,7 +520,7 @@ export default function AgentApp() {
 
   /* Render */
   return (
-    <Box minHeight="100vh" width="100%">
+    <Box height="100%" minHeight="100dvh" width="100%">
       <Toaster {...toaster} />
 
       {/* Modal de controles de llamada */}

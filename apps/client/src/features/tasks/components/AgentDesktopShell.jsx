@@ -195,7 +195,7 @@ export default function AgentDesktopShell({
    * Layout (minimalist with clean transitions, assuming dark mode support)
    * ========================= */
   return (
-    <Box height="100vh" width="100%" overflow="hidden" position="relative">
+    <Box height="100%" minHeight="100dvh" width="100%" overflow="hidden" position="relative">
       {/* Desktop sidebar */}
       {isDesktop && (
         <Box
@@ -204,7 +204,8 @@ export default function AgentDesktopShell({
           top={`${offset}px`}
           left={0}
           width={`${SIDEBAR_W}px`}
-          height={`calc(100vh - ${offset}px)`}
+          height={`calc(100% - ${offset}px)`}
+          minHeight={`calc(100dvh - ${offset}px)`}
           zIndex={5}
           style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
         >
@@ -219,7 +220,8 @@ export default function AgentDesktopShell({
         as="main"
         display="flex"
         flexDirection="column"
-        height="100vh"
+        height="100%"
+        minHeight="100dvh"
         overflow="hidden"
         paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
         style={{ background: 'var(--paste-color-background-body)' }}
@@ -281,7 +283,8 @@ export default function AgentDesktopShell({
             position="fixed"
             top={`${offset}px`}
             left={0}
-            height={`calc(100vh - ${offset}px)`}
+              height={`calc(100% - ${offset}px)`}
+              minHeight={`calc(100dvh - ${offset}px)`}
             width="min(80vw, 320px)"
             zIndex={11}
             backgroundColor="colorBackgroundBody"
@@ -297,7 +300,8 @@ export default function AgentDesktopShell({
             top={`${offset}px`}
             left={0}
             width="100vw"
-            height={`calc(100vh - ${offset}px)`}
+            height={`calc(100% - ${offset}px)`}
+            minHeight={`calc(100dvh - ${offset}px)`}
             zIndex={10}
             backgroundColor="colorBackground"
             style={{ opacity: 0.3 }}
