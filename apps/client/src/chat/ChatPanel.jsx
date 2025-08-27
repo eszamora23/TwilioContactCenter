@@ -43,6 +43,10 @@ export default function ChatPanel({
         onClearUnread?.(id);
         onSelect?.(id);     // notify parent
       }}
+      display="flex"
+      flexDirection="column"
+      height="100%"
+      minHeight="0"
     >
       <TabList aria-label="Active chats">
         {sessions.map((s) => (
@@ -87,11 +91,11 @@ export default function ChatPanel({
         ))}
       </TabList>
 
-      <TabPanels>
+      <TabPanels flex="1" minHeight="0" display="flex">
         {sessions.map((s) => (
-          <TabPanel key={s.sid} id={s.sid}>
-            {/* NEW: wrapper con altura acotada y minHeight:0 para habilitar scroll interno */}
-            <Box height="clamp(420px, 65vh, 760px)" minHeight="0" display="flex">
+          <TabPanel key={s.sid} id={s.sid} flex="1" minHeight="0" display="flex">
+            {/* wrapper con altura completa y minHeight:0 para habilitar scroll interno */}
+            <Box height="100%" minHeight="0" display="flex" flex="1">
               <ChatWidget
                 conversationIdOrUniqueName={s.sid}
                 isActive={activeTab === s.sid}
