@@ -9,11 +9,11 @@ export default function SoftphoneLayout({ children }) {
       borderRadius="borderRadius30"
       boxShadow="shadow"
       padding="space70"
-      className={styles.layout}
-      minHeight="100vh"
-      height="100vh"
-      style={{ overflowX: 'hidden' }}
-    >
+        className={styles.layout}
+        height="100%"
+        minHeight="100dvh"
+        style={{ overflowX: 'hidden' }}
+      >
       {/* prevent any sideways scroll in popouts */}
       {children}
     </Box>

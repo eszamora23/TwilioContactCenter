@@ -4,6 +4,7 @@ import { ButtonGroup } from '@twilio-paste/core/button-group';
 import { Button } from '@twilio-paste/core/button';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
+import styles from './Softphone.module.css';
 
 import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { DialpadIcon } from '@twilio-paste/icons/esm/DialpadIcon';
@@ -35,7 +36,7 @@ export default function CallControlBar({
 
   return (
     <>
-      <ButtonGroup>
+      <ButtonGroup className={styles.callControlGroup}>
         <Tooltip text={isMuted ? t('unmute') : t('mute')}>
           <Button
             variant="secondary"
