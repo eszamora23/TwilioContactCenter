@@ -1,5 +1,5 @@
 // contact-center/client/src/components/AgentDesktopShell.jsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
@@ -8,6 +8,7 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
 import { TextArea } from '@twilio-paste/core/textarea';
+import { Button } from '@twilio-paste/core/button';
 import {
   Sidebar,
   SidebarHeader,
@@ -15,9 +16,14 @@ import {
   SidebarBody,
   SidebarCollapseButton,
 } from '@twilio-paste/core/sidebar';
+import {
+  Disclosure,
+  DisclosureHeading,
+  DisclosureContent
+} from '@twilio-paste/core/disclosure';
 
-const SIDEBAR_W = 300;
-const SHELL_HEADER_H = 64;
+const SIDEBAR_W = 280;
+const SHELL_HEADER_H = 56;
 
 /* Responsive breakpoint hook */
 function useIsDesktop() {
@@ -50,15 +56,15 @@ function useIsDesktop() {
 }
 
 export default function AgentDesktopShell({
-  sections, // interface legacy (no-op)
+  sections, // opcional (para navegación)
   title = 'Agent Desktop',
   actions,
   footer,
   children,
   topOffset = 0,
   measureTopFrom,
-  mode = 'voice', // interface legacy (no-op)
-  quickActions, // interface legacy (no-op)
+  mode = 'voice',
+  quickActions,
 }) {
   const isDesktop = useIsDesktop();
 
@@ -69,7 +75,7 @@ export default function AgentDesktopShell({
     } catch {}
   }, []);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const scrollRootRef = useRef(null);
 
   // Sticky offset under external headers
@@ -95,8 +101,30 @@ export default function AgentDesktopShell({
   // Scratchpad (persistent)
   const [pad, setPad] = useLocalStorage('agent_pad', '');
 
+  // ===== Utilities =====
+  const scrollToId = useCallback((id) => {
+    if (!id) return;
+    const el = document.getElementById(id);
+    const root = scrollRootRef.current;
+    if (!el || !root) return;
+    const rect = el.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const cur = root.scrollTop;
+    const target = cur + rect.top - rootRect.top - 12; // small padding under header
+    root.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  }, []);
+
+  const qa = useMemo(() => {
+    // Prefer quickActions by mode; fallback to sections list
+    const list = (quickActions && quickActions[mode]) || (sections || []).map((s) => ({
+      label: s.label || s.id,
+      targetId: s.id,
+    }));
+    return list || [];
+  }, [quickActions, sections, mode]);
+
   /* =========================
-   * Sidebar (simplified for note-taking focus, with high contrast)
+   * Sidebar (desktop only) — más ligera, menos invasiva
    * ========================= */
   const SidebarInner = (
     <>
@@ -105,99 +133,91 @@ export default function AgentDesktopShell({
           position: 'sticky',
           top: 0,
           zIndex: 2,
-          background: 'var(--paste-color-background-body-inverse)',
-          borderBottom: '1px solid var(--paste-color-border-weak)',
-          backdropFilter: 'saturate(180%) blur(20px)',
+          background: 'var(--paste-color-background)',
+          borderBottom: '1px solid var(--paste-color-border-weak)'
         }}
       >
-        <SidebarHeaderLabel style={{ color: 'var(--paste-color-text-inverse)' }}>Notes & Tips</SidebarHeaderLabel>
+        <SidebarHeaderLabel>Quick Menu</SidebarHeaderLabel>
         {!isDesktop && (
           <SidebarCollapseButton
             i18nCollapseLabel="Hide panel"
             i18nExpandLabel="Show panel"
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => setMobileMenuOpen(false)}
           />
         )}
       </SidebarHeader>
 
-      <SidebarBody style={{ background: 'var(--paste-color-background-body-inverse)' }}>
-        {/* Scratchpad as primary focus, with modern styling, larger size, and high contrast */}
-        <Box padding={['space40', 'space60']}>
-          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
-            Scratchpad
-          </Heading>
-          <Box
-            backgroundColor="colorBackgroundStronger"
-            borderRadius="borderRadius30"
-            borderWidth="borderWidth10"
-            borderColor="colorBorderWeak"
-            borderStyle="solid"
-            padding={['space40', 'space50']}
-            boxShadow="shadow"
-            minHeight="400px" // Make the note part bigger
-            display="flex"
-            flexDirection="column"
-          >
-            <TextArea
-              value={pad}
-              onChange={(e) => setPad(e.target.value)}
-              placeholder="Jot down quick notes, ideas, or reminders here... Everything is saved locally."
-              style={{
-                background: 'transparent',
-                color: 'var(--paste-color-text-inverse)',
-                resize: 'vertical',
-                border: 'none',
-                flexGrow: 1,
-                fontSize: 'fontSize30',
-                lineHeight: 'lineHeight30',
-              }}
-            />
-          </Box>
-        </Box>
+      <SidebarBody>
+        <Box padding={['space40','space60']}>
+          <Stack orientation="vertical" spacing="space40">
+            {/* Quick actions */}
+            <Box>
+              <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
+              <Stack orientation="vertical" spacing="space30">
+                {qa.map((q) => (
+                  <Button
+                    key={q.targetId || q.label}
+                    variant={q.variant || 'secondary'}
+                    onClick={() => {
+                      scrollToId(q.targetId);
+                      if (!isDesktop) setMobileMenuOpen(false);
+                    }}
+                    style={{ width: '100%' }}
+                  >
+                    {q.label}
+                  </Button>
+                ))}
+              </Stack>
+            </Box>
 
-        {/* Condensed key insights, with high contrast */}
-        <Box padding={['space40', 'space60']} paddingTop="space0">
-          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
-            Key Tips
-          </Heading>
-          <Box
-            backgroundColor="colorBackgroundStronger"
-            borderRadius="borderRadius30"
-            borderWidth="borderWidth10"
-            borderColor="colorBorderWeak"
-            borderStyle="solid"
-            padding={['space40', 'space50']}
-            boxShadow="shadow"
-          >
-            <ul style={{ margin: 0, paddingLeft: '1.25rem', listStyleType: 'disc', fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--paste-color-text-inverse)' }}>
-              <li><strong>Modes:</strong> Switch via top tabs: VOICE, CHAT, SUPERVISOR.</li>
-              <li><strong>Voice:</strong> Softphone in card; separate window option. Closing disables auto-reopen.</li>
-              <li><strong>Voice Tasks:</strong> Under Customer 360 in VOICE.</li>
-              <li><strong>Supervisor:</strong> Shows Reservations & Presence only.</li>
-              <li><strong>Activity:</strong> Status selector in header is authoritative.</li>
-              <li><strong>Chats:</strong> Open in tabs; pop out with ↗.</li>
-              <li><strong>Notes:</strong> Saved locally only.</li>
-            </ul>
-          </Box>
+            {/* Actions passed from parent (status, toggles, etc.) */}
+            {actions ? (
+              <>
+                <Separator orientation="horizontal" />
+                <Box>
+                  <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
+                  <Box>{actions}</Box>
+                </Box>
+              </>
+            ) : null}
+
+            {/* Scratchpad light */}
+            <Separator orientation="horizontal" />
+            <Disclosure>
+              <DisclosureHeading as="h5">Notes</DisclosureHeading>
+              <DisclosureContent>
+                <Box
+                  backgroundColor="colorBackground"
+                  borderRadius="borderRadius30"
+                  borderWidth="borderWidth10"
+                  borderColor="colorBorderWeaker"
+                  borderStyle="solid"
+                  padding="space40"
+                >
+                  <TextArea
+                    value={pad}
+                    onChange={(e) => setPad(e.target.value)}
+                    placeholder="Quick notes... (saved locally)"
+                    style={{ resize: 'vertical' }}
+                  />
+                </Box>
+              </DisclosureContent>
+            </Disclosure>
+
+            {footer ? (
+              <>
+                <Separator orientation="horizontal" />
+                <Box>{footer}</Box>
+              </>
+            ) : null}
+          </Stack>
         </Box>
       </SidebarBody>
-
-      {footer ? (
-        <>
-          <Separator orientation="horizontal" verticalSpacing="space40" />
-          <Box
-            padding={['space40', 'space60']}
-            style={{ background: 'var(--paste-color-background-body-inverse)', color: 'var(--paste-color-text-inverse)' }}
-          >
-            {footer}
-          </Box>
-        </>
-      ) : null}
     </>
   );
 
   /* =========================
-   * Layout (minimalist with clean transitions, assuming dark mode support)
+   * Layout
    * ========================= */
   return (
     <Box height="100dvh" width="100%" overflow="hidden" position="relative">
@@ -241,7 +261,6 @@ export default function AgentDesktopShell({
             position: 'sticky',
             top: `${offset}px`,
             zIndex: 6,
-            backdropFilter: 'saturate(180%) blur(20px)',
             height: `${SHELL_HEADER_H}px`,
             display: 'flex',
             alignItems: 'center',
@@ -257,7 +276,15 @@ export default function AgentDesktopShell({
             <Heading as="h3" variant="heading30" margin="space0">
               {title}
             </Heading>
-            {actions || null}
+
+            {/* Desktop shows actions inline; Mobile shows a compact Menu button */}
+            {isDesktop ? (
+              actions || null
+            ) : (
+              <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(true)}>
+                Menu
+              </Button>
+            )}
           </Stack>
         </Box>
 
@@ -270,40 +297,16 @@ export default function AgentDesktopShell({
           overflow="auto"
           backgroundColor="colorBackgroundBody"
         >
-          <Box
-            as="section"
-            padding={['space60', 'space70']}
-            style={{ margin: '0 auto', maxWidth: 1280 }}
-          >
+          <Box as="section" padding={['space60', 'space70']} style={{ margin: '0 auto', maxWidth: 1280 }}>
             {children}
           </Box>
         </Box>
       </Box>
 
-      {/* Mobile drawer */}
-      {!isDesktop && drawerOpen && (
+      {/* Mobile bottom menu (non-invasive) */}
+      {!isDesktop && mobileMenuOpen && (
         <>
-          <Box
-            id="shell-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Notes & Tips"
-            position="fixed"
-            top={`${offset}px`}
-            left={0}
-            height={`calc(100% - ${offset}px)`}
-            minHeight={`calc(100dvh - ${offset}px)`}
-            width="100%"
-            maxWidth="320px"
-            zIndex={11}
-            backgroundColor="colorBackgroundBody"
-            style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
-          >
-            <Sidebar variant="default" width="100%" maxHeight="100%" overflowY="auto" collapsed={false}>
-              {SidebarInner}
-            </Sidebar>
-          </Box>
-
+          {/* Backdrop */}
           <Box
             position="fixed"
             top={`${offset}px`}
@@ -312,11 +315,97 @@ export default function AgentDesktopShell({
             height={`calc(100% - ${offset}px)`}
             minHeight={`calc(100dvh - ${offset}px)`}
             zIndex={10}
-            backgroundColor="colorBackground"
-            style={{ opacity: 0.3 }}
-            onClick={() => setDrawerOpen(false)}
+            backgroundColor="colorBackgroundBodyInverse"
+            style={{ opacity: 0.35 }}
+            onClick={() => setMobileMenuOpen(false)}
             aria-hidden="true"
           />
+
+          {/* Bottom sheet */}
+          <Box
+            role="dialog"
+            aria-modal="true"
+            aria-label="Quick Menu"
+            position="fixed"
+            left={0}
+            right={0}
+            bottom={0}
+            zIndex={11}
+            backgroundColor="colorBackground"
+            style={{
+              borderTopLeftRadius: 16,
+              borderTopRightRadius: 16,
+              boxShadow: '0 -12px 24px rgba(0,0,0,0.2)'
+            }}
+          >
+            <Box paddingX="space60" paddingTop="space60" paddingBottom="space80">
+              <Stack orientation="vertical" spacing="space60" alignment="stretch">
+                <Stack orientation="horizontal" alignment="center" distribution="spaceBetween">
+                  <Heading as="h4" variant="heading40" margin="space0">Menu</Heading>
+                  <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(false)}>Close</Button>
+                </Stack>
+
+                {/* Quick nav */}
+                {qa.length ? (
+                  <Box>
+                    <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
+                    <Stack orientation="vertical" spacing="space30">
+                      {qa.map((q) => (
+                        <Button
+                          key={q.targetId || q.label}
+                          variant={q.variant || 'secondary'}
+                          onClick={() => {
+                            scrollToId(q.targetId);
+                            setMobileMenuOpen(false);
+                          }}
+                          style={{ width: '100%' }}
+                        >
+                          {q.label}
+                        </Button>
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+
+                {/* Actions */}
+                {actions ? (
+                  <Box>
+                    <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
+                    <Box>{actions}</Box>
+                  </Box>
+                ) : null}
+
+                {/* Notes (collapsible) */}
+                <Disclosure>
+                  <DisclosureHeading as="h5">Notes</DisclosureHeading>
+                  <DisclosureContent>
+                    <Box
+                      backgroundColor="colorBackground"
+                      borderRadius="borderRadius30"
+                      borderWidth="borderWidth10"
+                      borderColor="colorBorderWeaker"
+                      borderStyle="solid"
+                      padding="space40"
+                    >
+                      <TextArea
+                        value={pad}
+                        onChange={(e) => setPad(e.target.value)}
+                        placeholder="Quick notes... (saved locally)"
+                        style={{ resize: 'vertical' }}
+                      />
+                    </Box>
+                  </DisclosureContent>
+                </Disclosure>
+
+                {footer ? (
+                  <>
+                    <Separator orientation="horizontal" />
+                    <Box>{footer}</Box>
+                  </>
+                ) : null}
+              </Stack>
+            </Box>
+          </Box>
         </>
       )}
     </Box>
@@ -324,7 +413,7 @@ export default function AgentDesktopShell({
 }
 
 AgentDesktopShell.propTypes = {
-  sections: PropTypes.array.isRequired,
+  sections: PropTypes.array,
   title: PropTypes.string,
   actions: PropTypes.node,
   footer: PropTypes.node,
