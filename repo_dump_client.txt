@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Desktop</title>
     <style>
-      /* Garantiza que el layout pueda usar 100vh real sin scrolls padres */
+      /* Garantiza que el layout pueda usar 100dvh real sin scrolls padres */
       html, body, #root { height: 100%; margin: 0; }
     </style>
     <!-- TaskRouter JS SDK v1 -->
@@ -174,6 +174,10 @@ export default function ChatPanel({
         onClearUnread?.(id);
         onSelect?.(id);     // notify parent
       }}
+      display="flex"
+      flexDirection="column"
+      height="100%"
+      minHeight="0"
     >
       <TabList aria-label="Active chats">
         {sessions.map((s) => (
@@ -218,11 +222,11 @@ export default function ChatPanel({
         ))}
       </TabList>
 
-      <TabPanels>
+      <TabPanels flex="1" minHeight="0" display="flex">
         {sessions.map((s) => (
-          <TabPanel key={s.sid} id={s.sid}>
-            {/* NEW: wrapper con altura acotada y minHeight:0 para habilitar scroll interno */}
-            <Box height="clamp(420px, 65vh, 760px)" minHeight="0" display="flex">
+          <TabPanel key={s.sid} id={s.sid} flex="1" minHeight="0" display="flex">
+            {/* wrapper con altura completa y minHeight:0 para habilitar scroll interno */}
+            <Box height="100%" minHeight="0" display="flex" flex="1">
               <ChatWidget
                 conversationIdOrUniqueName={s.sid}
                 isActive={activeTab === s.sid}
@@ -837,11 +841,11 @@ function RemoteParticipant({ participant }) {
 }
 
 /* Fullscreen para popup */
-.fullscreen{
-  height:100svh; /* navegadores modernos */
-  height:100vh;  /* fallback */
-  padding: var(--paste-space-70);
-}
+  .fullscreen{
+    height:100%;   /* fallback */
+    height:100svh; /* navegadores modernos */
+    padding: var(--paste-space-70);
+  }
 
 /* Shell con card (popup y también sirve embebido si lo prefieres) */
 .card{
@@ -1121,6 +1125,7 @@ import { ButtonGroup } from '@twilio-paste/core/button-group';
 import { Button } from '@twilio-paste/core/button';
 import { Tooltip } from '@twilio-paste/core/tooltip';
 import { Menu, MenuButton, MenuItem, useMenuState } from '@twilio-paste/core/menu';
+import styles from './Softphone.module.css';
 
 import { CallIcon } from '@twilio-paste/icons/esm/CallIcon';
 import { DialpadIcon } from '@twilio-paste/icons/esm/DialpadIcon';
@@ -1152,7 +1157,7 @@ export default function CallControlBar({
 
   return (
     <>
-      <ButtonGroup>
+      <ButtonGroup className={styles.callControlGroup}>
         <Tooltip text={isMuted ? t('unmute') : t('mute')}>
           <Button
             variant="secondary"
@@ -1610,7 +1615,8 @@ function SoftphoneInner({ remoteOnly, hiddenInline }) {
       boxShadow="shadow"
       padding="space70"
       className={styles.layout}
-      minHeight={isPopup ? '100vh' : undefined}
+      height={isPopup ? '100%' : undefined}
+      minHeight={isPopup ? '100dvh' : undefined}
     >
       {error ? (
         <Box marginBottom="space50">
@@ -1787,7 +1793,7 @@ function SoftphoneInner({ remoteOnly, hiddenInline }) {
 
 .key {
   width: 100%;
-  height: 48px;
+  height: var(--paste-space-120);
 }
 
 .padGrid {
@@ -1796,10 +1802,37 @@ function SoftphoneInner({ remoteOnly, hiddenInline }) {
   gap: var(--paste-space-40);
 }
 
+.callControlGroup {
+  flex-wrap: wrap;
+}
+
 .pill {
   border-radius: 9999px;
-  padding: 2px 10px;
+  padding: var(--paste-space-10) var(--paste-space-40);
   background: var(--paste-color-backgroundStrong);
+}
+
+@media (max-width: 480px) {
+  .layout {
+    gap: var(--paste-space-40);
+  }
+
+  .controls {
+    gap: var(--paste-space-40);
+  }
+
+  .padGrid {
+    gap: var(--paste-space-20);
+    width: 100%;
+  }
+
+  .key {
+    height: var(--paste-space-100);
+  }
+
+  .pill {
+    padding: var(--paste-space-0) var(--paste-space-30);
+  }
 }
 
 ==== /src\features\softphone\components\Softphone.module.css ====
@@ -1816,11 +1849,11 @@ export default function SoftphoneLayout({ children }) {
       borderRadius="borderRadius30"
       boxShadow="shadow"
       padding="space70"
-      className={styles.layout}
-      minHeight="100vh"
-      height="100vh"
-      style={{ overflowX: 'hidden' }}
-    >
+        className={styles.layout}
+        height="100%"
+        minHeight="100dvh"
+        style={{ overflowX: 'hidden' }}
+      >
       {/* prevent any sideways scroll in popouts */}
       {children}
     </Box>
@@ -3236,16 +3269,26 @@ export class VoiceDevice {
 ==== /src\features\softphone\services\VoiceDevice.js ====
 
 ==== src\features\tasks\components\ActivityQuickSwitch.jsx ====
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useId } from 'react';
 import http from '../../../shared/services/http.js';
+import { Box } from '@twilio-paste/core/box';
 import { Stack } from '@twilio-paste/core/stack';
 import { Badge } from '@twilio-paste/core/badge';
 import { Select, Option } from '@twilio-paste/core/select';
+import { ScreenReaderOnly } from '@twilio-paste/core/screen-reader-only';
 
+/**
+ * ActivityQuickSwitch — Mobile-first, inline-friendly
+ * - Mantiene API (props: label, onChange)
+ * - Compacto en desktop (inline), apilado y full-width en mobile
+ * - Sin anchos fijos que causen overflow; usa widths responsivos
+ * - Estado visible con Badge; select accesible con label oculto
+ */
 export default function ActivityQuickSwitch({ label, onChange }) {
   const [acts, setActs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSid, setSelectedSid] = useState('');
+  const selectId = typeof useId === 'function' ? useId() : 'activity-select';
 
   useEffect(() => {
     let mounted = true;
@@ -3275,33 +3318,47 @@ export default function ActivityQuickSwitch({ label, onChange }) {
     : /available/i.test(String(label || ''));
 
   return (
-    <Stack
-      orientation="horizontal"
-      spacing="space40"
-      alignment="center"
-      style={{ flexWrap: 'wrap' }}
-    >
-      <Badge as="span" variant={isAvailable ? 'success' : 'neutral'}>
-        {currentAct?.name || label || '—'}
-      </Badge>
-
-      <Select
-        size="small"
-        disabled={loading || !acts.length}
-        value={selectedSid}
-        onChange={(e) => {
-          const sid = e.target.value;
-          setSelectedSid(sid);
-          onChange?.(sid);
-        }}
-        style={{ minWidth: 180 }}
+    <Box width="100%">
+      <Stack
+        orientation={['vertical', 'horizontal']}
+        spacing="space30"
+        alignment={[ 'stretch', 'center' ]}
+        style={{ flexWrap: 'wrap' }}
       >
-        <Option value="" disabled>Change activity…</Option>
-        {acts.map((a) => (
-          <Option key={a.sid} value={a.sid}>{a.name}</Option>
-        ))}
-      </Select>
-    </Stack>
+        {/* Estado actual (trunca si es largo) */}
+        <Box display="inline-flex" alignItems="center" columnGap="space30" maxWidth={['100%','auto']}>
+          <Badge as="span" variant={isAvailable ? 'success' : 'neutral'}>
+            <span style={{ display: 'inline-block', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {currentAct?.name || label || '—'}
+            </span>
+          </Badge>
+        </Box>
+
+        {/* Selector responsivo (full width en mobile) */}
+        <Box flexGrow={[1, 0]} width={['100%','auto']}>
+          <ScreenReaderOnly>
+            <label htmlFor={selectId}>Change activity</label>
+          </ScreenReaderOnly>
+          <Select
+            id={selectId}
+            size="small"
+            disabled={loading || !acts.length}
+            value={selectedSid}
+            onChange={(e) => {
+              const sid = e.target.value;
+              setSelectedSid(sid);
+              onChange?.(sid);
+            }}
+            style={{ width: '100%' }}
+          >
+            <Option value="" disabled>{loading ? 'Loading…' : 'Change activity…'}</Option>
+            {acts.map((a) => (
+              <Option key={a.sid} value={a.sid}>{a.name}</Option>
+            ))}
+          </Select>
+        </Box>
+      </Stack>
+    </Box>
   );
 }
 
@@ -3518,7 +3575,6 @@ export default function AgentApp() {
     if (!isSoftphonePopout) return;
     beginValidationProbe();
     return () => clearValidationTimers();
-    // only depend on the boolean to avoid retriggers
   }, [isSoftphonePopout]);
 
   // Safety poll if we *do* have a handle
@@ -3570,7 +3626,6 @@ export default function AgentApp() {
 
   /* Confirm flow */
   const proceedOpenPopup = useCallback(() => {
-    closingByConfirmRef.current = true;
     setConfirmOpen(false);
 
     // Open or focus the popup
@@ -3579,9 +3634,6 @@ export default function AgentApp() {
     // Mark ON and validate; revert if no ACK arrives
     setSoftphonePref(true);
     beginValidationProbe();
-
-    // allow onDismiss to behave normally after this tick
-    setTimeout(() => { closingByConfirmRef.current = false; }, 0);
   }, [openSoftphoneWindow, setSoftphonePref, beginValidationProbe]);
 
   const cancelOpenPopup = useCallback(() => {
@@ -3590,19 +3642,13 @@ export default function AgentApp() {
   }, [setSoftphonePref]);
 
   const handleModalDismiss = useCallback(() => {
-    if (closingByConfirmRef.current) {
-      closingByConfirmRef.current = false;
-      return;
-    }
-    cancelOpenPopup();
-  }, [cancelOpenPopup]);
+    setConfirmOpen(false);
+  }, []);
 
   const handleSoftphoneToggle = useCallback((checked) => {
     if (checked) {
-      // Ask for confirmation; ON will be set after confirm.
       setConfirmOpen(true);
     } else {
-      setConfirmOpen(false);
       clearValidationTimers();
       closeSoftphoneWindow();
       setSoftphonePref(false);
@@ -3796,8 +3842,8 @@ export default function AgentApp() {
   /* Secciones por modo */
   const voiceSections = useMemo(() => ([
     { id: 'softphone', label: 'Softphone' },
-    { id: 'customer360', label: 'Customer 360' },
     { id: 'voiceTasks', label: 'Voice Tasks' },
+    { id: 'customer360', label: 'Customer 360' },
   ]), []);
 
   const supervisorSections = useMemo(() => ([
@@ -3814,8 +3860,8 @@ export default function AgentApp() {
   const shellQuickActions = useMemo(() => ({
     voice: [
       { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
-      { label: 'Customer 360', targetId: 'customer360' },
       { label: 'Voice Tasks', targetId: 'voiceTasks' },
+      { label: 'Customer 360', targetId: 'customer360' },
     ],
     chat: [
       { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
@@ -3828,9 +3874,33 @@ export default function AgentApp() {
     ],
   }), []);
 
+  // ===== Responsive action bar (stacked on mobile) =====
+  const ActionsBar = (
+    <Stack
+      orientation={['vertical', 'horizontal']}
+      spacing="space30"
+      alignment="center"
+      style={{ flexWrap: 'wrap', width: '100%', maxWidth: 960 }}
+    >
+      <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+      <Switch
+        checked={isSoftphonePopout}
+        onChange={(e) => handleSoftphoneToggle(e.target.checked)}
+        aria-label="Softphone pop-out"
+        disabled={isSoftphoneValidating}
+      >
+        Softphone window {isSoftphoneValidating && '(checking...)'}
+      </Switch>
+      {hasCall && (
+        <Button variant="primary" onClick={() => setControlsOpen(true)} style={{ width: ['100%', 'auto'] }}>Call controls</Button>
+      )}
+      <Button variant="destructive" onClick={logout} style={{ width: ['100%', 'auto'] }}>Logout</Button>
+    </Stack>
+  );
+
   /* Render */
   return (
-    <Box minHeight="100vh" width="100%">
+    <Box height="100%" minHeight="100dvh" width="100%" overflowX="hidden">
       <Toaster {...toaster} />
 
       {/* Modal de controles de llamada */}
@@ -3851,8 +3921,8 @@ export default function AgentApp() {
         </ModalBody>
         <ModalFooter>
           <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-            <Button variant="secondary" onClick={cancelOpenPopup}>Cancel</Button>
-            <Button variant="primary" onClick={proceedOpenPopup}>Open window</Button>
+            <Button variant="secondary" onClick={cancelOpenPopup} style={{ width: ['100%', 'auto'] }}>Cancel</Button>
+            <Button variant="primary" onClick={proceedOpenPopup} style={{ width: ['100%', 'auto'] }}>Open window</Button>
           </Stack>
         </ModalFooter>
       </Modal>
@@ -3862,23 +3932,10 @@ export default function AgentApp() {
         title="Agent Desktop"
         mode={mode}
         quickActions={shellQuickActions}
-        actions={
-          <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }} alignment="center">
-            <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
-            <Switch
-              checked={isSoftphonePopout}
-              onChange={(e) => handleSoftphoneToggle(e.target.checked)}
-              aria-label="Softphone pop-out"
-              disabled={isSoftphoneValidating}
-            >
-              Softphone window {isSoftphoneValidating && '(checking...)'}
-            </Switch>
-            {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
-            <Button variant="destructive" onClick={logout}>Logout</Button>
-          </Stack>
-        }
+        actions={ActionsBar}
       >
-        <Box marginBottom="space70">
+        {/* Sticky Tabs for mobile */}
+        <Box position="sticky" top={0} zIndex="zIndex80" backgroundColor="colorBackground" paddingY="space40">
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
             <TabList aria-label="Workspace mode">
               <Tab id="voice">VOICE</Tab>
@@ -3894,107 +3951,125 @@ export default function AgentApp() {
             <TabPanels>
               {/* VOICE */}
               <TabPanel id="voice">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Active Call Handling
-                    </Heading>
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    {/* Sección 1: Softphone (inline si no popup) */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">
+                        Active Call Handling
+                      </Heading>
+                      <CardSection id="softphone" title="Softphone">
+                        {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
+                        <Box display={isSoftphonePopout ? 'none' : 'block'}>
+                          <Softphone popupOpen={isSoftphonePopout} />
+                        </Box>
+                      </CardSection>
+                    </Box>
 
-                    <CardSection id="softphone" title="Softphone">
-                      {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
-                      <Box display={isSoftphonePopout ? 'none' : 'block'}>
-                        <Softphone popupOpen={isSoftphonePopout} />
-                      </Box>
-                    </CardSection>
+                    <Separator orientation="horizontal" />
 
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    {/* Sección 2: Voice Tasks (antes que 360 para flujo más natural en mobile) */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Voice Tasks</Heading>
+                      <CardSection id="voiceTasks" title="Voice Tasks">
+                        <TasksPanel channel="voice" setAvailable={setAvailable} />
+                      </CardSection>
+                    </Box>
 
-                    <CardSection id="customer360" title="Customer 360">
-                      <Customer360 />
-                    </CardSection>
+                    <Separator orientation="horizontal" />
 
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
-
-                    <CardSection id="voiceTasks" title="Voice Tasks">
-                      <TasksPanel channel="voice" setAvailable={setAvailable} />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    {/* Sección 3: Customer 360 */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Customer 360</Heading>
+                      <CardSection id="customer360" title="Customer 360">
+                        <Customer360 />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* CHAT */}
               <TabPanel id="chat">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Conversations</Heading>
-                    <CardSection id="mainChat" title="Main Chat">
-                      <Box id="main-chat-panel" minHeight="60vh">
-                        {chatSessions.length ? (
-                          <ChatPanel
-                            key={chatPanelKey}
-                            sessions={chatSessions}
-                            onClose={(sid) =>
-                              setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
-                            }
-                            onIncrementUnread={(sid) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) =>
-                                  s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Active Conversations</Heading>
+                      <CardSection id="mainChat" title="Main Chat">
+                        <Box id="main-chat-panel" minHeight="60vh">
+                          {chatSessions.length ? (
+                            <ChatPanel
+                              key={chatPanelKey}
+                              sessions={chatSessions}
+                              onClose={(sid) =>
+                                setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
+                              }
+                              onIncrementUnread={(sid) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) =>
+                                    s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
+                                  )
                                 )
-                              )
-                            }
-                            onClearUnread={(sid) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
-                              )
-                            }
-                            onLabel={(sid, label) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) => (s.sid === sid ? { ...s, label } : s))
-                              )
-                            }
-                            onPopout={(sid) => {
-                              const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
-                              window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
-                            }}
-                          />
-                        ) : (
-                          <Box color="colorTextWeak">No active chats</Box>
-                        )}
-                      </Box>
-                    </CardSection>
-                  </Box>
+                              }
+                              onClearUnread={(sid) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
+                                )
+                              }
+                              onLabel={(sid, label) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) => (s.sid === sid ? { ...s, label } : s))
+                                )
+                              }
+                              onPopout={(sid) => {
+                                const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
+                                window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
+                              }}
+                            />
+                          ) : (
+                            <Box color="colorTextWeak" textAlign="center">No active chats</Box>
+                          )}
+                        </Box>
+                      </CardSection>
+                    </Box>
 
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Customer Info</Heading>
-                    <CardSection id="chatTasks" title="Chat Tasks">
-                      <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
-                    </CardSection>
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
-                    <CardSection id="customer360-chat" title="Customer 360">
-                      <Customer360 />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    <Separator orientation="horizontal" />
+
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Tasks & Customer Info</Heading>
+                      <CardSection id="chatTasks" title="Chat Tasks">
+                        <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
+                      </CardSection>
+                      <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                      <CardSection id="customer360-chat" title="Customer 360">
+                        <Customer360 />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* SUPERVISOR */}
               <TabPanel id="supervisor">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Incoming</Heading>
-                    <CardSection id="reservations" title="Reservations">
-                      <Reservations items={reservations} standalone />
-                    </CardSection>
-                  </Box>
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Tasks & Incoming</Heading>
+                      <CardSection id="reservations" title="Reservations">
+                        <Reservations items={reservations} standalone />
+                      </CardSection>
+                    </Box>
 
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Team Presence</Heading>
-                    <CardSection id="presence" title="Presence">
-                      <Presence />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    <Separator orientation="horizontal" />
+
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Team Presence</Heading>
+                      <CardSection id="presence" title="Presence">
+                        <Presence />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
             </TabPanels>
           </Tabs>
@@ -4008,7 +4083,7 @@ export default function AgentApp() {
 
 ==== src\features\tasks\components\AgentDesktopShell.jsx ====
 // contact-center/client/src/components/AgentDesktopShell.jsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
@@ -4017,6 +4092,7 @@ import { Stack } from '@twilio-paste/core/stack';
 import { Heading } from '@twilio-paste/core/heading';
 import { Separator } from '@twilio-paste/core/separator';
 import { TextArea } from '@twilio-paste/core/textarea';
+import { Button } from '@twilio-paste/core/button';
 import {
   Sidebar,
   SidebarHeader,
@@ -4024,9 +4100,14 @@ import {
   SidebarBody,
   SidebarCollapseButton,
 } from '@twilio-paste/core/sidebar';
+import {
+  Disclosure,
+  DisclosureHeading,
+  DisclosureContent
+} from '@twilio-paste/core/disclosure';
 
-const SIDEBAR_W = 300;
-const SHELL_HEADER_H = 64;
+const SIDEBAR_W = 280;
+const SHELL_HEADER_H = 56;
 
 /* Responsive breakpoint hook */
 function useIsDesktop() {
@@ -4059,15 +4140,15 @@ function useIsDesktop() {
 }
 
 export default function AgentDesktopShell({
-  sections, // interface legacy (no-op)
+  sections, // opcional (para navegación)
   title = 'Agent Desktop',
   actions,
   footer,
   children,
   topOffset = 0,
   measureTopFrom,
-  mode = 'voice', // interface legacy (no-op)
-  quickActions, // interface legacy (no-op)
+  mode = 'voice',
+  quickActions,
 }) {
   const isDesktop = useIsDesktop();
 
@@ -4078,7 +4159,7 @@ export default function AgentDesktopShell({
     } catch {}
   }, []);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const scrollRootRef = useRef(null);
 
   // Sticky offset under external headers
@@ -4104,8 +4185,30 @@ export default function AgentDesktopShell({
   // Scratchpad (persistent)
   const [pad, setPad] = useLocalStorage('agent_pad', '');
 
+  // ===== Utilities =====
+  const scrollToId = useCallback((id) => {
+    if (!id) return;
+    const el = document.getElementById(id);
+    const root = scrollRootRef.current;
+    if (!el || !root) return;
+    const rect = el.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const cur = root.scrollTop;
+    const target = cur + rect.top - rootRect.top - 12; // small padding under header
+    root.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  }, []);
+
+  const qa = useMemo(() => {
+    // Prefer quickActions by mode; fallback to sections list
+    const list = (quickActions && quickActions[mode]) || (sections || []).map((s) => ({
+      label: s.label || s.id,
+      targetId: s.id,
+    }));
+    return list || [];
+  }, [quickActions, sections, mode]);
+
   /* =========================
-   * Sidebar (simplified for note-taking focus, with high contrast)
+   * Sidebar (desktop only) — más ligera, menos invasiva
    * ========================= */
   const SidebarInner = (
     <>
@@ -4114,97 +4217,94 @@ export default function AgentDesktopShell({
           position: 'sticky',
           top: 0,
           zIndex: 2,
-          background: 'var(--paste-color-background-body-inverse)',
-          borderBottom: '1px solid var(--paste-color-border-weak)',
-          backdropFilter: 'saturate(180%) blur(20px)',
+          background: 'var(--paste-color-background)',
+          borderBottom: '1px solid var(--paste-color-border-weak)'
         }}
       >
-        <SidebarHeaderLabel style={{ color: 'var(--paste-color-text-inverse)' }}>Notes & Tips</SidebarHeaderLabel>
+        <SidebarHeaderLabel>Quick Menu</SidebarHeaderLabel>
         {!isDesktop && (
           <SidebarCollapseButton
             i18nCollapseLabel="Hide panel"
             i18nExpandLabel="Show panel"
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => setMobileMenuOpen(false)}
           />
         )}
       </SidebarHeader>
 
-      <SidebarBody style={{ background: 'var(--paste-color-background-body-inverse)' }}>
-        {/* Scratchpad as primary focus, with modern styling, larger size, and high contrast */}
-        <Box padding="space60">
-          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
-            Scratchpad
-          </Heading>
-          <Box
-            backgroundColor="colorBackgroundStronger"
-            borderRadius="borderRadius30"
-            borderWidth="borderWidth10"
-            borderColor="colorBorderWeak"
-            borderStyle="solid"
-            padding="space50"
-            boxShadow="shadow"
-            minHeight="400px" // Make the note part bigger
-            display="flex"
-            flexDirection="column"
-          >
-            <TextArea
-              value={pad}
-              onChange={(e) => setPad(e.target.value)}
-              placeholder="Jot down quick notes, ideas, or reminders here... Everything is saved locally."
-              style={{
-                background: 'transparent',
-                color: 'var(--paste-color-text-inverse)',
-                resize: 'vertical',
-                border: 'none',
-                flexGrow: 1,
-                fontSize: 'fontSize30',
-                lineHeight: 'lineHeight30',
-              }}
-            />
-          </Box>
-        </Box>
+      <SidebarBody>
+        <Box padding={['space40','space60']}>
+          <Stack orientation="vertical" spacing="space40">
+            {/* Quick actions */}
+            <Box>
+              <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
+              <Stack orientation="vertical" spacing="space30">
+                {qa.map((q) => (
+                  <Button
+                    key={q.targetId || q.label}
+                    variant={q.variant || 'secondary'}
+                    onClick={() => {
+                      scrollToId(q.targetId);
+                      if (!isDesktop) setMobileMenuOpen(false);
+                    }}
+                    style={{ width: '100%' }}
+                  >
+                    {q.label}
+                  </Button>
+                ))}
+              </Stack>
+            </Box>
 
-        {/* Condensed key insights, with high contrast */}
-        <Box padding="space60" paddingTop="space0">
-          <Heading as="h5" variant="heading50" marginBottom="space40" style={{ color: 'var(--paste-color-text-inverse)' }}>
-            Key Tips
-          </Heading>
-          <Box
-            backgroundColor="colorBackgroundStronger"
-            borderRadius="borderRadius30"
-            borderWidth="borderWidth10"
-            borderColor="colorBorderWeak"
-            borderStyle="solid"
-            padding="space50"
-            boxShadow="shadow"
-          >
-            <ul style={{ margin: 0, paddingLeft: '1.25rem', listStyleType: 'disc', fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--paste-color-text-inverse)' }}>
-              <li><strong>Modes:</strong> Switch via top tabs: VOICE, CHAT, SUPERVISOR.</li>
-              <li><strong>Voice:</strong> Softphone in card; separate window option. Closing disables auto-reopen.</li>
-              <li><strong>Voice Tasks:</strong> Under Customer 360 in VOICE.</li>
-              <li><strong>Supervisor:</strong> Shows Reservations & Presence only.</li>
-              <li><strong>Activity:</strong> Status selector in header is authoritative.</li>
-              <li><strong>Chats:</strong> Open in tabs; pop out with ↗.</li>
-              <li><strong>Notes:</strong> Saved locally only.</li>
-            </ul>
-          </Box>
+            {/* Actions passed from parent (status, toggles, etc.) */}
+            {actions ? (
+              <>
+                <Separator orientation="horizontal" />
+                <Box>
+                  <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
+                  <Box>{actions}</Box>
+                </Box>
+              </>
+            ) : null}
+
+            {/* Scratchpad light */}
+            <Separator orientation="horizontal" />
+            <Disclosure>
+              <DisclosureHeading as="h5">Notes</DisclosureHeading>
+              <DisclosureContent>
+                <Box
+                  backgroundColor="colorBackground"
+                  borderRadius="borderRadius30"
+                  borderWidth="borderWidth10"
+                  borderColor="colorBorderWeaker"
+                  borderStyle="solid"
+                  padding="space40"
+                >
+                  <TextArea
+                    value={pad}
+                    onChange={(e) => setPad(e.target.value)}
+                    placeholder="Quick notes... (saved locally)"
+                    style={{ resize: 'vertical' }}
+                  />
+                </Box>
+              </DisclosureContent>
+            </Disclosure>
+
+            {footer ? (
+              <>
+                <Separator orientation="horizontal" />
+                <Box>{footer}</Box>
+              </>
+            ) : null}
+          </Stack>
         </Box>
       </SidebarBody>
-
-      {footer ? (
-        <>
-          <Separator orientation="horizontal" verticalSpacing="space40" />
-          <Box padding="space60" style={{ background: 'var(--paste-color-background-body-inverse)', color: 'var(--paste-color-text-inverse)' }}>{footer}</Box>
-        </>
-      ) : null}
     </>
   );
 
   /* =========================
-   * Layout (minimalist with clean transitions, assuming dark mode support)
+   * Layout
    * ========================= */
   return (
-    <Box height="100vh" width="100%" overflow="hidden" position="relative">
+    <Box height="100dvh" width="100%" overflow="hidden" position="relative">
       {/* Desktop sidebar */}
       {isDesktop && (
         <Box
@@ -4213,7 +4313,8 @@ export default function AgentDesktopShell({
           top={`${offset}px`}
           left={0}
           width={`${SIDEBAR_W}px`}
-          height={`calc(100vh - ${offset}px)`}
+          height={`calc(100% - ${offset}px)`}
+          minHeight={`calc(100dvh - ${offset}px)`}
           zIndex={5}
           style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
         >
@@ -4228,7 +4329,7 @@ export default function AgentDesktopShell({
         as="main"
         display="flex"
         flexDirection="column"
-        height="100vh"
+        height="100dvh"
         overflow="hidden"
         paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
         style={{ background: 'var(--paste-color-background-body)' }}
@@ -4236,15 +4337,14 @@ export default function AgentDesktopShell({
         {/* Sticky header */}
         <Box
           as="header"
-          paddingX="space70"
-          paddingY="space50"
+          paddingX={['space40', 'space70']}
+          paddingY={['space40', 'space50']}
           backgroundColor="colorBackgroundBody"
           style={{
             borderBottom: '1px solid var(--paste-color-border-weak)',
             position: 'sticky',
             top: `${offset}px`,
             zIndex: 6,
-            backdropFilter: 'saturate(180%) blur(20px)',
             height: `${SHELL_HEADER_H}px`,
             display: 'flex',
             alignItems: 'center',
@@ -4260,7 +4360,15 @@ export default function AgentDesktopShell({
             <Heading as="h3" variant="heading30" margin="space0">
               {title}
             </Heading>
-            {actions || null}
+
+            {/* Desktop shows actions inline; Mobile shows a compact Menu button */}
+            {isDesktop ? (
+              actions || null
+            ) : (
+              <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(true)}>
+                Menu
+              </Button>
+            )}
           </Stack>
         </Box>
 
@@ -4273,46 +4381,115 @@ export default function AgentDesktopShell({
           overflow="auto"
           backgroundColor="colorBackgroundBody"
         >
-          <Box as="section" padding="space70" style={{ margin: '0 auto', maxWidth: 1280 }}>
+          <Box as="section" padding={['space60', 'space70']} style={{ margin: '0 auto', maxWidth: 1280 }}>
             {children}
           </Box>
         </Box>
       </Box>
 
-      {/* Mobile drawer */}
-      {!isDesktop && drawerOpen && (
+      {/* Mobile bottom menu (non-invasive) */}
+      {!isDesktop && mobileMenuOpen && (
         <>
-          <Box
-            id="shell-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Notes & Tips"
-            position="fixed"
-            top={`${offset}px`}
-            left={0}
-            height={`calc(100vh - ${offset}px)`}
-            width="min(80vw, 320px)"
-            zIndex={11}
-            backgroundColor="colorBackgroundBody"
-            style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
-          >
-            <Sidebar variant="default" width="100%" maxHeight="100%" overflowY="auto" collapsed={false}>
-              {SidebarInner}
-            </Sidebar>
-          </Box>
-
+          {/* Backdrop */}
           <Box
             position="fixed"
             top={`${offset}px`}
             left={0}
             width="100vw"
-            height={`calc(100vh - ${offset}px)`}
+            height={`calc(100% - ${offset}px)`}
+            minHeight={`calc(100dvh - ${offset}px)`}
             zIndex={10}
-            backgroundColor="colorBackground"
-            style={{ opacity: 0.3 }}
-            onClick={() => setDrawerOpen(false)}
+            backgroundColor="colorBackgroundBodyInverse"
+            style={{ opacity: 0.35 }}
+            onClick={() => setMobileMenuOpen(false)}
             aria-hidden="true"
           />
+
+          {/* Bottom sheet */}
+          <Box
+            role="dialog"
+            aria-modal="true"
+            aria-label="Quick Menu"
+            position="fixed"
+            left={0}
+            right={0}
+            bottom={0}
+            zIndex={11}
+            backgroundColor="colorBackground"
+            style={{
+              borderTopLeftRadius: 16,
+              borderTopRightRadius: 16,
+              boxShadow: '0 -12px 24px rgba(0,0,0,0.2)'
+            }}
+          >
+            <Box paddingX="space60" paddingTop="space60" paddingBottom="space80">
+              <Stack orientation="vertical" spacing="space60" alignment="stretch">
+                <Stack orientation="horizontal" alignment="center" distribution="spaceBetween">
+                  <Heading as="h4" variant="heading40" margin="space0">Menu</Heading>
+                  <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(false)}>Close</Button>
+                </Stack>
+
+                {/* Quick nav */}
+                {qa.length ? (
+                  <Box>
+                    <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
+                    <Stack orientation="vertical" spacing="space30">
+                      {qa.map((q) => (
+                        <Button
+                          key={q.targetId || q.label}
+                          variant={q.variant || 'secondary'}
+                          onClick={() => {
+                            scrollToId(q.targetId);
+                            setMobileMenuOpen(false);
+                          }}
+                          style={{ width: '100%' }}
+                        >
+                          {q.label}
+                        </Button>
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+
+                {/* Actions */}
+                {actions ? (
+                  <Box>
+                    <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
+                    <Box>{actions}</Box>
+                  </Box>
+                ) : null}
+
+                {/* Notes (collapsible) */}
+                <Disclosure>
+                  <DisclosureHeading as="h5">Notes</DisclosureHeading>
+                  <DisclosureContent>
+                    <Box
+                      backgroundColor="colorBackground"
+                      borderRadius="borderRadius30"
+                      borderWidth="borderWidth10"
+                      borderColor="colorBorderWeaker"
+                      borderStyle="solid"
+                      padding="space40"
+                    >
+                      <TextArea
+                        value={pad}
+                        onChange={(e) => setPad(e.target.value)}
+                        placeholder="Quick notes... (saved locally)"
+                        style={{ resize: 'vertical' }}
+                      />
+                    </Box>
+                  </DisclosureContent>
+                </Disclosure>
+
+                {footer ? (
+                  <>
+                    <Separator orientation="horizontal" />
+                    <Box>{footer}</Box>
+                  </>
+                ) : null}
+              </Stack>
+            </Box>
+          </Box>
         </>
       )}
     </Box>
@@ -4320,7 +4497,7 @@ export default function AgentDesktopShell({
 }
 
 AgentDesktopShell.propTypes = {
-  sections: PropTypes.array.isRequired,
+  sections: PropTypes.array,
   title: PropTypes.string,
   actions: PropTypes.node,
   footer: PropTypes.node,
@@ -4330,6 +4507,7 @@ AgentDesktopShell.propTypes = {
   mode: PropTypes.oneOf(['voice', 'chat', 'supervisor']),
   quickActions: PropTypes.object,
 };
+
 ==== /src\features\tasks\components\AgentDesktopShell.jsx ====
 
 ==== src\features\tasks\components\Customer360.jsx ====
@@ -5483,26 +5661,41 @@ import { Input } from '@twilio-paste/core/input';
 import { SkeletonLoader } from '@twilio-paste/core/skeleton-loader';
 import { Toaster, useToaster } from '@twilio-paste/core/toast';
 import { RadioGroup, Radio } from '@twilio-paste/core/radio-group';
+import {
+  Disclosure,
+  DisclosureHeading,
+  DisclosureContent
+} from '@twilio-paste/core/disclosure';
 
 /**
- * TasksPanel — app-like, no inner scrolls
- * Responsive polish:
- * - Static grid templates
- * - Avoid long IDs blowing layout
- * - Mobile buttons full-width where it helps
+ * TasksPanel — Mobile-first redesign (lista centrada, sin desbordes)
+ * - Mantiene la misma lógica/funciones (nada cambia en endpoints ni flujos)
+ * - Vista en **lista** para ambos canales (chat/voz) con tarjetas delgadas
+ * - **Todo centrado** y container con **maxWidth** para look "app nativa"
+ * - Botones 100% ancho en mobile, horizontales en pantallas grandes
+ * - IDs técnicos ocultos por defecto (acordeón "Detalles técnicos")
  */
 export default function TasksPanel({ onFinished, setAvailable, channel = 'voice', onOpenChat }) {
   const voiceMode = channel !== 'chat';
   const { t: translate } = useTranslation();
   const toaster = useToaster();
 
-  // Data
+  // ===== Helpers UI =====
+  const fmtSeconds = (s = 0) => {
+    const sec = Math.max(0, Number(s) || 0);
+    const m = Math.floor(sec / 60);
+    const r = sec % 60;
+    return m > 0 ? `${m}m ${r}s` : `${r}s`;
+  };
+  const mask = (v) => (v && String(v).length > 12 ? `${String(v).slice(0, 4)}…${String(v).slice(-4)}` : v || '—');
+
+  // ===== Data =====
   const { data: itemsRaw = [], isLoading: loading, refetch: load } = useQuery({
     queryKey: ['myTasks'],
     queryFn: () => Api.myTasks('wrapping,assigned,reserved'),
     staleTime: 10000,
     refetchOnWindowFocus: true,
-    refetchInterval: 10000, // o 0 si no quieres polling
+    refetchInterval: 10000,
     onError: () =>
       toaster.push({
         message: translate('tasksLoadError') || 'Failed to load tasks.',
@@ -5510,7 +5703,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
       }),
   });
 
-  // Split by channel
+  // Split por canal (voz vs chat)
   const voiceTasks = useMemo(
     () => itemsRaw.filter((t) => (t?.attributes?.channel || 'voice') !== 'chat'),
     [itemsRaw]
@@ -5522,9 +5715,9 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const items = voiceMode ? voiceTasks : chatTasks;
 
   /* =========================================================
-   * Conversation state cache (sid -> { state, closed, participantsCount })
+   * Cache de estado de Conversaciones (sid -> { state, closed, participantsCount })
    * ========================================================= */
-  const [convStates, setConvStates] = useState({}); // { [sid]: { state, closed, participantsCount } }
+  const [convStates, setConvStates] = useState({});
 
   const fetchConvState = useCallback(async (sid) => {
     try {
@@ -5570,7 +5763,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const [chatWrapDisposition, setChatWrapDisposition] = useState('Resolved');
   const [chatWrapNotes, setChatWrapNotes] = useState('');
 
-  // Si chat está abierto y se intenta completar → popup para cerrar primero
+  // Si chat está abierto y se intenta completar → pedir cerrar primero
   const [confirmCloseFirst, setConfirmCloseFirst] = useState(null); // { task, convoSid }
 
   const attemptCompleteChat = (t) => {
@@ -5583,12 +5776,10 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     const isWrapping = String(t?.assignmentStatus || '').toLowerCase() === 'wrapping';
     if (!convoSid) return;
 
-    // Si no está cerrado NI inactivo NI wrapping y aún hay participantes → pedir cerrar primero
     if (!ended && !isWrapping && !noParticipants) {
       setConfirmCloseFirst({ task: t, convoSid });
       return;
     }
-    // Condición suficiente para wrap: ended || wrapping || sin participantes
     setChatWrapTask(t);
     setChatWrapDisposition('Resolved');
     setChatWrapNotes('Chat wrap-up');
@@ -5624,7 +5815,6 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         console.warn('logInteraction (chat) failed', e?.message || e);
       }
 
-      // autoWrap permite completar incluso si el Task aún estaba en assigned
       await Api.completeTask(taskSid, { reason, disposition, autoWrap: true });
 
       setOpenChatWrap(false);
@@ -5656,7 +5846,7 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   const [externalNumber, setExternalNumber] = useState('');
 
   const filteredAgents = useMemo(
-    () => agents.filter((a) => a.friendlyName.toLowerCase().includes(search.toLowerCase())),
+    () => agents.filter((a) => String(a.friendlyName || '').toLowerCase().includes(search.toLowerCase())),
     [agents, search]
   );
 
@@ -5783,13 +5973,13 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   }
 
   /* =========================
-   * Chat actions
+   * Acciones de chat
    * ========================= */
   async function closeChat(conversationSid) {
     try {
       await http.post(`/conversations/${conversationSid}/close`, { removeParticipants: true });
       toaster.push({ message: 'Chat closed', variant: 'success', dismissAfter: 2000 });
-      await refreshConvStates(chatTasks); // refrescar estado
+      await refreshConvStates(chatTasks);
       await load();
     } catch (e) {
       console.error('close chat error', e);
@@ -5804,230 +5994,52 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
     }
   }
 
-  // ===== Grid templates (static strings) =====
-  const gridColsChat = 'repeat(auto-fit, minmax(320px, 1fr))';
-  const gridColsVoice = 'repeat(auto-fit, minmax(340px, 1fr))';
+  // ===== Métricas header (voz) =====
+  const avgSLA = items.length > 0
+    ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
+    : 0;
 
-  function statusToVariant(s) {
+  const statusToVariant = (s) => {
     const v = String(s || '').toLowerCase();
     if (v === 'wrapping') return 'warning';
     if (v === 'assigned' || v === 'reserved') return 'new';
     if (v === 'completed' || v === 'closed') return 'success';
     return 'neutral';
-  }
+  };
 
-  /* =========================
-   * Render — CHAT (cards)
-   * ========================= */
-  if (!voiceMode) {
-    return (
-      <Box
-        display="grid"
-        gridTemplateRows="auto auto 1fr"
-        gap="space50"
-        height="100%"
-        minHeight="0"
-        backgroundColor="colorBackground"
-        borderRadius="borderRadius30"
-        boxShadow="shadow"
-        padding="space70"
-      >
-        <Toaster {...toaster} />
-        <Stack
-          orientation={['vertical', 'horizontal']}
-          spacing="space50"
-          alignment="center"
-          distribution="spaceBetween"
-          style={{ flexWrap: 'wrap' }}
-        >
-          <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
-            <Heading as="h3" variant="heading30" margin="space0">Chat Tasks</Heading>
-            <Badge as="span" variant="neutral">{chatTasks.length}</Badge>
-          </Stack>
-          <Button variant="secondary" onClick={load} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
-          </Button>
-        </Stack>
+  // ===== UI: header común =====
+  const Title = voiceMode ? (translate('myTasks') || 'Mis llamadas') : (translate('chatTasks') || 'Chats activos');
+  const Subtitle = voiceMode
+    ? `${translate('tasks') || 'Tareas'}: ${items.length} · SLA: ${fmtSeconds(avgSLA)}`
+    : `${translate('tasks') || 'Tareas'}: ${items.length}`;
 
-        <Separator orientation="horizontal" />
-
-        {loading ? (
-          <SkeletonLoader />
-        ) : !chatTasks.length ? (
-          <Box color="colorTextWeak">No chat tasks</Box>
-        ) : (
-          <Box display="grid" gridTemplateColumns={gridColsChat} gap="space60">
-            {chatTasks.map((t) => {
-              const a = t.attributes || {};
-              const convoSid = a.conversationSid || a.conversation_sid || '';
-              const cs = convStates[convoSid] || {};
-              const convState = String(cs.state || '').toLowerCase();
-              const ended = cs.closed === true || convState === 'closed' || convState === 'inactive';
-              const noParticipants = typeof cs.participantsCount === 'number' && cs.participantsCount === 0;
-              const isWrapping = String(t.assignmentStatus || '').toLowerCase() === 'wrapping';
-              const showComplete = ended || isWrapping || noParticipants;
-
-              return (
-                <Card key={t.sid} padding="space70">
-                  <Stack orientation="vertical" spacing="space50">
-                    <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
-                      <Box flexGrow={1} minWidth="0" width="100%">
-                        <Heading
-                          as="h4"
-                          variant="heading40"
-                          margin="space0"
-                          style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
-                          title={t.sid}
-                        >
-                          {t.sid}
-                        </Heading>
-                      </Box>
-                      <Badge as="span" variant={ended ? 'neutral' : statusToVariant(t.assignmentStatus)}>
-                        {ended ? 'closed' : (t.assignmentStatus || 'assigned')}
-                      </Badge>
-                    </Stack>
-
-                    <Box color="colorTextWeak" fontSize="fontSize30">
-                      Conversation: <b style={{ wordBreak: 'break-all' }}>{convoSid || '—'}</b>
-                      {typeof cs.participantsCount === 'number' ? (
-                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
-                          · participants: {cs.participantsCount}
-                        </span>
-                      ) : null}
-                      {(!ended && isWrapping) ? (
-                        <span style={{ marginLeft: 8, opacity: 0.7 }}>
-                          · task: wrapping
-                        </span>
-                      ) : null}
-                    </Box>
-
-                    {/* Smart buttons */}
-                    {!showComplete ? (
-                      <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-                        <Button variant="secondary" size="small" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid}>Open chat</Button>
-                        <Button variant="destructive" size="small" onClick={() => closeChat(convoSid)} disabled={!convoSid}>Close chat</Button>
-                      </Stack>
-                    ) : (
-                      <Button variant="primary" size="small" onClick={() => attemptCompleteChat(t)}>
-                        {translate('completeTask') || 'Complete task'}
-                      </Button>
-                    )}
-                  </Stack>
-                </Card>
-              );
-            })}
-          </Box>
-        )}
-
-        {/* Modal: Wrap-up de CHAT */}
-        <Modal isOpen={openChatWrap} onDismiss={() => setOpenChatWrap(false)} ariaLabel="wrapup-chat-task" size="default">
-          <ModalHeader>
-            <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
-          </ModalHeader>
-          <ModalBody>
-            <Stack orientation="vertical" spacing="space60">
-              <Box>
-                <Label htmlFor="chat-dispo">{translate('disposition') || 'Disposition'}</Label>
-                <Select id="chat-dispo" value={chatWrapDisposition} onChange={(e) => setChatWrapDisposition(e.target.value)}>
-                  {['Resolved', 'Escalated', 'Callback scheduled', 'Voicemail left', 'No answer', 'Wrong number']
-                    .map((d) => (
-                      <Option key={`chat-${d}`} value={d}>{d}</Option>
-                    ))}
-                </Select>
-              </Box>
-              <Box>
-                <Label htmlFor="chat-notes">{translate('notesReason') || 'Notes'}</Label>
-                <Input id="chat-notes" value={chatWrapNotes} onChange={(e) => setChatWrapNotes(e.target.value)} placeholder={translate('shortNotesPlaceholder') || 'Short wrap-up notes...'} />
-              </Box>
-            </Stack>
-          </ModalBody>
-          <ModalFooter>
-            <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-              <Button variant="secondary" onClick={() => setOpenChatWrap(false)}>{translate('cancel') || 'Cancel'}</Button>
-              <Button variant="primary" onClick={doChatFinish}>{translate('complete') || 'Complete'}</Button>
-            </Stack>
-          </ModalFooter>
-        </Modal>
-
-        {/* Modal: pedir cerrar primero si el chat sigue abierto */}
-        <Modal isOpen={!!confirmCloseFirst} onDismiss={() => setConfirmCloseFirst(null)} ariaLabel="close-chat-first" size="default">
-          <ModalHeader>
-            <ModalHeading>Close chat to wrap up</ModalHeading>
-          </ModalHeader>
-          <ModalBody>
-            You need to close the conversation before completing the task.
-          </ModalBody>
-          <ModalFooter>
-            <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-              <Button variant="secondary" onClick={() => setConfirmCloseFirst(null)}>Cancel</Button>
-              <Button
-                variant="destructive"
-                onClick={async () => {
-                  const { convoSid, task } = confirmCloseFirst || {};
-                  setConfirmCloseFirst(null);
-                  if (convoSid) await closeChat(convoSid);
-                  if (task) {
-                    setChatWrapTask(task);
-                    setChatWrapDisposition('Resolved');
-                    setChatWrapNotes('Chat wrap-up');
-                    setOpenChatWrap(true);
-                  }
-                }}
-              >
-                Close chat now
-              </Button>
-            </Stack>
-          </ModalFooter>
-        </Modal>
-      </Box>
-    );
-  }
-
-  /* =========================
-   * Render — VOICE
-   * ========================= */
-  const avgSLA = items.length > 0
-    ? Math.round(items.reduce((sum, t) => sum + (t.age || 0), 0) / items.length)
-    : 0;
-
+  // ===== Render =====
   return (
     <Box
-      display="grid"
-      gridTemplateRows="auto auto 1fr"
-      gap="space50"
       height="100%"
       minHeight="0"
       backgroundColor="colorBackground"
       borderRadius="borderRadius30"
       boxShadow="shadow"
-      padding="space70"
+      padding={['space60','space70']}
+      overflowX="hidden"
+      style={{ margin: '0 auto', maxWidth: 880 }}
+      display="grid"
+      gridTemplateRows="auto auto 1fr"
+      gap="space50"
     >
       <Toaster {...toaster} />
 
-      <Stack
-        orientation={['vertical', 'horizontal']}
-        spacing="space40"
-        alignment="center"
-        distribution="spaceBetween"
-        style={{ flexWrap: 'wrap' }}
-      >
-        <Stack orientation="horizontal" spacing="space40" style={{ flexWrap: 'wrap' }}>
-          <Heading as="h3" variant="heading30" margin="space0">
-            {translate('myTasks') || 'My Tasks'}
-          </Heading>
-          <Badge as="span" variant="neutral">{items.length}</Badge>
-          <Badge as="span">Avg SLA: {avgSLA}s</Badge>
-        </Stack>
-
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap', width: '100%' }}>
-          <Box width={['100%', 'auto']}>
-            <Button aria-label={translate('refreshAria') || 'Refresh'} onClick={load} disabled={loading} variant="secondary" style={{ width: '100%' }}>
-              {loading ? translate('loading') || 'Loading…' : translate('refresh') || 'Refresh'}
-            </Button>
-          </Box>
-          <Box width={['100%', 'auto']}>
+      {/* Header centrado */}
+      <Stack orientation="vertical" spacing="space30" alignment="center">
+        <Heading as="h3" variant="heading30" margin="space0" textAlign="center">{Title}</Heading>
+        <Box color="colorTextWeak" fontSize="fontSize30" textAlign="center">{Subtitle}</Box>
+        <Stack orientation={['vertical','horizontal']} spacing="space30" alignment="center" style={{ width: '100%', maxWidth: 600 }}>
+          <Button onClick={load} disabled={loading} variant="secondary" style={{ width: '100%' }}>
+            {loading ? translate('loading') || 'Loading…' : translate('refresh') || 'Refresh'}
+          </Button>
+          {voiceMode && (
             <Button
-              aria-label={translate('completeTransferAria') || 'Complete transfer'}
               variant="destructive"
               onClick={doCompleteTransfer}
               disabled={!getCallSid()}
@@ -6035,40 +6047,57 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
             >
               {translate('completeTransfer') || 'Complete transfer'}
             </Button>
-          </Box>
+          )}
         </Stack>
       </Stack>
 
       <Separator orientation="horizontal" />
 
+      {/* LISTA (siempre en columna, centrada) */}
       {loading ? (
         <SkeletonLoader />
       ) : !items.length ? (
         <Card padding="space70">
-          <Stack orientation={['vertical', 'horizontal']} spacing="space60" alignment="center" distribution="spaceBetween">
-            <Box>
-              <Heading as="h4" variant="heading40" margin="space0">{translate('noTasks') || 'No tasks'}</Heading>
-              <Box color="colorTextWeak">{translate('noTasksHint') || 'When calls arrive they will appear here.'}</Box>
-            </Box>
-            <Box width={['100%', 'auto']}>
-              <Button variant="secondary" onClick={load} style={{ width: '100%' }}>{translate('refresh') || 'Refresh'}</Button>
-            </Box>
+          <Stack orientation="vertical" spacing="space40" alignment="center">
+            <Heading as="h4" variant="heading40" margin="space0">{translate('noTasks') || 'No tasks'}</Heading>
+            <Box color="colorTextWeak" textAlign="center">{translate('noTasksHint') || 'When items arrive they will appear here.'}</Box>
+            <Button variant="secondary" onClick={load} style={{ width: '100%', maxWidth: 420 }}>{translate('refresh') || 'Refresh'}</Button>
           </Stack>
         </Card>
       ) : (
-        <Box display="grid" gridTemplateColumns={gridColsVoice} gap="space60">
+        <Stack orientation="vertical" spacing="space60" style={{ width: '100%', maxWidth: 720, margin: '0 auto' }}>
           {items.map((t) => (
-            <VoiceTaskCard key={t.sid} t={t} onFinishPress={(task) => {
-              setWrapTask(task);
-              setWrapDisposition('Resolved');
-              setWrapNotes(`Call duration: ${Math.max(0, task.age || 0)}s`);
-              setOpenWrap(true);
-            }} onTransfer={onTransfer} />
+            voiceMode ? (
+              <VoiceTaskItem
+                key={t.sid}
+                t={t}
+                fmtSeconds={fmtSeconds}
+                onTransfer={onTransfer}
+                onFinishPress={(task) => {
+                  setWrapTask(task);
+                  setWrapDisposition('Resolved');
+                  setWrapNotes(`Call duration: ${Math.max(0, task.age || 0)}s`);
+                  setOpenWrap(true);
+                }}
+              />
+            ) : (
+              <ChatTaskItem
+                key={t.sid}
+                t={t}
+                convStates={convStates}
+                translate={translate}
+                attemptCompleteChat={attemptCompleteChat}
+                closeChat={closeChat}
+                onOpenChat={onOpenChat}
+                mask={mask}
+                statusToVariant={statusToVariant}
+              />
+            )
           ))}
-        </Box>
+        </Stack>
       )}
 
-      {/* Transfer modal */}
+      {/* Modales compartidos */}
       <Modal isOpen={openTransfer} onDismiss={() => setOpenTransfer(false)} size="default">
         <ModalHeader>
           <ModalHeading>{translate('transferCall') || 'Transfer call'}</ModalHeading>
@@ -6116,7 +6145,66 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
         </ModalFooter>
       </Modal>
 
-      {/* Wrap-up modal (voice) */}
+      <Modal isOpen={openChatWrap} onDismiss={() => setOpenChatWrap(false)} ariaLabel="wrapup-chat-task" size="default">
+        <ModalHeader>
+          <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          <Stack orientation="vertical" spacing="space60">
+            <Box>
+              <Label htmlFor="chat-dispo">{translate('disposition') || 'Disposition'}</Label>
+              <Select id="chat-dispo" value={chatWrapDisposition} onChange={(e) => setChatWrapDisposition(e.target.value)}>
+                {['Resolved', 'Escalated', 'Callback scheduled', 'Voicemail left', 'No answer', 'Wrong number']
+                  .map((d) => (
+                    <Option key={`chat-${d}`} value={d}>{d}</Option>
+                  ))}
+              </Select>
+            </Box>
+            <Box>
+              <Label htmlFor="chat-notes">{translate('notesReason') || 'Notes'}</Label>
+              <Input id="chat-notes" value={chatWrapNotes} onChange={(e) => setChatWrapNotes(e.target.value)} placeholder={translate('shortNotesPlaceholder') || 'Short wrap-up notes...'} />
+            </Box>
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => setOpenChatWrap(false)}>{translate('cancel') || 'Cancel'}</Button>
+            <Button variant="primary" onClick={doChatFinish}>{translate('complete') || 'Complete'}</Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
+
+      <Modal isOpen={!!confirmCloseFirst} onDismiss={() => setConfirmCloseFirst(null)} ariaLabel="close-chat-first" size="default">
+        <ModalHeader>
+          <ModalHeading>{translate('closeFirstTitle') || 'Close chat to wrap up'}</ModalHeading>
+        </ModalHeader>
+        <ModalBody>
+          {translate('closeFirstBody') || 'You need to close the conversation before completing the task.'}
+        </ModalBody>
+        <ModalFooter>
+          <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => setConfirmCloseFirst(null)}>{translate('cancel') || 'Cancel'}</Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                const { convoSid, task } = confirmCloseFirst || {};
+                setConfirmCloseFirst(null);
+                if (convoSid) await closeChat(convoSid);
+                if (task) {
+                  setChatWrapTask(task);
+                  setChatWrapDisposition('Resolved');
+                  setChatWrapNotes('Chat wrap-up');
+                  setOpenChatWrap(true);
+                }
+              }}
+            >
+              {translate('closeNow') || 'Close chat now'}
+            </Button>
+          </Stack>
+        </ModalFooter>
+      </Modal>
+
+      {/* Wrap-up (voz) */}
       <Modal isOpen={openWrap} onDismiss={() => setOpenWrap(false)} ariaLabel="wrapup-task" size="default">
         <ModalHeader>
           <ModalHeading>{translate('completeTask') || 'Complete task'}</ModalHeading>
@@ -6148,47 +6236,128 @@ export default function TasksPanel({ onFinished, setAvailable, channel = 'voice'
   );
 }
 
-/* ===== Voice Card ===== */
-function VoiceTaskCard({ t, onFinishPress, onTransfer }) {
-  const status = String(t.assignmentStatus || '').toLowerCase();
-  const canFinish = status === 'wrapping';
-  const customerCallSid = t.attributes?.callSid || t.attributes?.call_sid || null;
+/* ======================== */
+/*  Componentes de Lista    */
+/* ======================== */
+function ChatTaskItem({ t, convStates, translate, attemptCompleteChat, closeChat, onOpenChat, mask, statusToVariant }) {
+  const a = t.attributes || {};
+  const convoSid = a.conversationSid || a.conversation_sid || '';
+  const cs = convStates[convoSid] || {};
+  const convState = String(cs.state || '').toLowerCase();
+  const ended = cs.closed === true || convState === 'closed' || convState === 'inactive';
+  const noParticipants = typeof cs.participantsCount === 'number' && cs.participantsCount === 0;
+  const isWrapping = String(t.assignmentStatus || '').toLowerCase() === 'wrapping';
+  const showComplete = ended || isWrapping || noParticipants;
 
-  const variant =
-    status === 'wrapping'
-      ? 'warning'
-      : (status === 'assigned' || status === 'reserved')
-        ? 'new'
-        : 'neutral';
+  const customer = a.customerName || a.name || a.customer || a.from || a.phone || a.phoneNumber || 'Cliente';
+  const intent = a.intent || a.topic || a.reason || null;
 
   return (
     <Card padding="space70">
-      <Stack orientation="vertical" spacing="space50">
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" alignment="center" style={{ flexWrap: 'wrap' }}>
-          <Box flexGrow={1} minWidth="0" width="100%">
-            <Heading
-              as="h4"
-              variant="heading40"
-              margin="space0"
-              style={{ wordBreak: 'break-all', overflowWrap: 'anywhere', lineHeight: 1.25 }}
-              title={t.sid}
-            >
-              {t.sid}
-            </Heading>
-          </Box>
+      <Stack orientation="vertical" spacing="space50" alignment="center">
+        {/* Título centrado */}
+        <Stack orientation="vertical" spacing="space20" alignment="center" style={{ width: '100%' }}>
+          <Heading as="h4" variant="heading40" margin="space0" textAlign="center" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+            {customer}
+          </Heading>
+          {intent ? (
+            <Box color="colorTextWeak" fontSize="fontSize30" textAlign="center" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+              {intent}
+            </Box>
+          ) : null}
+          <Badge as="span" variant={ended ? 'neutral' : statusToVariant(t.assignmentStatus)}>
+            {ended ? 'closed' : (t.assignmentStatus || 'assigned')}
+          </Badge>
+        </Stack>
+
+        {/* Meta centrada */}
+        {typeof cs.participantsCount === 'number' ? (
+          <Box color="colorTextWeak" fontSize="fontSize30" textAlign="center">{translate('participants') || 'Participantes'}: <b>{cs.participantsCount}</b></Box>
+        ) : null}
+
+        {/* Acciones full-width en mobile */}
+        {!showComplete ? (
+          <Stack orientation={['vertical','horizontal']} spacing="space40" style={{ width: '100%', maxWidth: 520, flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => onOpenChat?.(convoSid)} disabled={!convoSid} style={{ width: '100%' }}>
+              {translate('openChat') || 'Abrir chat'}
+            </Button>
+            <Button variant="destructive" onClick={() => closeChat(convoSid)} disabled={!convoSid} style={{ width: '100%' }}>
+              {translate('closeChat') || 'Cerrar chat'}
+            </Button>
+          </Stack>
+        ) : (
+          <Button variant="primary" onClick={() => attemptCompleteChat(t)} style={{ width: '100%', maxWidth: 520 }}>
+            {translate('completeTask') || 'Completar'}
+          </Button>
+        )}
+
+        {/* Detalles técnicos colapsados */}
+        <Disclosure>
+          <DisclosureHeading as="h5">
+            {translate('technicalDetails') || 'Detalles técnicos'}
+          </DisclosureHeading>
+          <DisclosureContent>
+            <Box color="colorTextWeak" fontSize="fontSize30" style={{ wordBreak: 'break-all' }}>
+              Conversation: <b>{mask(convoSid)}</b><br />
+              Task: <b>{mask(t.sid)}</b>
+            </Box>
+          </DisclosureContent>
+        </Disclosure>
+      </Stack>
+    </Card>
+  );
+}
+
+function VoiceTaskItem({ t, onFinishPress, onTransfer, fmtSeconds }) {
+  const a = t.attributes || {};
+  const status = String(t.assignmentStatus || '').toLowerCase();
+  const canFinish = status === 'wrapping';
+  const customerCallSid = a.callSid || a.call_sid || null;
+
+  const variant =
+    status === 'wrapping' ? 'warning' : (status === 'assigned' || status === 'reserved') ? 'new' : 'neutral';
+
+  const customer = a.customerName || a.name || a.customer || a.from || a.phone || a.phoneNumber || 'Cliente';
+  const intent = a.intent || a.topic || a.reason || null;
+  const wait = t.age || 0;
+
+  return (
+    <Card padding="space70">
+      <Stack orientation="vertical" spacing="space50" alignment="center">
+        {/* Título centrado */}
+        <Stack orientation="vertical" spacing="space20" alignment="center" style={{ width: '100%' }}>
+          <Heading as="h4" variant="heading40" margin="space0" textAlign="center" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+            {customer}
+          </Heading>
+          {intent ? (
+            <Box color="colorTextWeak" fontSize="fontSize30" textAlign="center" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%' }}>
+              {intent}
+            </Box>
+          ) : null}
           <Badge as="span" variant={variant}>{t.assignmentStatus}</Badge>
         </Stack>
 
-        {customerCallSid ? (
-          <Box color="colorTextWeak" fontSize="fontSize30">
-            CallSid: <b style={{ wordBreak: 'break-all' }}>{customerCallSid}</b>
-          </Box>
-        ) : null}
+        {/* Meta centrada */}
+        <Box color="colorTextWeak" fontSize="fontSize30" textAlign="center">
+          {`Espera: `}<b>{fmtSeconds(wait)}</b>
+        </Box>
 
-        <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-          <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid}>Transfer</Button>
-          <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish}>Finish</Button>
+        {/* Acciones full-width en mobile */}
+        <Stack orientation={['vertical','horizontal']} spacing="space40" style={{ width: '100%', maxWidth: 520, flexWrap: 'wrap' }}>
+          <Button variant="secondary" onClick={() => onTransfer(t)} disabled={!customerCallSid} style={{ width: '100%' }}>{'Transferir'}</Button>
+          <Button variant="primary" onClick={() => onFinishPress(t)} disabled={!canFinish} style={{ width: '100%' }}>{'Finalizar'}</Button>
         </Stack>
+
+        {/* Detalles técnicos colapsados */}
+        <Disclosure>
+          <DisclosureHeading as="h5">{'Detalles técnicos'}</DisclosureHeading>
+          <DisclosureContent>
+            <Box color="colorTextWeak" fontSize="fontSize30" style={{ wordBreak: 'break-all' }}>
+              CallSid: <b>{customerCallSid ? (customerCallSid.length > 12 ? `${customerCallSid.slice(0,4)}…${customerCallSid.slice(-4)}` : customerCallSid) : '—'}</b><br />
+              Task: <b>{t.sid && t.sid.length > 12 ? `${t.sid.slice(0,4)}…${t.sid.slice(-4)}` : t.sid}</b>
+            </Box>
+          </DisclosureContent>
+        </Disclosure>
       </Stack>
     </Card>
   );
@@ -7139,12 +7308,12 @@ import { Box } from '@twilio-paste/core/box';
 
 export default function CardSection({ id, title, children }) {
   return (
-    <Box id={id} marginBottom="space70">
+    <Box id={id} marginBottom={["space40", "space70"]} width="100%">
       <Box
         backgroundColor="colorBackground"
         borderRadius="borderRadius30"
         boxShadow="shadow"
-        padding="space70"
+        padding={["space40", "space70"]}
       >
         <Box as="h4" margin="space0" fontSize="fontSize40" fontWeight="fontWeightSemibold">
           {title}
