@@ -51,6 +51,14 @@ const ACK_TIMEOUT_MS = 8000;   // extended to allow slow popup init
 const PING_INTERVAL_MS = 500;  // periodic pings during validation
 const FIRST_PING_DELAY_MS = 1000; // wait before first ping to let popup mount
 
+// Simple helper to trigger the top Tabs (Voice/Chat/Supervisor) from anywhere
+function clickTab(id) {
+  try {
+    const el = document.getElementById(id);
+    if (el && typeof el.click === 'function') el.click();
+  } catch {}
+}
+
 export default function AgentApp() {
   const queryClient = useQueryClient();
   const toaster = useToaster();
@@ -534,6 +542,15 @@ export default function AgentApp() {
   /* Render */
   return (
     <Box height="100%" minHeight="100dvh" width="100%" overflowX="hidden">
+      {/* Safe-area aware padding for the scroll-root on small screens so the bottom nav never covers content */}
+      <style>{`
+        @media (max-width: 767px){
+          #shell-scroll-root{
+            padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+          }
+        }
+      `}</style>
+
       <Toaster {...toaster} />
 
       {/* Modal de controles de llamada */}
@@ -637,18 +654,21 @@ export default function AgentApp() {
                               onClose={(sid) =>
                                 setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
                               }
-                              onIncrementUnread={(sid) =>
+                              onIncrementUnread={(sid) => {
                                 setChatSessions((prev) =>
                                   prev.map((s) =>
                                     s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
                                   )
-                                )
-                              }
-                              onClearUnread={(sid) =>
+                                );
+                                setChatBadge((n) => n + 1);
+                              }}
+                              onClearUnread={(sid) => {
                                 setChatSessions((prev) =>
                                   prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
-                                )
-                              }
+                                );
+                                // reduce global badge roughly; clamp at 0
+                                setChatBadge((n) => Math.max(0, n - 1));
+                              }}
                               onLabel={(sid, label) =>
                                 setChatSessions((prev) =>
                                   prev.map((s) => (s.sid === sid ? { ...s, label } : s))
@@ -708,6 +728,56 @@ export default function AgentApp() {
           </Tabs>
         </Box>
       </AgentDesktopShell>
+
+      {/* ====== MOBILE BOTTOM NAV (persistent) ====== */}
+      <Box
+        role="navigation"
+        aria-label="Primary navigation"
+        display={['block','none']}
+        position="fixed"
+        left={0}
+        right={0}
+        bottom={0}
+        zIndex="zIndex80"
+        backgroundColor="colorBackground"
+        paddingX="space60"
+        paddingTop="space40"
+        paddingBottom="space40"
+        style={{
+          borderTop: '1px solid var(--paste-color-border-weak)',
+          paddingBottom: 'calc(var(--paste-space-70) + env(safe-area-inset-bottom, 0px))'
+        }}
+      >
+        <Stack orientation="horizontal" spacing="space40" distribution="equal" alignment="stretch">
+          <Button
+            size="small"
+            variant={mode === 'voice' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('voice')}
+            aria-current={mode === 'voice' ? 'page' : undefined}
+          >
+            Voice
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'chat' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('chat')}
+            aria-current={mode === 'chat' ? 'page' : undefined}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span>Chat</span>
+              {chatBadge > 0 && <Badge as="span" variant="new">{chatBadge}</Badge>}
+            </span>
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'supervisor' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('supervisor')}
+            aria-current={mode === 'supervisor' ? 'page' : undefined}
+          >
+            Supervisor
+          </Button>
+        </Stack>
+      </Box>
     </Box>
   );
 }

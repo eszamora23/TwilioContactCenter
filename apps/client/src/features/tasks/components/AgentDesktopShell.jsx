@@ -1,4 +1,4 @@
-// contact-center/client/src/components/AgentDesktopShell.jsx
+// contact-center/client/src/features/tasks/components/AgentDesktopShell.jsx
 import React, { useEffect, useRef, useState, useCallback, useMemo, Children, isValidElement, cloneElement } from 'react';
 import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
@@ -113,6 +113,24 @@ export default function AgentDesktopShell({
 
   const [mobileNotesOpen, setMobileNotesOpen] = useState(false);
   const scrollRootRef = useRef(null);
+
+  // === NEW: persist "Status" dropdown (mobile) open/closed state ===
+  const [statusOpen, setStatusOpen] = useLocalStorage('status_dropdown_open', false);
+  const statusHeadingHostRef = useRef(null);
+
+  // Keep Disclosure UI in sync with persisted state (mobile only).
+  useEffect(() => {
+    if (isDesktop) return;
+    const host = statusHeadingHostRef.current;
+    if (!host) return;
+    // Paste renders a button inside the heading; try to find it.
+    const btn = host.querySelector('button,[role="button"]') || host;
+    if (!btn) return;
+    const expanded = btn.getAttribute('aria-expanded') === 'true';
+    if (Boolean(statusOpen) !== expanded) {
+      try { btn.click(); } catch {}
+    }
+  }, [statusOpen, isDesktop]);
 
   // Sticky offset under external headers
   const [offset, setOffset] = useState(topOffset);
@@ -237,6 +255,15 @@ export default function AgentDesktopShell({
    * ========================= */
   return (
     <Box height="100dvh" width="100%" overflow="hidden" position="relative">
+      {/* Safe-area aware padding for scroll root on mobile so bottom nav never covers content */}
+      <style>{`
+        @media (max-width: 767px){
+          #shell-scroll-root{
+            padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+          }
+        }
+      `}</style>
+
       {/* Desktop sidebar */}
       {isDesktop && (
         <Box as="aside" position="fixed" top={`${offset}px`} left={0} width={`${SIDEBAR_W}px`} height={`calc(100% - ${offset}px)`} minHeight={`calc(100dvh - ${offset}px)`} zIndex={5} style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}>
@@ -258,14 +285,18 @@ export default function AgentDesktopShell({
           </Stack>
         </Box>
 
-        {/* STATUS: desktop fixed below header; mobile collapsible dropdown */}
+        {/* STATUS: desktop fixed below header; mobile collapsible dropdown (persisted) */}
         {isDesktop ? (
           statusBarDesktop ? <Box>{statusBarDesktop}</Box> : null
         ) : (
           statusBarMobile ? (
             <Box paddingX={['space40','space70']} paddingY="space30" backgroundColor="colorBackgroundBody" style={{ borderBottom: '1px solid var(--paste-color-border-weak)' }}>
               <Disclosure>
-                <DisclosureHeading as="h5">
+                <DisclosureHeading
+                  as="h5"
+                  ref={statusHeadingHostRef}
+                  onClick={() => setStatusOpen((v) => !v)}
+                >
                   Status{statusFromActions?.props?.label ? ` — ${statusFromActions.props.label}` : ''}
                 </DisclosureHeading>
                 <DisclosureContent>
@@ -350,6 +381,53 @@ export default function AgentDesktopShell({
           </Box>
         </>
       )}
+
+      {/* ====== MOBILE BOTTOM NAV (persistent, compact, safe-area aware) ====== */}
+      <Box
+        role="navigation"
+        aria-label="Primary navigation"
+        display={['block','none']}
+        position="fixed"
+        left={0}
+        right={0}
+        bottom={0}
+        zIndex="zIndex80"
+        backgroundColor="colorBackground"
+        paddingX="space60"
+        paddingTop="space40"
+        paddingBottom="space40"
+        style={{
+          borderTop: '1px solid var(--paste-color-border-weak)',
+          paddingBottom: 'calc(var(--paste-space-70) + env(safe-area-inset-bottom, 0px))'
+        }}
+      >
+        <Stack orientation="horizontal" spacing="space40" distribution="equal" alignment="stretch">
+          <Button
+            size="small"
+            variant={mode === 'voice' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('voice')}
+            aria-current={mode === 'voice' ? 'page' : undefined}
+          >
+            Voice
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'chat' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('chat')}
+            aria-current={mode === 'chat' ? 'page' : undefined}
+          >
+            Chat
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'supervisor' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('supervisor')}
+            aria-current={mode === 'supervisor' ? 'page' : undefined}
+          >
+            Supervisor
+          </Button>
+        </Stack>
+      </Box>
     </Box>
   );
 }

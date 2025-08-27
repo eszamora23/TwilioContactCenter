@@ -3418,6 +3418,14 @@ const ACK_TIMEOUT_MS = 8000;   // extended to allow slow popup init
 const PING_INTERVAL_MS = 500;  // periodic pings during validation
 const FIRST_PING_DELAY_MS = 1000; // wait before first ping to let popup mount
 
+// Simple helper to trigger the top Tabs (Voice/Chat/Supervisor) from anywhere
+function clickTab(id) {
+  try {
+    const el = document.getElementById(id);
+    if (el && typeof el.click === 'function') el.click();
+  } catch {}
+}
+
 export default function AgentApp() {
   const queryClient = useQueryClient();
   const toaster = useToaster();
@@ -3901,6 +3909,15 @@ export default function AgentApp() {
   /* Render */
   return (
     <Box height="100%" minHeight="100dvh" width="100%" overflowX="hidden">
+      {/* Safe-area aware padding for the scroll-root on small screens so the bottom nav never covers content */}
+      <style>{`
+        @media (max-width: 767px){
+          #shell-scroll-root{
+            padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+          }
+        }
+      `}</style>
+
       <Toaster {...toaster} />
 
       {/* Modal de controles de llamada */}
@@ -4004,18 +4021,21 @@ export default function AgentApp() {
                               onClose={(sid) =>
                                 setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
                               }
-                              onIncrementUnread={(sid) =>
+                              onIncrementUnread={(sid) => {
                                 setChatSessions((prev) =>
                                   prev.map((s) =>
                                     s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
                                   )
-                                )
-                              }
-                              onClearUnread={(sid) =>
+                                );
+                                setChatBadge((n) => n + 1);
+                              }}
+                              onClearUnread={(sid) => {
                                 setChatSessions((prev) =>
                                   prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
-                                )
-                              }
+                                );
+                                // reduce global badge roughly; clamp at 0
+                                setChatBadge((n) => Math.max(0, n - 1));
+                              }}
                               onLabel={(sid, label) =>
                                 setChatSessions((prev) =>
                                   prev.map((s) => (s.sid === sid ? { ...s, label } : s))
@@ -4075,6 +4095,56 @@ export default function AgentApp() {
           </Tabs>
         </Box>
       </AgentDesktopShell>
+
+      {/* ====== MOBILE BOTTOM NAV (persistent) ====== */}
+      <Box
+        role="navigation"
+        aria-label="Primary navigation"
+        display={['block','none']}
+        position="fixed"
+        left={0}
+        right={0}
+        bottom={0}
+        zIndex="zIndex80"
+        backgroundColor="colorBackground"
+        paddingX="space60"
+        paddingTop="space40"
+        paddingBottom="space40"
+        style={{
+          borderTop: '1px solid var(--paste-color-border-weak)',
+          paddingBottom: 'calc(var(--paste-space-70) + env(safe-area-inset-bottom, 0px))'
+        }}
+      >
+        <Stack orientation="horizontal" spacing="space40" distribution="equal" alignment="stretch">
+          <Button
+            size="small"
+            variant={mode === 'voice' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('voice')}
+            aria-current={mode === 'voice' ? 'page' : undefined}
+          >
+            Voice
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'chat' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('chat')}
+            aria-current={mode === 'chat' ? 'page' : undefined}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span>Chat</span>
+              {chatBadge > 0 && <Badge as="span" variant="new">{chatBadge}</Badge>}
+            </span>
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'supervisor' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('supervisor')}
+            aria-current={mode === 'supervisor' ? 'page' : undefined}
+          >
+            Supervisor
+          </Button>
+        </Stack>
+      </Box>
     </Box>
   );
 }
@@ -4083,7 +4153,7 @@ export default function AgentApp() {
 
 ==== src\features\tasks\components\AgentDesktopShell.jsx ====
 // contact-center/client/src/components/AgentDesktopShell.jsx
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, Children, isValidElement, cloneElement } from 'react';
 import PropTypes from 'prop-types';
 import useLocalStorage from '../../../shared/hooks/useLocalStorage.js';
 
@@ -4121,22 +4191,60 @@ function useIsDesktop() {
     const mql = window.matchMedia(mq);
 
     const onChange = (e) => setIsDesktop(e.matches);
-    try {
-      mql.addEventListener('change', onChange);
-    } catch {
-      mql.addListener(onChange);
-    }
+    try { mql.addEventListener('change', onChange); } catch { mql.addListener(onChange); }
 
     return () => {
-      try {
-        mql.removeEventListener('change', onChange);
-      } catch {
-        mql.removeListener(onChange);
-      }
+      try { mql.removeEventListener('change', onChange); } catch { mql.removeListener(onChange); }
     };
   }, []);
 
   return isDesktop;
+}
+
+/* Helpers */
+function clickTab(id) {
+  try {
+    const el = document.getElementById(id);
+    if (el && typeof el.click === 'function') el.click();
+  } catch {}
+}
+
+// Recursively extract inline StatusBar (identified by props.inline && label && onChange)
+function splitActions(node) {
+  let hoisted = null;
+
+  const isStatusCandidate = (el) => !!(
+    isValidElement(el) && el.props && el.props.inline && ('label' in el.props) && ('onChange' in el.props)
+  );
+
+  const walk = (el) => {
+    if (Array.isArray(el)) {
+      const nextKids = [];
+      el.forEach((child) => {
+        const [filtered, taken] = walk(child);
+        if (taken && !hoisted) hoisted = taken;
+        if (filtered !== null && filtered !== undefined) nextKids.push(filtered);
+      });
+      return [nextKids, hoisted];
+    }
+
+    if (!isValidElement(el)) return [el, hoisted];
+
+    if (isStatusCandidate(el)) {
+      if (!hoisted) hoisted = el; // keep original; we'll control inline per breakpoint later
+      return [null, hoisted];
+    }
+
+    const kids = el.props?.children;
+    if (!kids) return [el, hoisted];
+
+    const [filteredChildren] = walk(kids);
+    const cloned = cloneElement(el, { children: filteredChildren });
+    return [cloned, hoisted];
+  };
+
+  const [filtered] = walk(node);
+  return { filtered, hoisted };
 }
 
 export default function AgentDesktopShell({
@@ -4154,12 +4262,10 @@ export default function AgentDesktopShell({
 
   // Expose header height CSS var
   useEffect(() => {
-    try {
-      document.documentElement.style.setProperty('--shell-header-h', `${SHELL_HEADER_H}px`);
-    } catch {}
+    try { document.documentElement.style.setProperty('--shell-header-h', `${SHELL_HEADER_H}px`); } catch {}
   }, []);
 
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileNotesOpen, setMobileNotesOpen] = useState(false);
   const scrollRootRef = useRef(null);
 
   // Sticky offset under external headers
@@ -4199,94 +4305,74 @@ export default function AgentDesktopShell({
   }, []);
 
   const qa = useMemo(() => {
-    // Prefer quickActions by mode; fallback to sections list
-    const list = (quickActions && quickActions[mode]) || (sections || []).map((s) => ({
-      label: s.label || s.id,
-      targetId: s.id,
-    }));
+    const list = (quickActions && quickActions[mode]) || (sections || []).map((s) => ({ label: s.label || s.id, targetId: s.id }));
     return list || [];
   }, [quickActions, sections, mode]);
 
+  // Hoist StatusBar from actions
+  const { filtered: headerActionsNoStatus, hoisted: statusFromActions } = useMemo(() => splitActions(actions), [actions]);
+
+  // Prepare variants of StatusBar: desktop (non-inline, sticky inside component) and mobile (inline, for dropdown)
+  const statusBarDesktop = statusFromActions ? cloneElement(statusFromActions, { inline: false }) : null;
+  const statusBarMobile  = statusFromActions ? cloneElement(statusFromActions, { inline: true }) : null;
+
   /* =========================
-   * Sidebar (desktop only) — más ligera, menos invasiva
+   * Sidebar (desktop) — lightweight + Notes bigger + Mode switch
    * ========================= */
   const SidebarInner = (
     <>
-      <SidebarHeader
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 2,
-          background: 'var(--paste-color-background)',
-          borderBottom: '1px solid var(--paste-color-border-weak)'
-        }}
-      >
-        <SidebarHeaderLabel>Quick Menu</SidebarHeaderLabel>
+      <SidebarHeader style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--paste-color-background)', borderBottom: '1px solid var(--paste-color-border-weak)' }}>
+        <SidebarHeaderLabel>Notes</SidebarHeaderLabel>
         {!isDesktop && (
-          <SidebarCollapseButton
-            i18nCollapseLabel="Hide panel"
-            i18nExpandLabel="Show panel"
-            onClick={() => setMobileMenuOpen(false)}
-          />
+          <SidebarCollapseButton i18nCollapseLabel="Hide" i18nExpandLabel="Show" onClick={() => setMobileNotesOpen(false)} />
         )}
       </SidebarHeader>
 
       <SidebarBody>
         <Box padding={['space40','space60']}>
-          <Stack orientation="vertical" spacing="space40">
-            {/* Quick actions */}
+          <Stack orientation="vertical" spacing="space50">
+            {/* Switch workspace (desktop quick toggle) */}
             <Box>
-              <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
-              <Stack orientation="vertical" spacing="space30">
-                {qa.map((q) => (
-                  <Button
-                    key={q.targetId || q.label}
-                    variant={q.variant || 'secondary'}
-                    onClick={() => {
-                      scrollToId(q.targetId);
-                      if (!isDesktop) setMobileMenuOpen(false);
-                    }}
-                    style={{ width: '100%' }}
-                  >
-                    {q.label}
-                  </Button>
-                ))}
+              <Heading as="h5" variant="heading50" marginBottom="space40">Workspace</Heading>
+              <Stack orientation={['vertical','horizontal']} spacing="space30" style={{ flexWrap: 'wrap' }}>
+                <Button variant={mode === 'voice' ? 'primary' : 'secondary'} onClick={() => clickTab('voice')} style={{ width: ['100%','auto'] }}>Voice</Button>
+                <Button variant={mode === 'chat' ? 'primary' : 'secondary'} onClick={() => clickTab('chat')} style={{ width: ['100%','auto'] }}>Chat</Button>
+                <Button variant={mode === 'supervisor' ? 'primary' : 'secondary'} onClick={() => clickTab('supervisor')} style={{ width: ['100%','auto'] }}>Supervisor</Button>
               </Stack>
             </Box>
 
-            {/* Actions passed from parent (status, toggles, etc.) */}
-            {actions ? (
+            {/* Navigate (quick scroll) */}
+            {qa?.length ? (
+              <Box>
+                <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
+                <Stack orientation="vertical" spacing="space30">
+                  {qa.map((q) => (
+                    <Button key={q.targetId || q.label} variant={q.variant || 'secondary'} onClick={() => scrollToId(q.targetId)} style={{ width: '100%' }}>
+                      {q.label}
+                    </Button>
+                  ))}
+                </Stack>
+              </Box>
+            ) : null}
+
+            {/* Notes bigger */}
+            <Box>
+              <Heading as="h5" variant="heading50" marginBottom="space40">Notes</Heading>
+              <Box backgroundColor="colorBackground" borderRadius="borderRadius30" borderWidth="borderWidth10" borderColor="colorBorderWeaker" borderStyle="solid" padding="space40">
+                <TextArea value={pad} onChange={(e) => setPad(e.target.value)} placeholder="Quick notes... (saved locally)" style={{ resize: 'vertical', minHeight: 420 }} />
+              </Box>
+            </Box>
+
+            {/* Actions (without StatusBar) */}
+            {headerActionsNoStatus ? (
               <>
                 <Separator orientation="horizontal" />
                 <Box>
                   <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
-                  <Box>{actions}</Box>
+                  <Box>{headerActionsNoStatus}</Box>
                 </Box>
               </>
             ) : null}
-
-            {/* Scratchpad light */}
-            <Separator orientation="horizontal" />
-            <Disclosure>
-              <DisclosureHeading as="h5">Notes</DisclosureHeading>
-              <DisclosureContent>
-                <Box
-                  backgroundColor="colorBackground"
-                  borderRadius="borderRadius30"
-                  borderWidth="borderWidth10"
-                  borderColor="colorBorderWeaker"
-                  borderStyle="solid"
-                  padding="space40"
-                >
-                  <TextArea
-                    value={pad}
-                    onChange={(e) => setPad(e.target.value)}
-                    placeholder="Quick notes... (saved locally)"
-                    style={{ resize: 'vertical' }}
-                  />
-                </Box>
-              </DisclosureContent>
-            </Disclosure>
 
             {footer ? (
               <>
@@ -4305,19 +4391,18 @@ export default function AgentDesktopShell({
    * ========================= */
   return (
     <Box height="100dvh" width="100%" overflow="hidden" position="relative">
+      {/* Safe-area aware padding for scroll root on mobile so bottom nav never covers content */}
+      <style>{`
+        @media (max-width: 767px){
+          #shell-scroll-root{
+            padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+          }
+        }
+      `}</style>
+
       {/* Desktop sidebar */}
       {isDesktop && (
-        <Box
-          as="aside"
-          position="fixed"
-          top={`${offset}px`}
-          left={0}
-          width={`${SIDEBAR_W}px`}
-          height={`calc(100% - ${offset}px)`}
-          minHeight={`calc(100dvh - ${offset}px)`}
-          zIndex={5}
-          style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}
-        >
+        <Box as="aside" position="fixed" top={`${offset}px`} left={0} width={`${SIDEBAR_W}px`} height={`calc(100% - ${offset}px)`} minHeight={`calc(100dvh - ${offset}px)`} zIndex={5} style={{ borderRight: '1px solid var(--paste-color-border-weak)' }}>
           <Sidebar variant="default" width="100%" maxHeight="100%" overflowY="auto" collapsed={false}>
             {SidebarInner}
           </Sidebar>
@@ -4325,109 +4410,75 @@ export default function AgentDesktopShell({
       )}
 
       {/* Main column */}
-      <Box
-        as="main"
-        display="flex"
-        flexDirection="column"
-        height="100dvh"
-        overflow="hidden"
-        paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'}
-        style={{ background: 'var(--paste-color-background-body)' }}
-      >
+      <Box as="main" display="flex" flexDirection="column" height="100dvh" overflow="hidden" paddingLeft={isDesktop ? `${SIDEBAR_W}px` : '0'} style={{ background: 'var(--paste-color-background-body)' }}>
         {/* Sticky header */}
-        <Box
-          as="header"
-          paddingX={['space40', 'space70']}
-          paddingY={['space40', 'space50']}
-          backgroundColor="colorBackgroundBody"
-          style={{
-            borderBottom: '1px solid var(--paste-color-border-weak)',
-            position: 'sticky',
-            top: `${offset}px`,
-            zIndex: 6,
-            height: `${SHELL_HEADER_H}px`,
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          <Stack
-            orientation="horizontal"
-            spacing="space60"
-            alignment="center"
-            distribution="spaceBetween"
-            width="100%"
-          >
-            <Heading as="h3" variant="heading30" margin="space0">
-              {title}
-            </Heading>
-
-            {/* Desktop shows actions inline; Mobile shows a compact Menu button */}
-            {isDesktop ? (
-              actions || null
-            ) : (
-              <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(true)}>
-                Menu
-              </Button>
+        <Box as="header" paddingX={['space40', 'space70']} paddingY={['space40', 'space50']} backgroundColor="colorBackgroundBody" style={{ borderBottom: '1px solid var(--paste-color-border-weak)', position: 'sticky', top: `${offset}px`, zIndex: 6, height: `${SHELL_HEADER_H}px`, display: 'flex', alignItems: 'center' }}>
+          <Stack orientation="horizontal" spacing="space60" alignment="center" distribution="spaceBetween" width="100%">
+            <Heading as="h3" variant="heading30" margin="space0">{title}</Heading>
+            {isDesktop ? (headerActionsNoStatus || null) : (
+              <Button variant="secondary" size="small" onClick={() => setMobileNotesOpen(true)}>Notes</Button>
             )}
           </Stack>
         </Box>
 
+        {/* STATUS: desktop fixed below header; mobile collapsible dropdown */}
+        {isDesktop ? (
+          statusBarDesktop ? <Box>{statusBarDesktop}</Box> : null
+        ) : (
+          statusBarMobile ? (
+            <Box paddingX={['space40','space70']} paddingY="space30" backgroundColor="colorBackgroundBody" style={{ borderBottom: '1px solid var(--paste-color-border-weak)' }}>
+              <Disclosure>
+                <DisclosureHeading as="h5">
+                  Status{statusFromActions?.props?.label ? ` — ${statusFromActions.props.label}` : ''}
+                </DisclosureHeading>
+                <DisclosureContent>
+                  {statusBarMobile}
+                </DisclosureContent>
+              </Disclosure>
+            </Box>
+          ) : null
+        )}
+
         {/* Scroll area */}
-        <Box
-          id="shell-scroll-root"
-          ref={scrollRootRef}
-          flexGrow={1}
-          minHeight="0"
-          overflow="auto"
-          backgroundColor="colorBackgroundBody"
-        >
+        <Box id="shell-scroll-root" ref={scrollRootRef} flexGrow={1} minHeight="0" overflow="auto" backgroundColor="colorBackgroundBody">
           <Box as="section" padding={['space60', 'space70']} style={{ margin: '0 auto', maxWidth: 1280 }}>
             {children}
           </Box>
         </Box>
       </Box>
 
-      {/* Mobile bottom menu (non-invasive) */}
-      {!isDesktop && mobileMenuOpen && (
+      {/* Mobile bottom sheet: NOTES (overlay above everything) */}
+      {!isDesktop && mobileNotesOpen && (
         <>
           {/* Backdrop */}
-          <Box
-            position="fixed"
-            top={`${offset}px`}
-            left={0}
-            width="100vw"
-            height={`calc(100% - ${offset}px)`}
-            minHeight={`calc(100dvh - ${offset}px)`}
-            zIndex={10}
-            backgroundColor="colorBackgroundBodyInverse"
-            style={{ opacity: 0.35 }}
-            onClick={() => setMobileMenuOpen(false)}
-            aria-hidden="true"
-          />
+          <Box position="fixed" top={`${offset}px`} left={0} width="100vw" height={`calc(100% - ${offset}px)`} minHeight={`calc(100dvh - ${offset}px)`} zIndex={9998} backgroundColor="colorBackgroundBodyInverse" style={{ opacity: 0.35 }} onClick={() => setMobileNotesOpen(false)} aria-hidden="true" />
 
           {/* Bottom sheet */}
-          <Box
-            role="dialog"
-            aria-modal="true"
-            aria-label="Quick Menu"
-            position="fixed"
-            left={0}
-            right={0}
-            bottom={0}
-            zIndex={11}
-            backgroundColor="colorBackground"
-            style={{
-              borderTopLeftRadius: 16,
-              borderTopRightRadius: 16,
-              boxShadow: '0 -12px 24px rgba(0,0,0,0.2)'
-            }}
-          >
+          <Box role="dialog" aria-modal="true" aria-label="Notes" position="fixed" left={0} right={0} bottom={0} zIndex={9999} backgroundColor="colorBackground" style={{ borderTopLeftRadius: 16, borderTopRightRadius: 16, boxShadow: '0 -12px 24px rgba(0,0,0,0.25)' }}>
             <Box paddingX="space60" paddingTop="space60" paddingBottom="space80">
-              <Stack orientation="vertical" spacing="space60" alignment="stretch">
+              <Stack orientation="vertical" spacing="space70" alignment="stretch">
                 <Stack orientation="horizontal" alignment="center" distribution="spaceBetween">
-                  <Heading as="h4" variant="heading40" margin="space0">Menu</Heading>
-                  <Button variant="secondary" size="small" onClick={() => setMobileMenuOpen(false)}>Close</Button>
+                  <Heading as="h4" variant="heading40" margin="space0">Notes</Heading>
+                  <Button variant="secondary" size="small" onClick={() => setMobileNotesOpen(false)}>Close</Button>
                 </Stack>
+
+                {/* Mode switch (voice/chat/supervisor) */}
+                <Box>
+                  <Heading as="h5" variant="heading50" marginBottom="space40">Switch workspace</Heading>
+                  <Stack orientation={['vertical','horizontal']} spacing="space30" style={{ flexWrap: 'wrap' }}>
+                    <Button variant={mode === 'voice' ? 'primary' : 'secondary'} onClick={() => { clickTab('voice'); setMobileNotesOpen(false); }} style={{ width: ['100%','auto'] }}>Voice</Button>
+                    <Button variant={mode === 'chat' ? 'primary' : 'secondary'} onClick={() => { clickTab('chat'); setMobileNotesOpen(false); }} style={{ width: ['100%','auto'] }}>Chat</Button>
+                    <Button variant={mode === 'supervisor' ? 'primary' : 'secondary'} onClick={() => { clickTab('supervisor'); setMobileNotesOpen(false); }} style={{ width: ['100%','auto'] }}>Supervisor</Button>
+                  </Stack>
+                </Box>
+
+                {/* Notes big area */}
+                <Box>
+                  <Heading as="h5" variant="heading50" marginBottom="space40">Notes</Heading>
+                  <Box backgroundColor="colorBackground" borderRadius="borderRadius30" borderWidth="borderWidth10" borderColor="colorBorderWeaker" borderStyle="solid" padding="space40">
+                    <TextArea value={pad} onChange={(e) => setPad(e.target.value)} placeholder="Quick notes... (saved locally)" style={{ resize: 'vertical', minHeight: 360 }} />
+                  </Box>
+                </Box>
 
                 {/* Quick nav */}
                 {qa.length ? (
@@ -4435,15 +4486,7 @@ export default function AgentDesktopShell({
                     <Heading as="h5" variant="heading50" marginBottom="space40">Navigate</Heading>
                     <Stack orientation="vertical" spacing="space30">
                       {qa.map((q) => (
-                        <Button
-                          key={q.targetId || q.label}
-                          variant={q.variant || 'secondary'}
-                          onClick={() => {
-                            scrollToId(q.targetId);
-                            setMobileMenuOpen(false);
-                          }}
-                          style={{ width: '100%' }}
-                        >
+                        <Button key={q.targetId || q.label} variant={q.variant || 'secondary'} onClick={() => { scrollToId(q.targetId); setMobileNotesOpen(false); }} style={{ width: '100%' }}>
                           {q.label}
                         </Button>
                       ))}
@@ -4451,35 +4494,13 @@ export default function AgentDesktopShell({
                   </Box>
                 ) : null}
 
-                {/* Actions */}
-                {actions ? (
+                {/* Actions (without StatusBar) */}
+                {headerActionsNoStatus ? (
                   <Box>
                     <Heading as="h5" variant="heading50" marginBottom="space40">Actions</Heading>
-                    <Box>{actions}</Box>
+                    <Box>{headerActionsNoStatus}</Box>
                   </Box>
                 ) : null}
-
-                {/* Notes (collapsible) */}
-                <Disclosure>
-                  <DisclosureHeading as="h5">Notes</DisclosureHeading>
-                  <DisclosureContent>
-                    <Box
-                      backgroundColor="colorBackground"
-                      borderRadius="borderRadius30"
-                      borderWidth="borderWidth10"
-                      borderColor="colorBorderWeaker"
-                      borderStyle="solid"
-                      padding="space40"
-                    >
-                      <TextArea
-                        value={pad}
-                        onChange={(e) => setPad(e.target.value)}
-                        placeholder="Quick notes... (saved locally)"
-                        style={{ resize: 'vertical' }}
-                      />
-                    </Box>
-                  </DisclosureContent>
-                </Disclosure>
 
                 {footer ? (
                   <>
@@ -4492,6 +4513,53 @@ export default function AgentDesktopShell({
           </Box>
         </>
       )}
+
+      {/* ====== MOBILE BOTTOM NAV (persistent, compact, safe-area aware) ====== */}
+      <Box
+        role="navigation"
+        aria-label="Primary navigation"
+        display={['block','none']}
+        position="fixed"
+        left={0}
+        right={0}
+        bottom={0}
+        zIndex="zIndex80"
+        backgroundColor="colorBackground"
+        paddingX="space60"
+        paddingTop="space40"
+        paddingBottom="space40"
+        style={{
+          borderTop: '1px solid var(--paste-color-border-weak)',
+          paddingBottom: 'calc(var(--paste-space-70) + env(safe-area-inset-bottom, 0px))'
+        }}
+      >
+        <Stack orientation="horizontal" spacing="space40" distribution="equal" alignment="stretch">
+          <Button
+            size="small"
+            variant={mode === 'voice' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('voice')}
+            aria-current={mode === 'voice' ? 'page' : undefined}
+          >
+            Voice
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'chat' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('chat')}
+            aria-current={mode === 'chat' ? 'page' : undefined}
+          >
+            Chat
+          </Button>
+          <Button
+            size="small"
+            variant={mode === 'supervisor' ? 'primary' : 'secondary'}
+            onClick={() => clickTab('supervisor')}
+            aria-current={mode === 'supervisor' ? 'page' : undefined}
+          >
+            Supervisor
+          </Button>
+        </Stack>
+      </Box>
     </Box>
   );
 }
