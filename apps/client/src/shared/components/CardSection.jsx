@@ -3,12 +3,12 @@ import { Box } from '@twilio-paste/core/box';
 
 export default function CardSection({ id, title, children }) {
   return (
-    <Box id={id} marginBottom="space70">
+    <Box id={id} marginBottom={["space40", "space70"]} width="100%">
       <Box
         backgroundColor="colorBackground"
         borderRadius="borderRadius30"
         boxShadow="shadow"
-        padding="space70"
+        padding={["space40", "space70"]}
       >
         <Box as="h4" margin="space0" fontSize="fontSize40" fontWeight="fontWeightSemibold">
           {title}
