@@ -208,7 +208,6 @@ export default function AgentApp() {
     if (!isSoftphonePopout) return;
     beginValidationProbe();
     return () => clearValidationTimers();
-    // only depend on the boolean to avoid retriggers
   }, [isSoftphonePopout]);
 
   // Safety poll if we *do* have a handle
@@ -260,7 +259,6 @@ export default function AgentApp() {
 
   /* Confirm flow */
   const proceedOpenPopup = useCallback(() => {
-    closingByConfirmRef.current = true;
     setConfirmOpen(false);
 
     // Open or focus the popup
@@ -269,9 +267,6 @@ export default function AgentApp() {
     // Mark ON and validate; revert if no ACK arrives
     setSoftphonePref(true);
     beginValidationProbe();
-
-    // allow onDismiss to behave normally after this tick
-    setTimeout(() => { closingByConfirmRef.current = false; }, 0);
   }, [openSoftphoneWindow, setSoftphonePref, beginValidationProbe]);
 
   const cancelOpenPopup = useCallback(() => {
@@ -280,19 +275,13 @@ export default function AgentApp() {
   }, [setSoftphonePref]);
 
   const handleModalDismiss = useCallback(() => {
-    if (closingByConfirmRef.current) {
-      closingByConfirmRef.current = false;
-      return;
-    }
-    cancelOpenPopup();
-  }, [cancelOpenPopup]);
+    setConfirmOpen(false);
+  }, []);
 
   const handleSoftphoneToggle = useCallback((checked) => {
     if (checked) {
-      // Ask for confirmation; ON will be set after confirm.
       setConfirmOpen(true);
     } else {
-      setConfirmOpen(false);
       clearValidationTimers();
       closeSoftphoneWindow();
       setSoftphonePref(false);
@@ -486,8 +475,8 @@ export default function AgentApp() {
   /* Secciones por modo */
   const voiceSections = useMemo(() => ([
     { id: 'softphone', label: 'Softphone' },
-    { id: 'customer360', label: 'Customer 360' },
     { id: 'voiceTasks', label: 'Voice Tasks' },
+    { id: 'customer360', label: 'Customer 360' },
   ]), []);
 
   const supervisorSections = useMemo(() => ([
@@ -504,8 +493,8 @@ export default function AgentApp() {
   const shellQuickActions = useMemo(() => ({
     voice: [
       { label: 'Softphone', targetId: 'softphone', variant: 'secondary' },
-      { label: 'Customer 360', targetId: 'customer360' },
       { label: 'Voice Tasks', targetId: 'voiceTasks' },
+      { label: 'Customer 360', targetId: 'customer360' },
     ],
     chat: [
       { label: 'Main Chat', targetId: 'mainChat', variant: 'primary' },
@@ -518,9 +507,33 @@ export default function AgentApp() {
     ],
   }), []);
 
+  // ===== Responsive action bar (stacked on mobile) =====
+  const ActionsBar = (
+    <Stack
+      orientation={['vertical', 'horizontal']}
+      spacing="space30"
+      alignment="center"
+      style={{ flexWrap: 'wrap', width: '100%', maxWidth: 960 }}
+    >
+      <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
+      <Switch
+        checked={isSoftphonePopout}
+        onChange={(e) => handleSoftphoneToggle(e.target.checked)}
+        aria-label="Softphone pop-out"
+        disabled={isSoftphoneValidating}
+      >
+        Softphone window {isSoftphoneValidating && '(checking...)'}
+      </Switch>
+      {hasCall && (
+        <Button variant="primary" onClick={() => setControlsOpen(true)} style={{ width: ['100%', 'auto'] }}>Call controls</Button>
+      )}
+      <Button variant="destructive" onClick={logout} style={{ width: ['100%', 'auto'] }}>Logout</Button>
+    </Stack>
+  );
+
   /* Render */
   return (
-    <Box height="100%" minHeight="100dvh" width="100%">
+    <Box height="100%" minHeight="100dvh" width="100%" overflowX="hidden">
       <Toaster {...toaster} />
 
       {/* Modal de controles de llamada */}
@@ -541,8 +554,8 @@ export default function AgentApp() {
         </ModalBody>
         <ModalFooter>
           <Stack orientation={['vertical', 'horizontal']} spacing="space40" style={{ flexWrap: 'wrap' }}>
-            <Button variant="secondary" onClick={cancelOpenPopup}>Cancel</Button>
-            <Button variant="primary" onClick={proceedOpenPopup}>Open window</Button>
+            <Button variant="secondary" onClick={cancelOpenPopup} style={{ width: ['100%', 'auto'] }}>Cancel</Button>
+            <Button variant="primary" onClick={proceedOpenPopup} style={{ width: ['100%', 'auto'] }}>Open window</Button>
           </Stack>
         </ModalFooter>
       </Modal>
@@ -552,23 +565,10 @@ export default function AgentApp() {
         title="Agent Desktop"
         mode={mode}
         quickActions={shellQuickActions}
-        actions={
-          <Stack orientation="horizontal" spacing="space30" style={{ flexWrap: 'wrap' }} alignment="center">
-            <StatusBar inline label={activity || '—'} onChange={(sid) => setAvailable(sid)} />
-            <Switch
-              checked={isSoftphonePopout}
-              onChange={(e) => handleSoftphoneToggle(e.target.checked)}
-              aria-label="Softphone pop-out"
-              disabled={isSoftphoneValidating}
-            >
-              Softphone window {isSoftphoneValidating && '(checking...)'}
-            </Switch>
-            {hasCall && <Button variant="primary" onClick={() => setControlsOpen(true)}>Call controls</Button>}
-            <Button variant="destructive" onClick={logout}>Logout</Button>
-          </Stack>
-        }
+        actions={ActionsBar}
       >
-        <Box marginBottom="space70">
+        {/* Sticky Tabs for mobile */}
+        <Box position="sticky" top={0} zIndex="zIndex80" backgroundColor="colorBackground" paddingY="space40">
           <Tabs baseId="workspace-mode" selectedId={mode} onTabChange={(id) => setMode(id)}>
             <TabList aria-label="Workspace mode">
               <Tab id="voice">VOICE</Tab>
@@ -584,107 +584,125 @@ export default function AgentApp() {
             <TabPanels>
               {/* VOICE */}
               <TabPanel id="voice">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">
-                      Active Call Handling
-                    </Heading>
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    {/* Sección 1: Softphone (inline si no popup) */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">
+                        Active Call Handling
+                      </Heading>
+                      <CardSection id="softphone" title="Softphone">
+                        {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
+                        <Box display={isSoftphonePopout ? 'none' : 'block'}>
+                          <Softphone popupOpen={isSoftphonePopout} />
+                        </Box>
+                      </CardSection>
+                    </Box>
 
-                    <CardSection id="softphone" title="Softphone">
-                      {/* OFF → inline visible; ON → inline hidden (hook still mounted in main) */}
-                      <Box display={isSoftphonePopout ? 'none' : 'block'}>
-                        <Softphone popupOpen={isSoftphonePopout} />
-                      </Box>
-                    </CardSection>
+                    <Separator orientation="horizontal" />
 
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                    {/* Sección 2: Voice Tasks (antes que 360 para flujo más natural en mobile) */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Voice Tasks</Heading>
+                      <CardSection id="voiceTasks" title="Voice Tasks">
+                        <TasksPanel channel="voice" setAvailable={setAvailable} />
+                      </CardSection>
+                    </Box>
 
-                    <CardSection id="customer360" title="Customer 360">
-                      <Customer360 />
-                    </CardSection>
+                    <Separator orientation="horizontal" />
 
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
-
-                    <CardSection id="voiceTasks" title="Voice Tasks">
-                      <TasksPanel channel="voice" setAvailable={setAvailable} />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    {/* Sección 3: Customer 360 */}
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Customer 360</Heading>
+                      <CardSection id="customer360" title="Customer 360">
+                        <Customer360 />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* CHAT */}
               <TabPanel id="chat">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Active Conversations</Heading>
-                    <CardSection id="mainChat" title="Main Chat">
-                      <Box id="main-chat-panel" minHeight="60vh">
-                        {chatSessions.length ? (
-                          <ChatPanel
-                            key={chatPanelKey}
-                            sessions={chatSessions}
-                            onClose={(sid) =>
-                              setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
-                            }
-                            onIncrementUnread={(sid) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) =>
-                                  s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Active Conversations</Heading>
+                      <CardSection id="mainChat" title="Main Chat">
+                        <Box id="main-chat-panel" minHeight="60vh">
+                          {chatSessions.length ? (
+                            <ChatPanel
+                              key={chatPanelKey}
+                              sessions={chatSessions}
+                              onClose={(sid) =>
+                                setChatSessions((prev) => prev.filter((s) => s.sid !== sid))
+                              }
+                              onIncrementUnread={(sid) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) =>
+                                    s.sid === sid ? { ...s, unread: (s.unread || 0) + 1 } : s
+                                  )
                                 )
-                              )
-                            }
-                            onClearUnread={(sid) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
-                              )
-                            }
-                            onLabel={(sid, label) =>
-                              setChatSessions((prev) =>
-                                prev.map((s) => (s.sid === sid ? { ...s, label } : s))
-                              )
-                            }
-                            onPopout={(sid) => {
-                              const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
-                              window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
-                            }}
-                          />
-                        ) : (
-                          <Box color="colorTextWeak">No active chats</Box>
-                        )}
-                      </Box>
-                    </CardSection>
-                  </Box>
+                              }
+                              onClearUnread={(sid) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) => (s.sid === sid ? { ...s, unread: 0 } : s))
+                                )
+                              }
+                              onLabel={(sid, label) =>
+                                setChatSessions((prev) =>
+                                  prev.map((s) => (s.sid === sid ? { ...s, label } : s))
+                                )
+                              }
+                              onPopout={(sid) => {
+                                const url = `${window.location.origin}?popup=chat&sid=${encodeURIComponent(sid)}`;
+                                window.open(url, `chat_${sid}`, SOFTPHONE_POPUP_FEATURES);
+                              }}
+                            />
+                          ) : (
+                            <Box color="colorTextWeak" textAlign="center">No active chats</Box>
+                          )}
+                        </Box>
+                      </CardSection>
+                    </Box>
 
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Customer Info</Heading>
-                    <CardSection id="chatTasks" title="Chat Tasks">
-                      <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
-                    </CardSection>
-                    <Box marginY="space40"><Separator orientation="horizontal" /></Box>
-                    <CardSection id="customer360-chat" title="Customer 360">
-                      <Customer360 />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    <Separator orientation="horizontal" />
+
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Tasks & Customer Info</Heading>
+                      <CardSection id="chatTasks" title="Chat Tasks">
+                        <TasksPanel channel="chat" onOpenChat={selectChatFromTasks} />
+                      </CardSection>
+                      <Box marginY="space40"><Separator orientation="horizontal" /></Box>
+                      <CardSection id="customer360-chat" title="Customer 360">
+                        <Customer360 />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* SUPERVISOR */}
               <TabPanel id="supervisor">
-                <Stack orientation="vertical" spacing="space70">
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Tasks & Incoming</Heading>
-                    <CardSection id="reservations" title="Reservations">
-                      <Reservations items={reservations} standalone />
-                    </CardSection>
-                  </Box>
+                <Box style={{ margin: '0 auto', maxWidth: 960 }} paddingX={['space20','space0']}>
+                  <Stack orientation="vertical" spacing="space70">
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Tasks & Incoming</Heading>
+                      <CardSection id="reservations" title="Reservations">
+                        <Reservations items={reservations} standalone />
+                      </CardSection>
+                    </Box>
 
-                  <Box>
-                    <Heading as="h2" variant="heading30" marginBottom="space40">Team Presence</Heading>
-                    <CardSection id="presence" title="Presence">
-                      <Presence />
-                    </CardSection>
-                  </Box>
-                </Stack>
+                    <Separator orientation="horizontal" />
+
+                    <Box>
+                      <Heading as="h2" variant="heading30" marginBottom="space40" textAlign="center">Team Presence</Heading>
+                      <CardSection id="presence" title="Presence">
+                        <Presence />
+                      </CardSection>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
             </TabPanels>
           </Tabs>
